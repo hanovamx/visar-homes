@@ -27,6 +27,7 @@ Catálogos y configuración del negocio VISAR:
         'views/visar_service_tier_views.xml',
         'views/visar_combo_rule_views.xml',
         'views/product_template_views.xml',
+        'views/product_product_views.xml',
         'views/res_config_settings_views.xml',
         'views/menus.xml',
     ],

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="product_product_form_view_visar" model="ir.ui.view">
+        <field name="name">product.product.form.visar</field>
+        <field name="model">product.product</field>
+        <field name="inherit_id" ref="product.product_normal_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='barcode']" position="after">
+                <field name="visar_zone_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="product_product_tree_view_visar" model="ir.ui.view">
+        <field name="name">product.product.tree.visar</field>
+        <field name="model">product.product</field>
+        <field name="inherit_id" ref="product.product_product_tree_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='default_code']" position="after">
+                <field name="visar_zone_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

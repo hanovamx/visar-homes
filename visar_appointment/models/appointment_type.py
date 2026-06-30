@@ -223,7 +223,10 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_resolve_wizard_items(self, selections):
-        """Resuelve tier/variante por cada dimensión elegida en el wizard."""
+        """Resuelve tier por cada dimensión elegida en el wizard.
+
+        La variante se resuelve después según la zona del cliente (no aquí).
+        """
         Tier = self.env['visar.service.tier']
         ProductTemplate = self.env['product.template']
         items = []
@@ -233,7 +236,7 @@ class AppointmentType(models.Model):
             if not tier_id:
                 continue
             tier = Tier.browse(int(tier_id)).exists()
-            if not tier or not tier.product_id:
+            if not tier or not tier.product_tmpl_id:
                 continue
             template = tier.product_tmpl_id or ProductTemplate._visar_get_service_template_for_dimension(
                 dimension)
@@ -242,7 +245,7 @@ class AppointmentType(models.Model):
                 'dimension_id': dimension.id,
                 'tier_id': tier.id,
                 'tier_name': tier.name or tier.display_name,
-                'variant_id': tier.product_id.id,
+                'variant_id': None,  # ← Será resuelto por zona en _visar_build_sale_lines
                 'product_tmpl_id': template.id if template else False,
                 'appointment_type_id': apt_type.id if apt_type else False,
                 'is_valuation': tier.is_valuation,
@@ -411,7 +414,11 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_list_unit_price(self, product, zone):
-        """Precio de lista unitario respetando pricelist de zona."""
+        """Precio de lista unitario desde la pricelist de la zona.
+
+        La variante ya fue resuelta correctamente por _visar_get_variant_for_zone(),
+        así que la pricelist encuentra el precio correcto para la zona del cliente.
+        """
         if not product:
             return 0.0
         website = self.env['website'].get_current_website(fallback=False)
@@ -485,11 +492,13 @@ class AppointmentType(models.Model):
 
         lines = []
         for item in items:
-            variant = self.env['product.product'].browse(item['variant_id']).exists()
+            tier = self.env['visar.service.tier'].browse(item.get('tier_id')).exists()
+            if not tier:
+                continue
+            # Resuelve la variante correcta según la zona usando el tabulador
+            variant = tier._visar_get_variant_for_zone(zone)
             if not variant:
                 continue
-            variant = self.env['product.template']._visar_variant_for_zone(variant, zone)
-            tier = self.env['visar.service.tier'].browse(item.get('tier_id')).exists()
             is_free = item.get('is_free') or (tier and tier.is_free)
             unit_price = self._visar_list_unit_price(variant, zone)
             if is_free or unit_price <= 0:
