@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="appointment_type_view_form_visar" model="ir.ui.view">
+        <field name="name">appointment.type.form.visar</field>
+        <field name="model">appointment.type</field>
+        <field name="inherit_id" ref="appointment.appointment_type_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='right_details']" position="inside">
+                <field name="visar_flow"
+                       help="Entrada web: wizard multi-servicio o valoración solo zona. Los tipos internos dejan este campo vacío."/>
+                <field name="visar_is_master"
+                       help="Tipo interno usado tras el wizard; no debe publicarse en /appointment."/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

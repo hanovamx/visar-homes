@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="appointment_resource_view_form_visar_fsm" model="ir.ui.view">
+        <field name="name">appointment.resource.view.form.visar.fsm</field>
+        <field name="model">appointment.resource</field>
+        <field name="inherit_id" ref="appointment.appointment_resource_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Visar FSM" name="visar_fsm">
+                    <group>
+                        <field name="visar_employee_id"/>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,13 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_visar_zone_user,visar.zone.user,model_visar_zone,base.group_user,1,0,0,0
+access_visar_zone_manager,visar.zone.manager,model_visar_zone,appointment.group_appointment_manager,1,1,1,1
+access_visar_service_tier_user,visar.service.tier.user,model_visar_service_tier,base.group_user,1,0,0,0
+access_visar_service_tier_manager,visar.service.tier.manager,model_visar_service_tier,appointment.group_appointment_manager,1,1,1,1
+access_visar_service_group_user,visar.service.group.user,model_visar_service_group,base.group_user,1,0,0,0
+access_visar_service_group_manager,visar.service.group.manager,model_visar_service_group,appointment.group_appointment_manager,1,1,1,1
+access_visar_service_dimension_user,visar.service.dimension.user,model_visar_service_dimension,base.group_user,1,0,0,0
+access_visar_service_dimension_manager,visar.service.dimension.manager,model_visar_service_dimension,appointment.group_appointment_manager,1,1,1,1
+access_visar_combo_rule_user,visar.combo.rule.user,model_visar_combo_rule,base.group_user,1,0,0,0
+access_visar_combo_rule_manager,visar.combo.rule.manager,model_visar_combo_rule,appointment.group_appointment_manager,1,1,1,1
+access_visar_product_optional_line_user,visar.product.optional.line.user,model_visar_product_optional_line,base.group_user,1,0,0,0
+access_visar_product_optional_line_manager,visar.product.optional.line.manager,model_visar_product_optional_line,appointment.group_appointment_manager,1,1,1,1

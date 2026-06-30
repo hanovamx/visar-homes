@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_combo_rule_view_list" model="ir.ui.view">
+        <field name="name">visar.combo.rule.list</field>
+        <field name="model">visar.combo.rule</field>
+        <field name="arch" type="xml">
+            <list string="Reglas de combo">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="discount_factor"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_combo_rule_view_form" model="ir.ui.view">
+        <field name="name">visar.combo.rule.form</field>
+        <field name="model">visar.combo.rule</field>
+        <field name="arch" type="xml">
+            <form string="Regla de combo">
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="sequence"/>
+                        <field name="discount_factor"/>
+                        <field name="active"/>
+                    </group>
+                    <group string="Condiciones">
+                        <field name="required_dimension_ids" widget="many2many_tags"/>
+                        <field name="discount_dimension_ids" widget="many2many_tags"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_combo_rule_action" model="ir.actions.act_window">
+        <field name="name">Reglas de combo</field>
+        <field name="res_model">visar.combo.rule</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+</odoo>

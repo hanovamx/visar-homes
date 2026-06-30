@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="appointment_question_visar_zona" model="appointment.question">
+        <field name="name">Zona geográfica</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">1</field>
+    </record>
+
+    <record id="appointment_question_visar_metros" model="appointment.question">
+        <field name="name">Metros cuadrados</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">2</field>
+    </record>
+
+    <record id="appointment_question_visar_plaga" model="appointment.question">
+        <field name="name">¿Tienes plaga o es preventivo?</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">3</field>
+    </record>
+
+    <record id="appointment_question_visar_roedores" model="appointment.question">
+        <field name="name">¿Tienes problema de roedores?</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">4</field>
+    </record>
+
+    <record id="appointment_question_visar_tipo_plaga" model="appointment.question">
+        <field name="name">¿Qué plaga tienes?</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">5</field>
+    </record>
+
+</odoo>

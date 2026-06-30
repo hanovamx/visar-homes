@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="calendar_event_view_form_visar" model="ir.ui.view">
+        <field name="name">calendar.event.form.visar</field>
+        <field name="model">calendar.event</field>
+        <field name="inherit_id" ref="calendar.view_calendar_event_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Visar" name="visar"
+                      invisible="not visar_zone_id and not visar_booking_items">
+                    <group>
+                        <field name="visar_zone_id"/>
+                        <field name="visar_booking_items" widget="json"/>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

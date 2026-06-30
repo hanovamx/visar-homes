@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================ -->
+    <!-- Login por PIN                                                 -->
+    <!-- ============================================================ -->
+    <template id="field_login" name="Visar Campo - Identificación">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-4" style="max-width: 480px;">
+                    <h2 class="text-center mb-4">App de Campo Visar</h2>
+                    <div t-if="error" class="alert alert-danger" role="alert">
+                        PIN no válido. Intenta de nuevo.
+                    </div>
+                    <form action="/visar/field/login" method="post" class="card p-3">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <label for="pin" class="form-label">Ingresa tu PIN</label>
+                        <input type="password" inputmode="numeric" name="pin" id="pin"
+                               class="form-control form-control-lg text-center mb-3"
+                               autocomplete="off" autofocus="autofocus" required="required"/>
+                        <button type="submit" class="btn btn-primary btn-lg">Entrar</button>
+                    </form>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Lista de servicios del técnico                               -->
+    <!-- ============================================================ -->
+    <template id="field_tasks" name="Visar Campo - Mis servicios">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-3" style="max-width: 640px;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h4 class="mb-0">Hola, <t t-esc="employee.name"/></h4>
+                            <small class="text-muted">Mis servicios de hoy</small>
+                        </div>
+                        <form action="/visar/field/logout" method="post" class="m-0">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">Salir</button>
+                        </form>
+                    </div>
+
+                    <div t-if="not tasks" class="alert alert-info">
+                        No tienes servicios pendientes asignados.
+                    </div>
+
+                    <div class="list-group">
+                        <a t-foreach="tasks" t-as="task"
+                           t-att-href="'/visar/field/task/%s' % task.id"
+                           class="list-group-item list-group-item-action">
+                            <div class="d-flex justify-content-between">
+                                <strong t-esc="task.name"/>
+                                <span t-if="task.planned_date_begin" class="badge text-bg-light"
+                                      t-esc="task.planned_date_begin"/>
+                            </div>
+                            <div t-if="task.partner_id" class="small text-muted">
+                                <t t-esc="task.partner_id.name"/>
+                            </div>
+                            <div t-if="task.partner_id.contact_address_complete" class="small text-muted">
+                                <t t-esc="task.partner_id.contact_address_complete"/>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Detalle del servicio + captura (worksheet nativa)            -->
+    <!-- ============================================================ -->
+    <template id="field_task_detail" name="Visar Campo - Servicio">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-3" style="max-width: 640px;">
+                    <a href="/visar/field/tasks" class="btn btn-link px-0 mb-2">&#8592; Volver</a>
+
+                    <div t-if="saved" class="alert alert-success">Guardado.</div>
+
+                    <h4 t-esc="task.name"/>
+                    <div t-if="task.partner_id" class="text-muted mb-1">
+                        <t t-esc="task.partner_id.name"/>
+                    </div>
+                    <div t-if="task.partner_id.contact_address_complete" class="text-muted mb-3 small">
+                        <t t-esc="task.partner_id.contact_address_complete"/>
+                    </div>
+
+                    <!-- Orden de venta completa (multi-línea) -->
+                    <div t-if="task.visar_sale_order_id" class="card mb-3">
+                        <div class="card-header py-2">Pedido <t t-esc="task.visar_sale_order_id.name"/></div>
+                        <ul class="list-group list-group-flush">
+                            <li t-foreach="task.visar_sale_order_id.order_line.filtered(lambda l: not l.display_type)"
+                                t-as="line" class="list-group-item py-1">
+                                <t t-esc="int(line.product_uom_qty)"/>× <t t-esc="line.product_id.name"/>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Fotos -->
+                    <h6 class="mt-3">Fotos (<t t-esc="len(photos)"/>)</h6>
+                    <div t-if="photos" class="row g-2 mb-2">
+                        <div t-foreach="photos" t-as="photo" class="col-4">
+                            <img t-att-src="'/visar/field/task/%s/image/%s' % (task.id, photo.id)"
+                                 class="img-fluid rounded"/>
+                        </div>
+                    </div>
+                    <form t-att-action="'/visar/field/task/%s/photo' % task.id" method="post"
+                          enctype="multipart/form-data" class="mb-4">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <input type="file" name="photos" accept="image/*" capture="environment"
+                               multiple="multiple" class="form-control mb-2"/>
+                        <button type="submit" class="btn btn-outline-primary w-100">Subir fotos</button>
+                    </form>
+
+                    <!-- Worksheet nativa (campos dinámicos del template) -->
+                    <div t-if="not has_worksheet_template" class="alert alert-warning">
+                        Este servicio no tiene plantilla de hoja de trabajo configurada.
+                    </div>
+                    <form t-if="has_worksheet_template"
+                          t-att-action="'/visar/field/task/%s/worksheet' % task.id" method="post"
+                          enctype="multipart/form-data" class="card p-3 mb-4">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <h6 class="mb-3">Hoja de trabajo</h6>
+
+                        <div t-foreach="worksheet_fields" t-as="field" class="mb-3">
+
+                            <!-- Booleano -->
+                            <div t-if="field['type'] == 'boolean'" class="form-check">
+                                <input type="checkbox" class="form-check-input"
+                                       t-att-name="field['name']" t-att-id="field['name']"
+                                       t-att-checked="field['value'] and 'checked' or None"/>
+                                <label class="form-check-label" t-att-for="field['name']"
+                                       t-esc="field['string']"/>
+                            </div>
+
+                            <!-- Resto de tipos: etiqueta + control -->
+                            <t t-else="">
+                                <label class="form-label" t-att-for="field['name']"
+                                       t-esc="field['string']"/>
+
+                                <select t-if="field['type'] == 'selection'" class="form-select"
+                                        t-att-name="field['name']" t-att-id="field['name']">
+                                    <option value="">—</option>
+                                    <option t-foreach="field['selection']" t-as="opt"
+                                            t-att-value="opt[0]"
+                                            t-att-selected="field['value'] == opt[0] and 'selected' or None"
+                                            t-esc="opt[1]"/>
+                                </select>
+
+                                <select t-elif="field['type'] == 'many2one'" class="form-select"
+                                        t-att-name="field['name']" t-att-id="field['name']">
+                                    <option value="">—</option>
+                                    <option t-foreach="field['options']" t-as="opt"
+                                            t-att-value="opt['id']"
+                                            t-att-selected="field['value_id'] == opt['id'] and 'selected' or None"
+                                            t-esc="opt['display_name']"/>
+                                </select>
+
+                                <textarea t-elif="field['type'] in ('text', 'html')" rows="3"
+                                          class="form-control" t-att-name="field['name']"
+                                          t-att-id="field['name']"><t t-esc="field['value'] or ''"/></textarea>
+
+                                <input t-elif="field['type'] in ('integer', 'float', 'monetary')"
+                                       type="number" step="any" class="form-control"
+                                       t-att-name="field['name']" t-att-id="field['name']"
+                                       t-att-value="field['value']"/>
+
+                                <input t-elif="field['type'] == 'date'" type="date"
+                                       class="form-control" t-att-name="field['name']"
+                                       t-att-id="field['name']" t-att-value="field['value']"/>
+
+                                <div t-elif="field['type'] == 'binary'">
+                                    <input type="file" class="form-control"
+                                           t-att-name="field['name']" t-att-id="field['name']"/>
+                                    <small t-if="field['has_file']" class="text-success">Archivo guardado ✓</small>
+                                </div>
+
+                                <input t-else="" type="text" class="form-control"
+                                       t-att-name="field['name']" t-att-id="field['name']"
+                                       t-att-value="field['value']"/>
+                            </t>
+                        </div>
+
+                        <button type="submit" class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
+                    </form>
+
+                    <!-- Firma del cliente (campos nativos) + cierre -->
+                    <form t-att-action="'/visar/field/task/%s/close' % task.id" method="post"
+                          class="card p-3">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <h6 class="mb-2">Firma del cliente</h6>
+
+                        <div t-if="is_signed" class="alert alert-success py-2">
+                            Servicio ya firmado.
+                        </div>
+
+                        <canvas id="visar-signature-pad" class="o_visar_signature border rounded mb-2"
+                                width="600" height="200"></canvas>
+                        <input type="hidden" name="signature" id="visar-signature-data"/>
+                        <button type="button" id="visar-signature-clear"
+                                class="btn btn-outline-secondary btn-sm mb-3">Limpiar firma</button>
+
+                        <label class="form-label">Nombre de quien firma</label>
+                        <input type="text" name="signature_name" class="form-control mb-3"
+                               t-att-value="task.worksheet_signed_by or ''"/>
+
+                        <button type="submit" class="btn btn-success btn-lg">Cerrar servicio</button>
+                    </form>
+
+                    <a t-att-href="'/visar/field/task/%s/report' % task.id"
+                       target="_blank" class="btn btn-link w-100 mt-3">Ver reporte (PDF)</a>
+                </div>
+            </div>
+        </t>
+    </template>
+
+</odoo>

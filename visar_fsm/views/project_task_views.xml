@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="project_task_view_form_visar_fsm" model="ir.ui.view">
+        <field name="name">project.task.form.visar.fsm</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_form2"/>
+        <field name="priority">200</field>
+        <field name="arch" type="xml">
+
+            <!-- Ocultar el campo nativo sale_line_id (label + div contenedor).
+                 El campo sigue existiendo y poblándose; solo se oculta en la UI. -->
+            <xpath expr="//label[@for='sale_line_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//div[@name='sale_line_div']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+
+            <!-- Mostrar la orden de venta completa en su lugar. -->
+            <xpath expr="//div[@name='sale_line_div']" position="after">
+                <field name="visar_sale_order_id"
+                       options="{'no_create': True}"
+                       readonly="1"
+                       invisible="not visar_sale_order_id"/>
+                <field name="visar_technician_ids" widget="many2many_tags"
+                       options="{'no_create': True}"/>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- Reemplaza el Gantt de FSM: agrupa por TÉCNICO (empleado), no por usuario,
+         y en solo lectura (no se reprograma desde aquí). Hereda el Gantt FSM nativo
+         para conservar fechas (planned_date_begin/date_deadline) y el resto del arch.
+         Se desactivan progress_bar y display_unavailability porque calculan carga/
+         disponibilidad sobre user_ids; con empleados no aplican. -->
+    <record id="fsm_project_task_view_gantt_visar" model="ir.ui.view">
+        <field name="name">fsm.project.task.view.gantt.visar</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="industry_fsm.fsm_project_task_view_gantt"/>
+        <field name="arch" type="xml">
+            <gantt position="attributes">
+                <attribute name="default_group_by">visar_technician_ids</attribute>
+                <attribute name="edit">0</attribute>
+                <attribute name="progress_bar"></attribute>
+                <attribute name="display_unavailability">0</attribute>
+                <!-- Abrir en Semana: a escala Día los pills (servicios ~1h) son tan
+                     angostos que no cabe la etiqueta y se ven bloques vacíos. -->
+                <attribute name="default_range">week</attribute>
+            </gantt>
+        </field>
+    </record>
+
+</odoo>

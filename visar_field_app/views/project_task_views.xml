@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="project_task_view_form_visar_field" model="ir.ui.view">
+        <field name="name">project.task.form.visar.field</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_form2"/>
+        <field name="priority">210</field>
+        <field name="arch" type="xml">
+
+            <!-- Atribución del cierre en campo (quién cerró el servicio).
+                 La asignación de técnicos vive en visar_fsm; la worksheet y la firma
+                 son nativas (industry_fsm) y se ven en sus propias secciones. -->
+            <xpath expr="//notebook" position="inside">
+                <page name="visar_field" string="Visar - Campo">
+                    <group>
+                        <group string="Cierre en campo">
+                            <field name="visar_field_closed_by_id" readonly="1"/>
+                            <field name="visar_field_closed_at" readonly="1"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>

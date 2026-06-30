@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Acción de despacho: agenda de TODOS los técnicos (empleados), sin el filtro
+         personal "Mis tareas" que trae la pantalla nativa "Mis tareas".
+         Usa el Gantt FSM (ya agrupado por visar_technician_ids y en solo lectura). -->
+    <record id="action_fsm_planning_by_technician" model="ir.actions.act_window">
+        <field name="name">Agenda por técnico</field>
+        <field name="res_model">project.task</field>
+        <field name="view_mode">gantt,list,form</field>
+        <field name="search_view_id" ref="industry_fsm.project_task_view_search_fsm"/>
+        <field name="domain">[('is_fsm', '=', True), ('project_id', '!=', False)]</field>
+        <field name="context">{'fsm_mode': 1, 'default_scale': 'week'}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No hay servicios planeados</p>
+            <p>Aquí ves la agenda de todos los técnicos asignados.</p>
+        </field>
+    </record>
+
+    <!-- Fija el Gantt por técnico como vista del Gantt de esta acción. -->
+    <record id="action_fsm_planning_by_technician_gantt" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">gantt</field>
+        <field name="view_id" ref="industry_fsm.fsm_project_task_view_gantt"/>
+        <field name="act_window_id" ref="action_fsm_planning_by_technician"/>
+    </record>
+
+    <!-- Menú en Servicio Externo → Planning → Por técnico -->
+    <menuitem id="fsm_menu_planning_by_technician_visar"
+              name="Por técnico"
+              sequence="12"
+              parent="industry_fsm.fsm_menu_planning"
+              action="action_fsm_planning_by_technician"
+              groups="industry_fsm.group_fsm_manager"/>
+
+</odoo>

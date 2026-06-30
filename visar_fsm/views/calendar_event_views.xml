@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="calendar_event_view_form_visar_fsm" model="ir.ui.view">
+        <field name="name">calendar.event.form.visar.fsm</field>
+        <field name="model">calendar.event</field>
+        <field name="inherit_id" ref="calendar.view_calendar_event_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Visar FSM" name="visar_fsm"
+                      invisible="not visar_fsm_task_ids">
+                    <field name="visar_fsm_task_ids" widget="many2many_tags"
+                           string="Servicios externos generados"
+                           readonly="1"/>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

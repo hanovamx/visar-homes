@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_visar_field_session_user,visar.field.session user,model_visar_field_session,base.group_user,1,0,0,0
+access_visar_field_session_hr,visar.field.session hr,model_visar_field_session,hr.group_hr_user,1,1,1,1

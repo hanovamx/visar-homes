@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <menuitem id="visar_field_menu_root" name="App de Campo Visar"
+              sequence="95" groups="hr.group_hr_user"
+              web_icon="visar_field_app,static/description/icon.png"/>
+
+    <menuitem id="visar_field_menu_open_app" name="Abrir App de Campo"
+              parent="visar_field_menu_root"
+              action="visar_field_open_app_action" sequence="10"/>
+
+    <menuitem id="visar_field_menu_sessions" name="Sesiones de técnicos"
+              parent="visar_field_menu_root"
+              action="visar_field_session_action" sequence="20"/>
+
+</odoo>

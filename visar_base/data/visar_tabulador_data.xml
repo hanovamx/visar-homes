@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <!--
+        Catálogo, tramos, zonas y tipos de cita se configuran en backend:
+        Citas → Configuración → Grupos de servicio / Tabulador / Zonas / Reglas de combo.
+    -->
+</odoo>

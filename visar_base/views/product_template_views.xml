@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="product_template_form_view_visar" model="ir.ui.view">
+        <field name="name">product.template.form.visar</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Visar / Citas" name="visar_citas">
+                    <group>
+                        <field name="visar_is_service"/>
+                        <field name="visar_is_valuation"/>
+                        <field name="visar_is_roedores"/>
+                        <field name="visar_dimension_id"
+                               invisible="not visar_is_service"/>
+                    </group>
+                    <separator string="Tabulador (tramo m² → variante)"
+                               invisible="not visar_is_service"/>
+                    <field name="visar_tier_ids" invisible="not visar_is_service">
+                        <list editable="bottom">
+                            <field name="sequence" widget="handle"/>
+                            <field name="name"/>
+                            <field name="m2_min"/>
+                            <field name="m2_max"/>
+                            <field name="product_id"
+                                   domain="[('product_tmpl_id', '=', parent.id)]"/>
+                            <field name="is_valuation"/>
+                            <field name="is_free"/>
+                            <field name="combo_discount_eligible"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="product_template_form_view_visar_optional" model="ir.ui.view">
+        <field name="name">product.template.form.visar.optional</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="sale.product_template_view_form"/>
+        <field name="arch" type="xml">
+            <field name="optional_product_ids" position="after">
+                <field name="visar_optional_line_ids"
+                       invisible="not optional_product_ids"
+                       readonly="not optional_product_ids">
+                    <list editable="bottom" create="false" delete="false">
+                        <field name="optional_product_id" readonly="1" force_save="1"/>
+                        <field name="is_mandatory"/>
+                        <field name="quantity"/>
+                    </list>
+                </field>
+            </field>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <template id="visar_valoracion_page" name="Visar - Valoración técnica">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-6">
+                            <h2 t-esc="appointment_type.name"/>
+                            <div t-if="from_wizard" class="alert alert-info" role="alert">
+                                Continuamos con la reserva de tu visita de valoración técnica.
+                            </div>
+                            <p class="text-muted">
+                                Selecciona tu zona geográfica para ver los horarios disponibles.
+                            </p>
+                            <p t-if="valuation_product" class="mb-3">
+                                Costo de la visita:
+                                <strong t-out="valuation_price"
+                                        t-options="{'widget': 'monetary', 'display_currency': valuation_currency}"/>.
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form t-attf-action="/appointment/#{appointment_type.id}/visar/valoracion/submit"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <div class="mb-3">
+                                    <label class="form-label" for="visar_valoracion_zone_id">Zona</label>
+                                    <select class="form-select" id="visar_valoracion_zone_id"
+                                            name="zone_id" required="required">
+                                        <option value="">Selecciona tu zona…</option>
+                                        <t t-foreach="zones" t-as="zone">
+                                            <option t-att-value="zone.id"
+                                                    t-att-selected="values.get('zone_id') == str(zone.id)"
+                                                    t-esc="zone.name"/>
+                                        </t>
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Ver horarios disponibles</button>
+                                <a t-if="from_wizard" href="/appointment/visar/booking/wizard/valoracion-aviso"
+                                   class="btn btn-link">Volver</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <template id="visar_no_resources" name="Visar - Sin técnicos en zona">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7 text-center">
+                            <h2 t-esc="appointment_type.name"/>
+                            <div class="alert alert-warning mt-3" role="alert">
+                                <p t-if="missing_services">
+                                    No hay técnicos disponibles en la zona
+                                    <strong t-esc="zone.name"/> para:
+                                    <t t-foreach="missing_services" t-as="label">
+                                        <span class="d-block" t-esc="label"/>
+                                    </t>
+                                </p>
+                                <p t-else="">
+                                    No hay técnicos disponibles en la zona
+                                    <strong t-esc="zone.name"/>.
+                                </p>
+                                Intenta con otra zona o contáctanos.
+                            </div>
+                            <a href="/appointment" class="btn btn-secondary">Volver a citas</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+</odoo>

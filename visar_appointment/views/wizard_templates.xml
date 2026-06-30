@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Paso 1: Grupos de servicio -->
+    <template id="visar_wizard_services" name="Visar - Wizard servicios">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Reserva tus servicios</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — ¿Qué servicios necesitas?
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/services"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <t t-foreach="wizard_groups" t-as="group">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="group_ids"
+                                               t-att-id="'group_%s' % group.id"
+                                               t-att-value="group.id"
+                                               t-att-checked="str(group.id) in (values.get('group_ids') or request.httprequest.form.getlist('group_ids') or []) and 'checked' or None"/>
+                                        <label class="form-check-label"
+                                               t-att-for="'group_%s' % group.id"
+                                               t-esc="group.wizard_label or group.name"/>
+                                        <small t-if="group.wizard_help" class="text-muted d-block"
+                                               t-esc="group.wizard_help"/>
+                                    </div>
+                                </t>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Sub-paso: dimensiones de un grupo -->
+    <template id="visar_wizard_group_dimensions" name="Visar - Wizard dimensiones de grupo">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2 t-esc="wizard_group.name"/>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Selecciona las opciones que aplican
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form t-attf-action="/appointment/visar/booking/wizard/group/#{wizard_group.id}"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <t t-foreach="wizard_dimensions" t-as="dimension">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="dimension_ids"
+                                               t-att-id="'dimension_%s' % dimension.id"
+                                               t-att-value="dimension.id"/>
+                                        <label class="form-check-label"
+                                               t-att-for="'dimension_%s' % dimension.id"
+                                               t-esc="dimension.wizard_label or dimension.name"/>
+                                    </div>
+                                </t>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso tramos m² -->
+    <template id="visar_wizard_dimensiones" name="Visar - Wizard dimensiones">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Dimensiones</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Selecciona el rango que corresponda
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/dimensiones"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <t t-foreach="dimension_sections" t-as="section">
+                                    <fieldset class="mb-4">
+                                        <legend class="fs-5" t-esc="section['label']"/>
+                                        <t t-foreach="section['tiers']" t-as="tier">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="radio"
+                                                       t-att-name="section['field_name']"
+                                                       t-att-id="'tier_%s' % tier.id"
+                                                       t-att-value="tier.id"
+                                                       required="required"/>
+                                                <label class="form-check-label"
+                                                       t-att-for="'tier_%s' % tier.id"
+                                                       t-esc="tier.name or tier.display_name"/>
+                                            </div>
+                                        </t>
+                                    </fieldset>
+                                </t>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso calificación: plaga/preventivo, roedores, tipo de plaga -->
+    <template id="visar_wizard_calificacion" name="Visar - Wizard calificación">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Cuéntanos sobre tu plaga</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Estas respuestas ayudan al técnico a preparar el servicio
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/calificacion"
+                                  method="post" class="mt-3" id="visar_calificacion_form">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+
+                                <fieldset class="mb-4">
+                                    <legend class="fs-5">¿Tienes plaga o es preventivo?</legend>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="plaga"
+                                               id="plaga_preventivo" value="preventivo" required="required"
+                                               t-att-checked="values.get('plaga') == 'preventivo' and 'checked' or None"/>
+                                        <label class="form-check-label" for="plaga_preventivo">Es preventivo</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="plaga"
+                                               id="plaga_activa" value="plaga" required="required"
+                                               t-att-checked="values.get('plaga') == 'plaga' and 'checked' or None"/>
+                                        <label class="form-check-label" for="plaga_activa">Tengo plaga activa</label>
+                                    </div>
+                                </fieldset>
+
+                                <fieldset class="mb-4">
+                                    <legend class="fs-5">¿Tienes problema de roedores?</legend>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="roedores"
+                                               id="roedores_si" value="si" required="required"
+                                               t-att-checked="values.get('roedores') == 'si' and 'checked' or None"/>
+                                        <label class="form-check-label" for="roedores_si">Sí, he visto roedores</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="roedores"
+                                               id="roedores_no" value="no" required="required"
+                                               t-att-checked="values.get('roedores') == 'no' and 'checked' or None"/>
+                                        <label class="form-check-label" for="roedores_no">No</label>
+                                    </div>
+                                </fieldset>
+
+                                <fieldset class="mb-4" id="visar_tipo_plaga_fieldset"
+                                          t-att-style="values.get('plaga') == 'plaga' and 'display:block' or 'display:none'">
+                                    <legend class="fs-5">¿Qué plaga tienes? <small class="text-muted">(opcional)</small></legend>
+                                    <t t-set="tipos_sel" t-value="request.httprequest.form.getlist('tipo_plaga')"/>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
+                                               id="tipo_cucarachas" value="cucarachas"
+                                               t-att-checked="'cucarachas' in tipos_sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="tipo_cucarachas">Cucarachas</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
+                                               id="tipo_hormigas" value="hormigas"
+                                               t-att-checked="'hormigas' in tipos_sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="tipo_hormigas">Hormigas</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
+                                               id="tipo_aranas" value="aranas"
+                                               t-att-checked="'aranas' in tipos_sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="tipo_aranas">Arañas</label>
+                                    </div>
+                                </fieldset>
+
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                            </form>
+                            <script type="text/javascript">
+                                (function () {
+                                    var form = document.getElementById('visar_calificacion_form');
+                                    if (!form) { return; }
+                                    var fieldset = document.getElementById('visar_tipo_plaga_fieldset');
+                                    function toggle() {
+                                        var checked = form.querySelector('input[name="plaga"]:checked');
+                                        fieldset.style.display = (checked &amp;&amp; checked.value === 'plaga') ? 'block' : 'none';
+                                    }
+                                    form.querySelectorAll('input[name="plaga"]').forEach(function (el) {
+                                        el.addEventListener('change', toggle);
+                                    });
+                                    toggle();
+                                })();
+                            </script>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Aviso: el rango elegido requiere valoración técnica -->
+    <template id="visar_wizard_valuation_notice" name="Visar - Wizard aviso valoración">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Visita de valoración técnica</h2>
+                            <div class="alert alert-info mt-3" role="alert">
+                                <p class="mb-2">
+                                    Según las dimensiones que indicaste, tu propiedad requiere una
+                                    <strong>visita de valoración técnica</strong> antes de poder
+                                    contratar el servicio directamente.
+                                </p>
+                                <p class="mb-0" t-if="valuation_product">
+                                    Esta visita tiene un costo de
+                                    <strong t-out="valuation_price"
+                                            t-options="{'widget': 'monetary', 'display_currency': valuation_currency}"/>.
+                                    El monto puede abonarse al servicio una vez realizada la valoración.
+                                </p>
+                            </div>
+                            <p class="text-muted">
+                                A continuación te pediremos tu zona geográfica para mostrarte
+                                los horarios disponibles de los técnicos.
+                            </p>
+                            <form action="/appointment/visar/booking/wizard/valoracion-aviso/continuar"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a href="/appointment/visar/booking/wizard/dimensiones" class="btn btn-link">Volver</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso zona -->
+    <template id="visar_wizard_zona" name="Visar - Wizard zona">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Zona geográfica</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — ¿En qué zona está tu propiedad?
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/zona"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <div class="mb-3">
+                                    <label class="form-label" for="visar_zone_id">Zona</label>
+                                    <select class="form-select" id="visar_zone_id" name="zone_id" required="required">
+                                        <option value="">Selecciona tu zona…</option>
+                                        <t t-foreach="zones" t-as="zone">
+                                            <option t-att-value="zone.id"
+                                                    t-att-selected="values.get('zone_id') == str(zone.id)"
+                                                    t-esc="zone.name"/>
+                                        </t>
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Ver horarios disponibles</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <template id="visar_no_common_slots" name="Visar - Sin horario común">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7 text-center">
+                            <h2 t-esc="appointment_type.name"/>
+                            <div class="alert alert-info mt-3" role="alert">
+                                No hay un horario en el que todos los técnicos necesarios estén
+                                disponibles a la vez para los servicios seleccionados
+                                <t t-if="zone"> en la zona <strong t-esc="zone.name"/></t>.
+                                Intenta con otra zona o contáctanos.
+                            </div>
+                            <a href="/appointment/visar/booking" class="btn btn-secondary">Volver al inicio</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+</odoo>

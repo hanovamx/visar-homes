@@ -1,0 +1,10 @@
+.o_visar_field .o_visar_signature {
+    width: 100%;
+    height: 200px;
+    touch-action: none;
+    background-color: #fff;
+}
+
+.o_visar_field img {
+    object-fit: cover;
+}
