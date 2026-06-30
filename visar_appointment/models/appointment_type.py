@@ -28,8 +28,10 @@ class AppointmentType(models.Model):
         self.ensure_one()
         if not zone:
             return self.env['appointment.resource']
-        return self.resource_ids.filtered(
-            lambda r: zone in r.visar_zone_ids and self in r.visar_service_ids)
+        return self.env['appointment.resource'].search([
+            ('visar_zone_ids', 'in', zone.id),
+            ('visar_service_ids', 'in', self.id),
+        ])
 
     def _visar_resolve_tier(self, m2):
         """ Encuentra el tramo (visar.service.tier) cuyo rango contiene m2."""
@@ -181,24 +183,32 @@ class AppointmentType(models.Model):
     @api.model
     def _visar_unlink_questions_from_entry_types(self):
         """Quita preguntas Visar de los tipos de cita para que no aparezcan en el formulario web."""
-        questions = (
+        native_questions = (
             self._visar_question_zona()
             | self._visar_question_metros()
             | self._visar_question_plaga()
             | self._visar_question_roedores()
             | self._visar_question_tipo_plaga()
         )
-        question_ids = questions.ids
-        if not question_ids:
+        # También busca por nombre para cubrir duplicados creados antes del módulo.
+        Question = self.env['appointment.question'].sudo()
+        extra_questions = Question.search([('name', 'in', [
+            'Zona', 'Zona geográfica', 'Metros cuadrados',
+            '¿Tienes plaga o es preventivo?', '¿Tienes problema de roedores?', '¿Qué plaga tienes?',
+        ])])
+        all_question_ids = (native_questions | extra_questions).ids
+        if not all_question_ids:
             return
         for apt_type in (
             self._visar_get_master_appointment_type()
             | self._visar_get_valuation_appointment_type()
         ):
-            to_remove = apt_type.question_ids.filtered(lambda q: q.id in question_ids)
+            to_remove = apt_type.question_ids.filtered(lambda q: q.id in all_question_ids)
             if to_remove:
                 apt_type.sudo().write({'question_ids': [(3, qid) for qid in to_remove.ids]})
-        questions.sudo().write({'is_reusable': False})
+        # Solo marca is_reusable=False en las preguntas nativas del módulo (ya no tienen vínculos).
+        if native_questions:
+            native_questions.sudo().write({'is_reusable': False})
 
     @api.model
     def _visar_selection_dimension_ids(self, selections):
