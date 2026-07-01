@@ -51,7 +51,7 @@
                 <field name="zone_id"/>
                 <filter name="filter_needs_review" string="Por revisar"
                         domain="[('needs_review', '=', True)]"/>
-                <group expand="0" string="Agrupar por">
+                <group>
                     <filter name="group_zone" string="Zona"
                             context="{'group_by': 'zone_id'}"/>
                     <filter name="group_municipality" string="Municipio"
