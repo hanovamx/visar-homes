@@ -12,7 +12,7 @@
                                 Continuamos con la reserva de tu visita de valoración técnica.
                             </div>
                             <p class="text-muted">
-                                Selecciona tu zona geográfica para ver los horarios disponibles.
+                                Indica tu dirección de servicio para ver los horarios disponibles.
                             </p>
                             <p t-if="valuation_product" class="mb-3">
                                 Costo de la visita:
@@ -25,19 +25,8 @@
                             <form t-attf-action="/appointment/#{appointment_type.id}/visar/valoracion/submit"
                                   method="post" class="mt-3">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                                <div class="mb-3">
-                                    <label class="form-label" for="visar_valoracion_zone_id">Zona</label>
-                                    <select class="form-select" id="visar_valoracion_zone_id"
-                                            name="zone_id" required="required">
-                                        <option value="">Selecciona tu zona…</option>
-                                        <t t-foreach="zones" t-as="zone">
-                                            <option t-att-value="zone.id"
-                                                    t-att-selected="values.get('zone_id') == str(zone.id)"
-                                                    t-esc="zone.name"/>
-                                        </t>
-                                    </select>
-                                </div>
-                                <button type="submit" class="btn btn-primary">Ver horarios disponibles</button>
+                                <t t-call="visar_appointment.visar_delivery_address_fields"/>
+                                <button type="submit" class="btn btn-primary mt-3">Ver horarios disponibles</button>
                                 <a t-if="from_wizard" href="/appointment/visar/booking/wizard/valoracion-aviso"
                                    class="btn btn-link">Volver</a>
                             </form>

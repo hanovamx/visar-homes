@@ -75,6 +75,37 @@ class AppointmentType(models.Model):
             'visar_appointment.appointment_question_visar_metros', raise_if_not_found=False)
 
     @api.model
+    def _visar_question_address(self):
+        return self.env.ref(
+            'visar_appointment.appointment_question_visar_direccion', raise_if_not_found=False)
+
+    @api.model
+    def _visar_format_delivery_address(self, address):
+        """Dirección de entrega en una línea legible para el técnico."""
+        if not address:
+            return ''
+        street = (address.get('street') or '').strip()
+        ext_num = (address.get('ext_num') or '').strip()
+        int_num = (address.get('int_num') or '').strip()
+        neighborhood = (address.get('neighborhood') or '').strip()
+        zip_code = (address.get('zip') or '').strip()
+        city = (address.get('city') or '').strip()
+        state = (address.get('state') or '').strip()
+        line = street
+        if ext_num:
+            line = ('%s No. %s' % (line, ext_num)).strip()
+        if int_num:
+            line = ('%s Int. %s' % (line, int_num)).strip()
+        parts = [p for p in [
+            line,
+            neighborhood,
+            'C.P. %s' % zip_code if zip_code else '',
+            city,
+            state,
+        ] if p]
+        return ', '.join(parts)
+
+    @api.model
     def _visar_question_plaga(self):
         return self.env.ref(
             'visar_appointment.appointment_question_visar_plaga', raise_if_not_found=False)
@@ -110,8 +141,9 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_build_native_answer_inputs(self, appointment_type, zone, items=None,
-                                          partner_id=False, selections=None):
-        """Construye appointment.answer.input para zona, m² y calificación capturados fuera del formulario."""
+                                          partner_id=False, selections=None,
+                                          delivery_address=None):
+        """Construye appointment.answer.input para zona, dirección, m² y calificación capturados fuera del formulario."""
         if not appointment_type or not zone:
             return []
         inputs = []
@@ -125,6 +157,15 @@ class AppointmentType(models.Model):
                 **base,
                 'question_id': zona_q.id,
                 'value_text_box': zone.name,
+            })
+
+        direccion_q = self._visar_question_address()
+        address_text = self._visar_format_delivery_address(delivery_address)
+        if direccion_q and address_text:
+            inputs.append({
+                **base,
+                'question_id': direccion_q.id,
+                'value_text_box': address_text,
             })
 
         metros_q = self._visar_question_metros()
@@ -185,6 +226,7 @@ class AppointmentType(models.Model):
         """Quita preguntas Visar de los tipos de cita para que no aparezcan en el formulario web."""
         native_questions = (
             self._visar_question_zona()
+            | self._visar_question_address()
             | self._visar_question_metros()
             | self._visar_question_plaga()
             | self._visar_question_roedores()
@@ -193,7 +235,8 @@ class AppointmentType(models.Model):
         # También busca por nombre para cubrir duplicados creados antes del módulo.
         Question = self.env['appointment.question'].sudo()
         extra_questions = Question.search([('name', 'in', [
-            'Zona', 'Zona geográfica', 'Metros cuadrados',
+            'Zona', 'Zona geográfica', 'Metros cuadrados', 'Dirección de servicio',
+            'Dirección', 'Domicilio', 'Address',
             '¿Tienes plaga o es preventivo?', '¿Tienes problema de roedores?', '¿Qué plaga tienes?',
         ])])
         all_question_ids = (native_questions | extra_questions).ids

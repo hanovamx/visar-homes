@@ -39,7 +39,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'master_appointment_type_id': raw.get('master_appointment_type_id'),
             'selections': dict(raw.get('selections') or {}),
         }
-        for key in ('zone_id', 'appointment_type_id', 'm2', 'items', 'service_pools'):
+        for key in ('zone_id', 'appointment_type_id', 'm2', 'items', 'service_pools',
+                    'delivery_address'):
             if key in raw:
                 payload[key] = raw[key]
         return payload
@@ -279,13 +280,37 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         calification = 1 if self._visar_fumigacion_selected(selections) else 0
         return 1 + substeps + 1 + calification + 1
 
-    # Renderiza el paso de zona (último paso) calculando su número según calificación.
-    def _visar_render_zona(self, selections, values=None, error=None):
+    # Renderiza el paso de dirección (último paso) calculando su número según calificación.
+    def _visar_render_address(self, selections, values=None, error=None):
         step = 5 if self._visar_fumigacion_selected(selections) else 4
         ctx = self._visar_wizard_context_base(
             step, selections=selections, error=error, values=values or {})
-        ctx['zones'] = request.env['visar.zone'].sudo().search([])
         return request.render('visar_appointment.visar_wizard_zona', ctx)
+
+    # Extrae y normaliza los campos de dirección de entrega del formulario.
+    def _visar_extract_address(self, post):
+        keys = ('street', 'ext_num', 'int_num', 'neighborhood', 'zip')
+        return {key: (post.get(key) or '').strip() for key in keys}
+
+    # Resuelve la zona desde el CP y completa ciudad/estado.
+    # Devuelve (zone, address, error): el número interior es opcional; ciudad y
+    # estado se derivan del CP en el servidor (no se confía en el cliente).
+    def _visar_resolve_address_zone(self, post):
+        address = self._visar_extract_address(post)
+        required = ('street', 'ext_num', 'neighborhood', 'zip')
+        if any(not address.get(key) for key in required):
+            return request.env['visar.zone'], address, _(
+                'Completa calle, número exterior, colonia y código postal.')
+        CpModel = request.env['visar.zone.cp'].sudo()
+        cp_record = CpModel._get_cp_record(address['zip'])
+        if not cp_record or not cp_record.zone_id:
+            return request.env['visar.zone'], address, _(
+                'No damos servicio en el código postal %s. Contáctanos.'
+            ) % address['zip']
+        address['zip'] = CpModel._normalize_cp(address['zip'])
+        address['city'] = cp_record.municipality or ''
+        address['state'] = 'Nuevo León'
+        return cp_record.zone_id, address, None
 
     # Construye el dict de contexto base común a todos los pasos del wizard.
     def _visar_wizard_context_base(self, step, selections=None, error=None, values=None):
@@ -506,7 +531,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
         if self._visar_fumigacion_selected(selections):
             return request.redirect('/appointment/visar/booking/wizard/calificacion')
-        return self._visar_render_zona(selections, values=post)
+        return self._visar_render_address(selections, values=post)
 
     # Muestra y procesa el paso de calificación (plaga/preventivo, roedores, tipo de plaga).
     @http.route(['/appointment/visar/booking/wizard/calificacion'],
@@ -517,7 +542,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.redirect('/appointment/visar/booking')
         selections = booking.get('selections') or {}
         if not self._visar_fumigacion_selected(selections):
-            return self._visar_render_zona(selections, values=post)
+            return self._visar_render_address(selections, values=post)
 
         if request.httprequest.method == 'GET':
             ctx = self._visar_wizard_context_base(4, selections=selections, values=post)
@@ -545,7 +570,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         })
         booking = self._visar_get_booking_session()
         selections = booking.get('selections') or {}
-        return self._visar_render_zona(selections, values=post)
+        return self._visar_render_address(selections, values=post)
 
     # Muestra el aviso de que el servicio seleccionado requiere valoración técnica previa.
     @http.route(['/appointment/visar/booking/wizard/valoracion-aviso'],
@@ -589,32 +614,45 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return request.redirect(
             '/appointment/%s/visar/valoracion?from_wizard=1' % valuation_type.id)
 
-    # Procesa la zona elegida, verifica pools de recursos y redirige a la agenda.
-    @http.route(['/appointment/visar/booking/wizard/zona'],
+    # Consulta AJAX: municipio y zona de un CP para autocompletar el formulario.
+    @http.route(['/appointment/visar/cp-info'],
+                type='http', auth='public', website=True, methods=['GET'], sitemap=False)
+    def visar_cp_info(self, cp=None, **kwargs):
+        cp_record = request.env['visar.zone.cp'].sudo()._get_cp_record(cp)
+        if cp_record and cp_record.zone_id:
+            payload = {
+                'found': True,
+                'zip': cp_record.name,
+                'municipality': cp_record.municipality or '',
+                'state': 'Nuevo León',
+                'zone_name': cp_record.zone_id.name,
+            }
+        else:
+            payload = {'found': False}
+        return request.make_json_response(payload)
+
+    # Procesa la dirección de entrega, deriva la zona del CP, verifica pools y redirige.
+    @http.route(['/appointment/visar/booking/wizard/direccion'],
                 type='http', auth='public', website=True, methods=['POST'], sitemap=False)
-    def visar_wizard_zona(self, zone_id=None, **post):
+    def visar_wizard_address(self, **post):
         booking = self._visar_get_booking_session()
         master = self._visar_master_appointment_type()
         if not master:
             return request.not_found()
-        zone = request.env['visar.zone'].sudo().browse(int(zone_id)) if zone_id else request.env['visar.zone']
         selections = booking.get('selections') or {}
         if self._visar_selections_require_valuation(selections):
             return request.redirect('/appointment/visar/booking/wizard/valoracion-aviso')
-        if not zone:
-            ctx = self._visar_wizard_context_base(
-                4, selections=selections, error=_('Selecciona una zona.'), values=post)
-            ctx['zones'] = request.env['visar.zone'].sudo().search([])
-            return request.render('visar_appointment.visar_wizard_zona', ctx)
+
+        zone, address, error = self._visar_resolve_address_zone(post)
+        if error:
+            return self._visar_render_address(selections, values=address, error=error)
 
         AptType = request.env['appointment.type'].sudo()
         items = AptType._visar_resolve_wizard_items(selections)
         if not items:
-            ctx = self._visar_wizard_context_base(
-                4, selections=selections,
-                error=_('No se pudieron resolver los servicios seleccionados.'), values=post)
-            ctx['zones'] = request.env['visar.zone'].sudo().search([])
-            return request.render('visar_appointment.visar_wizard_zona', ctx)
+            return self._visar_render_address(
+                selections, values=address,
+                error=_('No se pudieron resolver los servicios seleccionados.'))
 
         pools, missing = AptType._visar_service_resource_pools(zone, items)
         if missing:
@@ -628,6 +666,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'mode': 'wizard',
             'master_appointment_type_id': master.id,
             'zone_id': zone.id,
+            'delivery_address': address,
             'selections': selections,
             'items': items,
             'service_pools': {key: pool.ids for key, pool in pools.items()},
@@ -654,7 +693,6 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         )
         return request.render('visar_appointment.visar_valoracion_page', {
             'appointment_type': appointment_type,
-            'zones': request.env['visar.zone'].sudo().search([]),
             'valuation_product': valuation_tmpl,
             'valuation_price': ProductTemplate._visar_valuation_price(),
             'valuation_currency': currency,
@@ -663,19 +701,18 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'values': kwargs,
         })
 
-    # Procesa la zona elegida en valoración, guarda sesión y redirige a la agenda.
+    # Procesa la dirección en valoración, deriva la zona del CP y redirige a la agenda.
     @http.route(['/appointment/<int:appointment_type_id>/visar/valoracion/submit'],
                 type='http', auth='public', website=True, methods=['POST'], sitemap=False)
-    def visar_valoracion_submit(self, appointment_type_id, zone_id=None, **kwargs):
+    def visar_valoracion_submit(self, appointment_type_id, **kwargs):
         appointment_type = request.env['appointment.type'].sudo().browse(appointment_type_id)
         if not appointment_type.exists() or self._visar_resolve_entry_flow(appointment_type) != 'valuation':
             return request.not_found()
-        zone = request.env['visar.zone'].sudo().browse(int(zone_id)) if zone_id else None
-        if not zone:
+        zone, address, error = self._visar_resolve_address_zone(kwargs)
+        if error:
             return self.visar_valoracion(
-                appointment_type_id,
-                error=_('Selecciona tu zona geográfica.'),
-                zone_id=zone_id,
+                appointment_type_id, error=error,
+                from_wizard=kwargs.get('from_wizard'), **address,
             )
         eligible = appointment_type._visar_eligible_resources(zone)
         if not eligible:
@@ -689,6 +726,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'mode': 'valuation',
             'appointment_type_id': appointment_type_id,
             'zone_id': zone.id,
+            'delivery_address': address,
             'items': [{
                 'dimension_id': False,
                 'variant_id': variant.id if variant else False,
@@ -833,6 +871,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         visar_inputs = AptType._visar_build_native_answer_inputs(
             appointment_type, zone, items=items, partner_id=customer.id,
             selections=booking.get('selections'),
+            delivery_address=booking.get('delivery_address'),
         )
         if not visar_inputs:
             return answer_input_values or [], []
@@ -955,6 +994,48 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         request.session.pop(SESSION_KEY, None)
         return response
 
+    # Crea (o reutiliza) un contacto de entrega tipo 'delivery' con la dirección
+    # capturada y lo asigna como dirección de envío (partner_shipping_id) del pedido.
+    def _visar_apply_delivery_address(self, order_sudo, booking, partner_name=None):
+        address = (booking or {}).get('delivery_address') or {}
+        if not address or not order_sudo.partner_id:
+            return
+        Partner = request.env['res.partner'].sudo()
+        commercial = order_sudo.partner_id.commercial_partner_id
+        country = request.env.ref('base.mx', raise_if_not_found=False)
+        state = request.env['res.country.state'].sudo().search([
+            ('country_id', '=', country.id), ('code', '=', 'NL'),
+        ], limit=1) if country else request.env['res.country.state'].sudo()
+
+        street = (address.get('street') or '').strip()
+        ext_num = (address.get('ext_num') or '').strip()
+        int_num = (address.get('int_num') or '').strip()
+        if ext_num:
+            street = ('%s No. %s' % (street, ext_num)).strip()
+        if int_num:
+            street = ('%s Int. %s' % (street, int_num)).strip()
+
+        vals = {
+            'name': partner_name or order_sudo.partner_id.name or _('Dirección de servicio'),
+            'type': 'delivery',
+            'parent_id': commercial.id,
+            'street': street,
+            'street2': address.get('neighborhood') or '',
+            'zip': address.get('zip') or '',
+            'city': address.get('city') or '',
+            'state_id': state.id if state else False,
+            'country_id': country.id if country else False,
+        }
+        # Reutiliza un contacto de entrega idéntico si ya existe.
+        existing = Partner.search([
+            ('parent_id', '=', commercial.id),
+            ('type', '=', 'delivery'),
+            ('street', '=', vals['street']),
+            ('zip', '=', vals['zip']),
+        ], limit=1)
+        delivery_partner = existing or Partner.create(vals)
+        order_sudo.partner_shipping_id = delivery_partner.id
+
     # Construye el carrito multi-servicio del wizard y redirige a /shop/cart.
     def _visar_fill_wizard_cart_and_redirect(self, calendar_booking, booking):
         from odoo.addons.base.models.ir_qweb import keep_query
@@ -1022,6 +1103,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             if not feedback_dict.get('invalid_fields'):
                 order_sudo._update_address(booked_by_partner.id, ['partner_id'])
 
+        self._visar_apply_delivery_address(
+            order_sudo, booking, partner_name=calendar_booking.name)
         return request.redirect("/shop/cart")
 
     # Construye el carrito con líneas multi-servicio y redirige al checkout de pago.
@@ -1074,6 +1157,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 )
                 if not feedback_dict.get('invalid_fields'):
                     order_sudo._update_address(booked_by_partner.id, ['partner_id'])
+            self._visar_apply_delivery_address(
+                order_sudo, booking, partner_name=calendar_booking.name)
             return request.redirect("/shop/cart")
 
         apt_type = calendar_booking.appointment_type_id

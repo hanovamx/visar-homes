@@ -1,6 +1,96 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- Fragmento reutilizable: campos de dirección de entrega.
+         La zona se deriva del código postal; Ciudad/Estado se autocompletan. -->
+    <template id="visar_delivery_address_fields" name="Visar - Campos dirección de entrega">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label" for="visar_addr_street">Calle</label>
+                <input type="text" class="form-control" id="visar_addr_street"
+                       name="street" required="required"
+                       t-att-value="values.get('street') or ''"/>
+            </div>
+            <div class="col-6">
+                <label class="form-label" for="visar_addr_ext_num">Número exterior</label>
+                <input type="text" class="form-control" id="visar_addr_ext_num"
+                       name="ext_num" required="required"
+                       t-att-value="values.get('ext_num') or ''"/>
+            </div>
+            <div class="col-6">
+                <label class="form-label" for="visar_addr_int_num">
+                    Número interior <small class="text-muted">(opcional)</small>
+                </label>
+                <input type="text" class="form-control" id="visar_addr_int_num"
+                       name="int_num" t-att-value="values.get('int_num') or ''"/>
+            </div>
+            <div class="col-12">
+                <label class="form-label" for="visar_addr_neighborhood">Colonia</label>
+                <input type="text" class="form-control" id="visar_addr_neighborhood"
+                       name="neighborhood" required="required"
+                       t-att-value="values.get('neighborhood') or ''"/>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="visar_addr_zip">Código Postal</label>
+                <input type="text" class="form-control" id="visar_addr_zip"
+                       name="zip" required="required" inputmode="numeric"
+                       maxlength="5" pattern="[0-9]{5}"
+                       t-att-value="values.get('zip') or ''"/>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="visar_addr_city">Ciudad / Municipio</label>
+                <input type="text" class="form-control" id="visar_addr_city"
+                       name="city" readonly="readonly"
+                       t-att-value="values.get('city') or ''"/>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="visar_addr_state">Estado</label>
+                <input type="text" class="form-control" id="visar_addr_state"
+                       name="state" readonly="readonly"
+                       t-att-value="values.get('state') or 'Nuevo León'"/>
+            </div>
+        </div>
+        <div id="visar_cp_feedback" class="form-text mt-2"></div>
+        <script type="text/javascript">
+            (function () {
+                var zip = document.getElementById('visar_addr_zip');
+                var city = document.getElementById('visar_addr_city');
+                var state = document.getElementById('visar_addr_state');
+                var feedback = document.getElementById('visar_cp_feedback');
+                if (!zip) { return; }
+                function lookup() {
+                    var cp = (zip.value || '').replace(/\D/g, '').slice(0, 5);
+                    if (cp.length !== 5) {
+                        if (feedback) { feedback.textContent = ''; }
+                        return;
+                    }
+                    fetch('/appointment/visar/cp-info?cp=' + encodeURIComponent(cp), {
+                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    }).then(function (r) { return r.json(); }).then(function (data) {
+                        if (data &amp;&amp; data.found) {
+                            if (city) { city.value = data.municipality || ''; }
+                            if (state) { state.value = data.state || 'Nuevo León'; }
+                            if (feedback) {
+                                feedback.className = 'form-text mt-2 text-success';
+                                feedback.textContent = 'Zona detectada: ' + (data.zone_name || '');
+                            }
+                        } else {
+                            if (city) { city.value = ''; }
+                            if (feedback) {
+                                feedback.className = 'form-text mt-2 text-danger';
+                                feedback.textContent =
+                                    'No damos servicio en este código postal. Contáctanos.';
+                            }
+                        }
+                    }).catch(function () {});
+                }
+                zip.addEventListener('change', lookup);
+                zip.addEventListener('blur', lookup);
+                if (zip.value) { lookup(); }
+            })();
+        </script>
+    </template>
+
     <!-- Paso 1: Grupos de servicio -->
     <template id="visar_wizard_services" name="Visar - Wizard servicios">
         <t t-call="website.layout">
@@ -261,36 +351,26 @@
         </t>
     </template>
 
-    <!-- Paso zona -->
-    <template id="visar_wizard_zona" name="Visar - Wizard zona">
+    <!-- Paso dirección de entrega (la zona se deriva del código postal) -->
+    <template id="visar_wizard_zona" name="Visar - Wizard dirección">
         <t t-call="website.layout">
             <div id="wrap" class="oe_structure">
                 <div class="container my-4">
                     <div class="row justify-content-center">
                         <div class="col-lg-7">
-                            <h2>Zona geográfica</h2>
+                            <h2>Dirección de servicio</h2>
                             <p class="text-muted">
                                 Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
-                                — ¿En qué zona está tu propiedad?
+                                — ¿Dónde realizaremos el servicio?
                             </p>
                             <div t-if="error" class="alert alert-warning" role="alert">
                                 <t t-esc="error"/>
                             </div>
-                            <form action="/appointment/visar/booking/wizard/zona"
+                            <form action="/appointment/visar/booking/wizard/direccion"
                                   method="post" class="mt-3">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                                <div class="mb-3">
-                                    <label class="form-label" for="visar_zone_id">Zona</label>
-                                    <select class="form-select" id="visar_zone_id" name="zone_id" required="required">
-                                        <option value="">Selecciona tu zona…</option>
-                                        <t t-foreach="zones" t-as="zone">
-                                            <option t-att-value="zone.id"
-                                                    t-att-selected="values.get('zone_id') == str(zone.id)"
-                                                    t-esc="zone.name"/>
-                                        </t>
-                                    </select>
-                                </div>
-                                <button type="submit" class="btn btn-primary">Ver horarios disponibles</button>
+                                <t t-call="visar_appointment.visar_delivery_address_fields"/>
+                                <button type="submit" class="btn btn-primary mt-3">Ver horarios disponibles</button>
                             </form>
                         </div>
                     </div>

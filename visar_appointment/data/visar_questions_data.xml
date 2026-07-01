@@ -17,6 +17,14 @@
         <field name="sequence">2</field>
     </record>
 
+    <record id="appointment_question_visar_direccion" model="appointment.question">
+        <field name="name">Dirección de servicio</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">3</field>
+    </record>
+
     <record id="appointment_question_visar_plaga" model="appointment.question">
         <field name="name">¿Tienes plaga o es preventivo?</field>
         <field name="question_type">char</field>
