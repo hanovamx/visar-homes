@@ -1,6 +1,8 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_visar_zone_user,visar.zone.user,model_visar_zone,base.group_user,1,0,0,0
 access_visar_zone_manager,visar.zone.manager,model_visar_zone,appointment.group_appointment_manager,1,1,1,1
+access_visar_zone_cp_user,visar.zone.cp.user,model_visar_zone_cp,base.group_user,1,0,0,0
+access_visar_zone_cp_manager,visar.zone.cp.manager,model_visar_zone_cp,appointment.group_appointment_manager,1,1,1,1
 access_visar_service_tier_user,visar.service.tier.user,model_visar_service_tier,base.group_user,1,0,0,0
 access_visar_service_tier_manager,visar.service.tier.manager,model_visar_service_tier,appointment.group_appointment_manager,1,1,1,1
 access_visar_service_group_user,visar.service.group.user,model_visar_service_group,base.group_user,1,0,0,0

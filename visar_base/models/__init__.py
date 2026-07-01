@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from . import visar_zone
+from . import visar_zone_cp
 from . import visar_service_group
 from . import visar_service_dimension
 from . import visar_combo_rule

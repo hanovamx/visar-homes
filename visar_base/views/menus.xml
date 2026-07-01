@@ -7,6 +7,12 @@
               action="visar_zone_action"
               sequence="80"/>
 
+    <menuitem id="menu_visar_zone_cp"
+              name="Códigos postales"
+              parent="appointment.appointment_menu_config"
+              action="visar_zone_cp_action"
+              sequence="80"/>
+
     <menuitem id="menu_visar_service_group"
               name="Grupos de servicio"
               parent="appointment.appointment_menu_config"

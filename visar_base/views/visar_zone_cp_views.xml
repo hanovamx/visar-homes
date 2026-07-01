@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_zone_cp_view_list" model="ir.ui.view">
+        <field name="name">visar.zone.cp.list</field>
+        <field name="model">visar.zone.cp</field>
+        <field name="arch" type="xml">
+            <list string="Códigos postales" editable="bottom">
+                <field name="name"/>
+                <field name="municipality"/>
+                <field name="zone_id"/>
+                <field name="colonia_count" optional="hide"/>
+                <field name="criterion" optional="hide"/>
+                <field name="needs_review" optional="show"/>
+                <field name="zone_code" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_zone_cp_view_form" model="ir.ui.view">
+        <field name="name">visar.zone.cp.form</field>
+        <field name="model">visar.zone.cp</field>
+        <field name="arch" type="xml">
+            <form string="Código postal">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="municipality"/>
+                            <field name="zone_id"/>
+                        </group>
+                        <group>
+                            <field name="zone_code"/>
+                            <field name="colonia_count"/>
+                            <field name="criterion"/>
+                            <field name="needs_review"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_zone_cp_view_search" model="ir.ui.view">
+        <field name="name">visar.zone.cp.search</field>
+        <field name="model">visar.zone.cp</field>
+        <field name="arch" type="xml">
+            <search string="Códigos postales">
+                <field name="name" string="Código postal"/>
+                <field name="municipality"/>
+                <field name="zone_id"/>
+                <filter name="filter_needs_review" string="Por revisar"
+                        domain="[('needs_review', '=', True)]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_zone" string="Zona"
+                            context="{'group_by': 'zone_id'}"/>
+                    <filter name="group_municipality" string="Municipio"
+                            context="{'group_by': 'municipality'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_zone_cp_action" model="ir.actions.act_window">
+        <field name="name">Códigos postales</field>
+        <field name="res_model">visar.zone.cp</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="visar_zone_cp_view_search"/>
+    </record>
+
+</odoo>
