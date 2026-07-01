@@ -223,7 +223,10 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_unlink_questions_from_entry_types(self):
-        """Quita preguntas Visar de los tipos de cita para que no aparezcan en el formulario web."""
+        """Quita las preguntas Visar de TODOS los tipos de cita para que no aparezcan
+        en el formulario web (se responden por código). Idempotente: puede ejecutarse
+        cuantas veces haga falta. Cubre tanto las preguntas del módulo (por external id)
+        como las creadas manualmente (por nombre, incluidas variantes de tipo selección)."""
         native_questions = (
             self._visar_question_zona()
             | self._visar_question_address()
@@ -232,24 +235,26 @@ class AppointmentType(models.Model):
             | self._visar_question_roedores()
             | self._visar_question_tipo_plaga()
         )
-        # También busca por nombre para cubrir duplicados creados antes del módulo.
+        # También busca por nombre para cubrir duplicados/manuales creados fuera del módulo.
         Question = self.env['appointment.question'].sudo()
         extra_questions = Question.search([('name', 'in', [
-            'Zona', 'Zona geográfica', 'Metros cuadrados', 'Dirección de servicio',
-            'Dirección', 'Domicilio', 'Address',
+            'Zona', 'Zona geográfica', 'Zona Visar', 'Zona geografica',
+            'Metros cuadrados', 'm2', 'M2', 'Metros',
+            'Dirección de servicio', 'Dirección', 'Direccion', 'Dirección de entrega',
+            'Domicilio', 'Address', 'Dirección de servicio (Visar)',
             '¿Tienes plaga o es preventivo?', '¿Tienes problema de roedores?', '¿Qué plaga tienes?',
         ])])
-        all_question_ids = (native_questions | extra_questions).ids
-        if not all_question_ids:
+        all_questions = native_questions | extra_questions
+        if not all_questions:
             return
-        for apt_type in (
-            self._visar_get_master_appointment_type()
-            | self._visar_get_valuation_appointment_type()
-        ):
-            to_remove = apt_type.question_ids.filtered(lambda q: q.id in all_question_ids)
+        # Quita de CUALQUIER tipo de cita que las referencie (question_ids es Many2many),
+        # no solo del maestro/valoración.
+        linked_types = self.sudo().search([('question_ids', 'in', all_questions.ids)])
+        for apt_type in linked_types:
+            to_remove = apt_type.question_ids & all_questions
             if to_remove:
-                apt_type.sudo().write({'question_ids': [(3, qid) for qid in to_remove.ids]})
-        # Solo marca is_reusable=False en las preguntas nativas del módulo (ya no tienen vínculos).
+                apt_type.write({'question_ids': [(3, qid) for qid in to_remove.ids]})
+        # Las preguntas nativas del módulo se responden por código: no reutilizables.
         if native_questions:
             native_questions.sudo().write({'is_reusable': False})
 
