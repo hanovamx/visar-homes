@@ -314,16 +314,36 @@ la calidad del dato: **Mapbox** (token compartido con el mapa nativo) o Google
 | Botón | Etapa nativa | Efectos |
 |---|---|---|
 | Voy en camino | En camino (`stage_1`) | — |
-| Confirmar llegada | *(sigue En camino)* | sella `visar_arrived_at`; muestra leyenda + opción de espera |
-| Esperar al cliente | *(sigue En camino)* | sella `visar_waiting_start` + `visar_waiting_minutes`; cuenta regresiva |
-| Comenzar servicio | En ejecución (`stage_2`) | sella `visar_service_start` (cronómetro oculto arranca) |
+| Confirmar llegada | **En ejecución (`stage_2`)** ⬅ salta directo | sella `visar_arrived_at`; muestra leyenda + opción de espera |
+| Esperar al cliente | *(sigue En ejecución)* | sella `visar_waiting_start` + `visar_waiting_minutes`; cuenta regresiva |
+| Comenzar servicio | *(sigue En ejecución)* | sella `visar_service_start` (cronómetro oculto arranca) + **registra `visar_client_wait_minutes`** |
 | Cerrar servicio | Completado (`stage_3`) + `state='1_done'` | **exige firma + nombre**; escribe timesheet; atribución |
 | Cliente no llegó | Incidencia—Reprogramar (`stage_4`) + `state='1_canceled'` | actividad + nota chatter; vuelve a la lista |
 
-`_task_flow_state(task)` deriva la sub-fase (`programado`/`en_camino`/`llego`/`esperando`/
-`en_ejecucion`) combinando `stage_id` con los sellos de tiempo (llegada/espera/servicio no tienen
-etapa nativa propia). La plantilla muestra **un** botón principal por fase; "Cerrar servicio" es el
-form de firma de siempre (abajo), visible solo en `en_ejecucion`.
+> **Cambio 08-jul (bis):** "Confirmar llegada" **salta la etapa FSM directo a *En ejecución*** (antes se
+> quedaba en *En camino*), para que gestión vea "ejecutando" desde que el técnico llega. Las sub-fases
+> de la app (`llego → esperando → en_ejecucion`) ahora **conviven dentro de la etapa En ejecución** y se
+> distinguen por los sellos de tiempo. Al pulsar "Comenzar servicio" se guarda cuánto se esperó al
+> cliente (`visar_client_wait_minutes` = ahora − `visar_waiting_start`; 0 si no se inició la espera).
+
+`_task_flow_state(task)` es **primario por etapa** (`stage_id` manda → si gestión la cambia en el
+backend, la app lo refleja); dentro de *En ejecución* refina la sub-fase por los sellos
+(`service_start`→`en_ejecucion`, `waiting_start`→`esperando`, `arrived_at`→`llego`, sin sellos →
+`en_ejecucion`). La plantilla muestra **un** botón principal por fase; "Cerrar servicio" es el form de
+firma de siempre (abajo), visible solo en `en_ejecucion`. Estados terminales `cerrado`/`reagenda`
+muestran una etiqueta.
+
+### Sincronía de etapa app ↔ backend (`write` override)
+
+Como el estado es la etapa nativa **y** hay sellos de sub-fase, un cambio de etapa hecho **a mano en
+"Servicio externo"** debe reflejarse en la app. `project.task.write` (override en `models/project_task.py`)
+detecta el cambio de `stage_id` y llama `_visar_reconcile_flow_markers`: si la etapa nueva **no es de
+servicio** (≠ En ejecución/Completado) **limpia** los sellos de sub-fase (`visar_arrived_at`,
+`visar_waiting_start/_minutes`, `visar_service_start`, `visar_client_wait_minutes`). Sin esto, al
+revertir la etapa quedaban sellos obsoletos que "ganaban" y congelaban la app (timer/¡Tiempo!/reagenda
+fantasma tras reabrir). Solo actúa cuando la etapa **cambia** de verdad (no en un guardado sin cambio),
+y el `write` de limpieza no toca `stage_id` (no reentra). Cambios por **SQL directo** lo saltan (no es
+ruta normal).
 
 ### Temporizador de espera (editable) + alarma
 
@@ -334,6 +354,10 @@ form de firma de siempre (abajo), visible solo en `en_ejecucion`.
   recalcula al cargar (sobrevive recargas). Al expirar: **beeps WebAudio** + `navigator.vibrate` +
   banner rojo parpadeante + revela **"Cliente no llegó"**. Audio en móvil: se desbloquea el
   `AudioContext` con el primer toque tras la recarga (no hay asset de sonido).
+- ⚠️ **Fix de huso (08-jul bis):** `waiting_start_iso` se pasa con sufijo **`'Z'`**
+  (`task.visar_waiting_start.isoformat() + 'Z'`). Odoo guarda datetimes **naive en UTC**; sin el
+  marcador, `new Date(...)` los interpreta como hora **local** y el cronómetro arrancaba desfasado
+  por el offset del huso (p. ej. `360:59` en Monterrey UTC-6 para 1 min).
 - Configuración: `ir.config_parameter visar_field.waiting_minutes` (default **10** por código,
   overrideable en Parámetros del sistema); helpers `_default_waiting_minutes` / `_coerce_waiting_minutes`.
 
@@ -361,16 +385,21 @@ el contacto de servicio (entrega) suele **no** tener teléfono → cae al client
 ### Campos nuevos en `project.task`
 
 `visar_arrived_at`, `visar_waiting_start`, `visar_waiting_minutes`, `visar_service_start`,
-`visar_reschedule_requested_by_id`, `visar_reschedule_requested_at`. (Se reusan `visar_field_closed_by_id/_at`.)
+**`visar_client_wait_minutes`** (espera al cliente, min), `visar_reschedule_requested_by_id`,
+`visar_reschedule_requested_at`. (Se reusan `visar_field_closed_by_id/_at`.) Todos se muestran
+(readonly) en la pestaña **"Visar - Campo"** del formulario de tarea (`views/project_task_views.xml`).
 
 ### Rutas / archivos
 
 - `POST …/task/<id>/status` con `action ∈ {enroute, arrived, waiting, start, reschedule}` (redirige al
-  detalle; `reschedule` a la lista). `waiting` guarda los minutos POSTeados.
+  detalle; `reschedule` a la lista). `arrived` → etapa En ejecución; `waiting` guarda los minutos
+  POSTeados; `start` calcula `visar_client_wait_minutes` y sella `service_start`.
 - `field_task_close` ampliada (validación + etapa + timesheet). `field_task_detail` context:
-  `flow_state`, `contact`, `waiting_minutes`, `waiting_start_iso`, `close_error`.
+  `flow_state`, `contact`, `waiting_minutes`, `waiting_start_iso` (con `'Z'`), `close_error`.
+- `project.task.write` override (`_visar_reconcile_flow_markers`).
 - `controllers/main.py`, `models/project_task.py`, `views/field_app_templates.xml`,
-  `static/src/js/field_app.js` (`initWaiting` + validación de cierre), `static/src/css/field_app.css`.
+  `views/project_task_views.xml`, `static/src/js/field_app.js` (`initWaiting` + validación de cierre),
+  `static/src/css/field_app.css`.
 
 ### Verificado (E2E contra `visar_prod`, 08-jul)
 
@@ -560,9 +589,11 @@ seguiría llamando al mismo contrato de controlador.
 - **"Mis servicios de hoy" es inexacto** — `_employee_tasks` no filtra por fecha; muestra todas las
   abiertas. Agregar filtro o corregir la etiqueta.
 - **Worksheet y cierre son forms separados** — cerrar sin guardar la worksheet pierde lo escrito.
-- **Cierre sin validación** — cierra sin firma, sin fotos y con worksheet vacía.
+- **Cierre sin validación** — **[PARCIAL 08-jul-2026]** ahora exige **firma + nombre** (JS + servidor,
+  Req 2); sigue **sin** validar worksheet/fotos ni `required`/condicional (I-05).
 - ~~**Sin campos relacionales en worksheet** (o2m/m2m)~~ — **[RESUELTO 07-jul-2026]** o2m (tarjetas) + m2m (casillas) + imágenes por línea. Nuevo pendiente: la app no aplica `required`/condicional.
-- **PIN en texto plano y sin throttling** — aceptable en prototipo, no en producción.
+- **PIN en texto plano, sin throttling y SIN unicidad** — en `visar_prod` el PIN `123` está duplicado
+  en dos empleados → atribución no determinista (ver I-09). Aceptable en prototipo, no en producción.
 - **Sin captura offline** — un `project.task` en `1_done` desaparece de la lista del técnico
   (`1_done ∈ CLOSED_STATES`); toda la operación asume conexión.
 

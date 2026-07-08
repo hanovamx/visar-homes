@@ -190,12 +190,16 @@ class VisarFieldApp(http.Controller):
         if s4 and stage == s4:
             return 'reagenda'
         if s2 and stage == s2:
-            return 'en_ejecucion'
-        if s1 and stage == s1:
+            # 'Confirmar llegada' ya movió la etapa a En ejecución; las sub-fases
+            # (llegada → espera → servicio) se distinguen por los sellos de tiempo.
+            if task.visar_service_start:
+                return 'en_ejecucion'
             if task.visar_waiting_start:
                 return 'esperando'
             if task.visar_arrived_at:
                 return 'llego'
+            return 'en_ejecucion'  # etapa puesta a mano sin sellos: servicio en curso
+        if s1 and stage == s1:
             return 'en_camino'
         return 'programado'  # Programado o cualquier otra etapa
 
@@ -1005,14 +1009,19 @@ class VisarFieldApp(http.Controller):
         elif action == 'arrived':
             if not task.visar_arrived_at:
                 task.visar_arrived_at = fields.Datetime.now()
+            task._visar_set_stage(2)  # llegada → directo a En ejecución (etapa FSM)
         elif action == 'waiting':
             # Guarda los minutos elegidos y (re)sella el inicio de espera.
             task.visar_waiting_minutes = self._coerce_waiting_minutes(post.get('minutes'))
             task.visar_waiting_start = fields.Datetime.now()
         elif action == 'start':
+            # Registra cuánto se esperó al cliente (de 'Esperar al cliente' hasta ahora).
+            if task.visar_waiting_start and not task.visar_service_start:
+                waited = fields.Datetime.now() - task.visar_waiting_start
+                task.visar_client_wait_minutes = max(waited.total_seconds() / 60.0, 0.0)
             if not task.visar_service_start:
                 task.visar_service_start = fields.Datetime.now()
-            task._visar_set_stage(2)  # En ejecución
+            task._visar_set_stage(2)  # ya está En ejecución; no cambia de etapa
         elif action == 'reschedule':
             task._visar_flag_reschedule(employee)
             return request.redirect('/visar/field/tasks')
