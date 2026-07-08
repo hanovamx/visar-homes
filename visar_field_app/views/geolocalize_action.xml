@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Acción de gestión: geolocaliza los clientes de servicios abiertos que aún
+         no tienen coordenadas, para que aparezcan en el mapa de la app de campo.
+         La ejecuta gestión (hr.group_hr_user), no los técnicos. -->
+    <record id="visar_field_geolocalize_action" model="ir.actions.server">
+        <field name="name">Geolocalizar direcciones de clientes</field>
+        <field name="model_id" ref="project.model_project_task"/>
+        <field name="state">code</field>
+        <field name="code">action = model._visar_geolocalize_service_partners()</field>
+    </record>
+
+    <menuitem id="visar_field_menu_geolocalize" name="Geolocalizar direcciones de clientes"
+              parent="visar_field_menu_root"
+              action="visar_field_geolocalize_action" sequence="30"
+              groups="hr.group_hr_user"/>
+
+</odoo>

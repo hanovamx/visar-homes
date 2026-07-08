@@ -35,7 +35,7 @@
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
                             <h4 class="mb-0">Hola, <t t-esc="employee.name"/></h4>
-                            <small class="text-muted">Mis servicios de hoy</small>
+                            <small class="text-muted">Mis servicios</small>
                         </div>
                         <form action="/visar/field/logout" method="post" class="m-0">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
@@ -47,13 +47,25 @@
                         No tienes servicios pendientes asignados.
                     </div>
 
-                    <div class="list-group">
+                    <!-- Alternador Lista / Mapa (por defecto: Lista) -->
+                    <div t-if="tasks" class="btn-group w-100 mb-3 o_visar_view_toggle" role="group">
+                        <button type="button"
+                                class="btn btn-outline-primary active o_visar_view_btn"
+                                data-view="list">Lista</button>
+                        <button type="button"
+                                class="btn btn-outline-primary o_visar_view_btn"
+                                data-view="map">Mapa</button>
+                    </div>
+
+                    <!-- Panel Lista -->
+                    <div class="list-group o_visar_view_panel" data-view="list">
                         <a t-foreach="tasks" t-as="task"
                            t-att-href="'/visar/field/task/%s' % task.id"
                            class="list-group-item list-group-item-action">
-                            <div class="d-flex justify-content-between">
+                            <div class="d-flex justify-content-between align-items-start">
                                 <strong t-esc="task.name"/>
-                                <span t-if="task.planned_date_begin" class="badge text-bg-light"
+                                <span t-if="task.planned_date_begin"
+                                      class="badge text-bg-light flex-shrink-0 text-nowrap ms-2 align-self-start"
                                       t-esc="task.planned_date_begin"/>
                             </div>
                             <div t-if="task.partner_id" class="small text-muted">
@@ -63,6 +75,16 @@
                                 <t t-esc="task.partner_id.contact_address_complete"/>
                             </div>
                         </a>
+                    </div>
+
+                    <!-- Panel Mapa (oculto por defecto) -->
+                    <div t-if="tasks" class="o_visar_view_panel d-none" data-view="map">
+                        <div t-if="not geocoded_count" class="alert alert-warning py-2 small">
+                            Sin ubicaciones geolocalizadas todavía. Las direcciones se
+                            muestran en la lista y en cada servicio con "Abrir en Google Maps".
+                        </div>
+                        <div id="visar-field-map"
+                             t-att-data-tasks="map_tasks_json"></div>
                     </div>
                 </div>
             </div>
@@ -84,8 +106,110 @@
                     <div t-if="task.partner_id" class="text-muted mb-1">
                         <t t-esc="task.partner_id.name"/>
                     </div>
-                    <div t-if="task.partner_id.contact_address_complete" class="text-muted mb-3 small">
+                    <!-- Contacto del cliente: teléfono + Llamar / WhatsApp -->
+                    <div t-if="contact" class="mb-1 small d-flex align-items-center gap-2">
+                        <span t-esc="contact['phone_display']"/>
+                        <a t-att-href="contact['tel_href']"
+                           class="btn btn-outline-secondary btn-sm py-0">📞 Llamar</a>
+                        <a t-if="contact['wa_href']" t-att-href="contact['wa_href']"
+                           target="_blank" rel="noopener"
+                           class="btn btn-outline-success btn-sm py-0">WhatsApp</a>
+                    </div>
+                    <div t-if="task.partner_id.contact_address_complete" class="text-muted mb-1 small">
                         <t t-esc="task.partner_id.contact_address_complete"/>
+                    </div>
+                    <a t-if="maps_url" t-att-href="maps_url" target="_blank"
+                       rel="noopener" class="btn btn-outline-secondary btn-sm mb-3">
+                        📍 Abrir en Google Maps
+                    </a>
+
+                    <!-- ================= Flujo en sitio (etapas nativas) ================= -->
+                    <div class="o_visar_flow mb-3">
+                        <t t-set="status_action"
+                           t-value="'/visar/field/task/%s/status' % task.id"/>
+
+                        <!-- Programado → Voy en camino -->
+                        <form t-if="flow_state == 'programado'" t-att-action="status_action"
+                              method="post" class="m-0">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <input type="hidden" name="action" value="enroute"/>
+                            <button type="submit" class="btn btn-primary btn-lg w-100">🚗 Voy en camino</button>
+                        </form>
+
+                        <!-- En camino → Confirmar llegada -->
+                        <form t-if="flow_state == 'en_camino'" t-att-action="status_action"
+                              method="post" class="m-0">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <input type="hidden" name="action" value="arrived"/>
+                            <button type="submit" class="btn btn-primary btn-lg w-100">📍 Confirmar llegada</button>
+                        </form>
+
+                        <!-- Llegó → acción principal "Comenzar servicio"; la espera es
+                             una opción secundaria (temporizador + botón discreto) arriba. -->
+                        <t t-if="flow_state == 'llego'">
+                            <div class="alert alert-info py-2">
+                                Asegúrese de avisarle al cliente que ya llegó, tiene
+                                <t t-esc="waiting_minutes"/> mins para abrir tras ser notificado.
+                            </div>
+                            <!-- Opción secundaria: temporizador editable + iniciar espera -->
+                            <form t-att-action="status_action" method="post"
+                                  class="m-0 mb-2 border rounded px-2 py-2 d-flex flex-wrap
+                                         align-items-center gap-2 small text-muted">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <input type="hidden" name="action" value="waiting"/>
+                                <label class="mb-0">⏱ Temporizador de espera:</label>
+                                <input type="number" name="minutes" min="1" step="1"
+                                       t-att-value="waiting_minutes"
+                                       class="form-control form-control-sm" style="width: 4.5rem;"/>
+                                <span>min</span>
+                                <button type="submit"
+                                        class="btn btn-outline-warning btn-sm o_visar_waiting_btn ms-auto">
+                                    Esperar al cliente
+                                </button>
+                            </form>
+                            <!-- Acción principal -->
+                            <form t-att-action="status_action" method="post" class="m-0">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <input type="hidden" name="action" value="start"/>
+                                <button type="submit" class="btn btn-success btn-lg w-100">▶ Comenzar servicio</button>
+                            </form>
+                        </t>
+
+                        <!-- Esperando → cuenta regresiva + comenzar / cliente no llegó -->
+                        <t t-if="flow_state == 'esperando'">
+                            <div id="visar-waiting" class="o_visar_waiting alert alert-warning text-center mb-2"
+                                 t-att-data-start="waiting_start_iso"
+                                 t-att-data-minutes="waiting_minutes">
+                                <div class="small mb-1">Esperando al cliente…</div>
+                                <div class="o_visar_waiting_clock display-6 mb-0">--:--</div>
+                            </div>
+                            <form t-att-action="status_action" method="post" class="m-0 mb-2">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <input type="hidden" name="action" value="start"/>
+                                <button type="submit" class="btn btn-success btn-lg w-100">▶ Comenzar servicio</button>
+                            </form>
+                            <form t-att-action="status_action" method="post"
+                                  class="m-0 o_visar_noshow d-none">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <input type="hidden" name="action" value="reschedule"/>
+                                <button type="submit" class="btn btn-danger btn-lg w-100">
+                                    Cliente no llegó — solicitar reagenda
+                                </button>
+                            </form>
+                        </t>
+
+                        <!-- En ejecución → indicación de cierre -->
+                        <div t-if="flow_state == 'en_ejecucion'" class="alert alert-success py-2 mb-0">
+                            Servicio en ejecución. Al terminar, capture la firma y pulse "Cerrar servicio".
+                        </div>
+
+                        <!-- Etapas terminales (etapa cambiada en el backend) -->
+                        <div t-if="flow_state == 'cerrado'" class="alert alert-secondary py-2 mb-0">
+                            Servicio completado.
+                        </div>
+                        <div t-if="flow_state == 'reagenda'" class="alert alert-secondary py-2 mb-0">
+                            Servicio marcado para reagenda.
+                        </div>
                     </div>
 
                     <!-- Orden de venta completa (multi-línea) -->
@@ -99,22 +223,6 @@
                         </ul>
                     </div>
 
-                    <!-- Fotos -->
-                    <h6 class="mt-3">Fotos (<t t-esc="len(photos)"/>)</h6>
-                    <div t-if="photos" class="row g-2 mb-2">
-                        <div t-foreach="photos" t-as="photo" class="col-4">
-                            <img t-att-src="'/visar/field/task/%s/image/%s' % (task.id, photo.id)"
-                                 class="img-fluid rounded"/>
-                        </div>
-                    </div>
-                    <form t-att-action="'/visar/field/task/%s/photo' % task.id" method="post"
-                          enctype="multipart/form-data" class="mb-4">
-                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                        <input type="file" name="photos" accept="image/*" capture="environment"
-                               multiple="multiple" class="form-control mb-2"/>
-                        <button type="submit" class="btn btn-outline-primary w-100">Subir fotos</button>
-                    </form>
-
                     <!-- Worksheet nativa (campos dinámicos del template) -->
                     <div t-if="not has_worksheet_template" class="alert alert-warning">
                         Este servicio no tiene plantilla de hoja de trabajo configurada.
@@ -125,21 +233,90 @@
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                         <h6 class="mb-3">Hoja de trabajo</h6>
 
-                        <div t-foreach="worksheet_fields" t-as="field" class="mb-3">
+                        <div t-foreach="worksheet_fields" t-as="field"
+                             t-attf-class="mb-3#{' o_visar_condfield d-none' if field.get('conditional') else ''}"
+                             t-att-data-showif="field.get('conditional') and field['conditional']['controller'] or None"
+                             t-att-data-showif-kind="field.get('conditional') and field['conditional']['kind'] or None"
+                             t-att-data-showif-val="field.get('conditional') and field['conditional']['trigger'] or None">
+
+                            <!-- Subficha one2many: tarjetas dinámicas (tipo "Fotos") -->
+                            <div t-if="field['type'] == 'one2many'" class="o_visar_o2m"
+                                 t-att-data-o2m="field['name']">
+                                <div class="mb-1">
+                                    <span class="form-label fw-bold mb-0" t-esc="field['string']"/>
+                                    <t t-call="visar_field_app.field_help">
+                                        <t t-set="help_text" t-value="field['help']"/>
+                                    </t>
+                                </div>
+                                <!-- Marcador: la subficha se renderizó (permite vaciarla). -->
+                                <input type="hidden" t-att-name="'o2mpresent~' + field['name']"
+                                       value="1"/>
+                                <div class="o_visar_o2m_cards">
+                                    <t t-foreach="field['lines']" t-as="line">
+                                        <t t-call="visar_field_app.o2m_card">
+                                            <t t-set="o2m" t-value="field['name']"/>
+                                            <t t-set="rowidx" t-value="str(line_index)"/>
+                                            <t t-set="line_id" t-value="line['id']"/>
+                                            <t t-set="task_id" t-value="task.id"/>
+                                            <t t-set="card_rows" t-value="line['rows']"/>
+                                            <t t-set="card_disabled" t-value="False"/>
+                                        </t>
+                                    </t>
+                                </div>
+                                <!-- Plantilla inerte (inputs disabled → no se envían) que
+                                     el JS clona al pulsar "Agregar". -->
+                                <div class="o_visar_o2m_template d-none">
+                                    <t t-call="visar_field_app.o2m_card">
+                                        <t t-set="o2m" t-value="field['name']"/>
+                                        <t t-set="rowidx" t-value="'__IDX__'"/>
+                                        <t t-set="line_id" t-value="False"/>
+                                        <t t-set="task_id" t-value="task.id"/>
+                                        <t t-set="card_rows" t-value="field['blank_rows']"/>
+                                        <t t-set="card_disabled" t-value="True"/>
+                                    </t>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-outline-secondary w-100 o_visar_o2m_add">
+                                    + Agregar
+                                </button>
+                            </div>
 
                             <!-- Booleano -->
-                            <div t-if="field['type'] == 'boolean'" class="form-check">
+                            <div t-elif="field['type'] == 'boolean'" class="form-check">
                                 <input type="checkbox" class="form-check-input"
                                        t-att-name="field['name']" t-att-id="field['name']"
                                        t-att-checked="field['value'] and 'checked' or None"/>
                                 <label class="form-check-label" t-att-for="field['name']"
                                        t-esc="field['string']"/>
+                                <t t-call="visar_field_app.field_help">
+                                    <t t-set="help_text" t-value="field['help']"/>
+                                </t>
+                            </div>
+
+                            <!-- Selección múltiple (many2many) → grupo de casillas -->
+                            <div t-elif="field['type'] == 'many2many'">
+                                <label class="form-label mb-1" t-esc="field['string']"/>
+                                <t t-call="visar_field_app.field_help">
+                                    <t t-set="help_text" t-value="field['help']"/>
+                                </t>
+                                <div t-foreach="field['options']" t-as="opt" class="form-check">
+                                    <input type="checkbox" class="form-check-input"
+                                           t-att-name="field['name']" t-att-value="opt['id']"
+                                           t-att-id="'%s_%s' % (field['name'], opt['id'])"
+                                           t-att-checked="opt['id'] in field['value_ids'] and 'checked' or None"/>
+                                    <label class="form-check-label"
+                                           t-att-for="'%s_%s' % (field['name'], opt['id'])"
+                                           t-esc="opt['display_name']"/>
+                                </div>
                             </div>
 
                             <!-- Resto de tipos: etiqueta + control -->
                             <t t-else="">
-                                <label class="form-label" t-att-for="field['name']"
+                                <label class="form-label mb-0" t-att-for="field['name']"
                                        t-esc="field['string']"/>
+                                <t t-call="visar_field_app.field_help">
+                                    <t t-set="help_text" t-value="field['help']"/>
+                                </t>
 
                                 <select t-if="field['type'] == 'selection'" class="form-select"
                                         t-att-name="field['name']" t-att-id="field['name']">
@@ -172,10 +349,28 @@
                                        class="form-control" t-att-name="field['name']"
                                        t-att-id="field['name']" t-att-value="field['value']"/>
 
-                                <div t-elif="field['type'] == 'binary'">
-                                    <input type="file" class="form-control"
-                                           t-att-name="field['name']" t-att-id="field['name']"/>
-                                    <small t-if="field['has_file']" class="text-success">Archivo guardado ✓</small>
+                                <!-- Galería viva: multi-foto + borrado por foto (como la
+                                     antigua sección "Fotos"). El campo binary nativo se
+                                     mantiene con la primera foto para el reporte. -->
+                                <div t-elif="field['type'] == 'binary'" class="o_visar_ws_photos"
+                                     t-att-data-field="field['name']" t-att-data-task="task.id">
+                                    <div class="row g-2 mb-2 o_visar_photo_grid">
+                                        <div t-foreach="field['photos']" t-as="pid" class="col-4">
+                                            <div class="o_visar_photo position-relative">
+                                                <button type="button" class="btn btn-danger o_visar_photo_x"
+                                                        aria-label="Eliminar foto"
+                                                        t-att-data-action="'/visar/field/task/%s/ws-photo/%s/%s/delete' % (task.id, field['name'], pid)">&#215;</button>
+                                                <img t-att-src="'/visar/field/task/%s/image/%s' % (task.id, pid)"
+                                                     class="img-fluid rounded o_visar_photo_img"/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <input type="file" accept="image/*" capture="environment"
+                                           multiple="multiple" class="form-control mb-2 o_visar_ws_photo_input"/>
+                                    <button type="button" class="btn btn-outline-primary w-100 o_visar_ws_photo_upload"
+                                            t-att-data-action="'/visar/field/task/%s/ws-photo/%s' % (task.id, field['name'])">
+                                        Subir fotos
+                                    </button>
                                 </div>
 
                                 <input t-else="" type="text" class="form-control"
@@ -187,12 +382,17 @@
                         <button type="submit" class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
                     </form>
 
-                    <!-- Firma del cliente (campos nativos) + cierre -->
-                    <form t-att-action="'/visar/field/task/%s/close' % task.id" method="post"
-                          class="card p-3">
+                    <!-- Firma del cliente (campos nativos) + cierre.
+                         Solo disponible una vez iniciado el servicio (En ejecución). -->
+                    <form t-if="flow_state == 'en_ejecucion'"
+                          t-att-action="'/visar/field/task/%s/close' % task.id" method="post"
+                          id="visar-close-form" class="card p-3">
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                         <h6 class="mb-2">Firma del cliente</h6>
 
+                        <div t-if="close_error" class="alert alert-danger py-2">
+                            Para cerrar el servicio, la firma y el nombre de quien firma son obligatorios.
+                        </div>
                         <div t-if="is_signed" class="alert alert-success py-2">
                             Servicio ya firmado.
                         </div>
@@ -204,8 +404,12 @@
                                 class="btn btn-outline-secondary btn-sm mb-3">Limpiar firma</button>
 
                         <label class="form-label">Nombre de quien firma</label>
-                        <input type="text" name="signature_name" class="form-control mb-3"
+                        <input type="text" name="signature_name" id="visar-signature-name"
+                               class="form-control mb-1" required="required"
                                t-att-value="task.worksheet_signed_by or ''"/>
+                        <div class="o_visar_close_msg text-danger small mb-2 d-none">
+                            Falta la firma o el nombre de quien firma.
+                        </div>
 
                         <button type="submit" class="btn btn-success btn-lg">Cerrar servicio</button>
                     </form>
@@ -215,6 +419,133 @@
                 </div>
             </div>
         </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Botón de ayuda por campo (toca "ⓘ" para ver el tooltip)       -->
+    <!-- ============================================================ -->
+    <template id="field_help" name="Visar Campo - Ayuda de campo">
+        <span t-if="help_text" class="o_visar_help">
+            <button type="button" tabindex="-1" aria-label="Más información"
+                    class="btn btn-sm btn-link p-0 ms-1 align-baseline o_visar_help_btn">ⓘ</button>
+            <span class="form-text o_visar_help_text" t-esc="help_text"/>
+        </span>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Tarjeta de una línea one2many (reutilizada: existentes + clon) -->
+    <!-- ============================================================ -->
+    <template id="o2m_card" name="Visar Campo - Tarjeta de línea">
+        <div class="o_visar_o2m_card card p-3 mb-3">
+            <div class="d-flex justify-content-end">
+                <button type="button"
+                        class="btn btn-sm btn-link text-danger p-0 o_visar_o2m_remove">
+                    Eliminar
+                </button>
+            </div>
+            <input type="hidden" t-att-name="'o2mline~%s~%s~id' % (o2m, rowidx)"
+                   t-att-value="line_id or ''"
+                   t-att-disabled="card_disabled and 'disabled' or None"/>
+
+            <t t-foreach="card_rows" t-as="crow">
+             <div t-attf-class="mb-3#{' row g-2' if len(crow) &gt; 1 else ''}">
+              <div t-foreach="crow" t-as="f"
+                   t-attf-class="#{'col ' if len(crow) &gt; 1 else ''}#{'o_visar_condfield d-none' if f.get('conditional') else ''}"
+                   t-att-data-showif="f.get('conditional') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['conditional']['controller'])) or None"
+                   t-att-data-showif-kind="f.get('conditional') and f['conditional']['kind'] or None"
+                   t-att-data-showif-val="f.get('conditional') and f['conditional']['trigger'] or None">
+                <t t-set="fname" t-value="'o2mline~%s~%s~%s' % (o2m, rowidx, f['name'])"/>
+
+                <!-- Booleano -->
+                <div t-if="f['type'] == 'boolean'" class="form-check">
+                    <input type="checkbox" class="form-check-input" t-att-name="fname"
+                           t-att-checked="f['value'] and 'checked' or None"
+                           t-att-disabled="card_disabled and 'disabled' or None"/>
+                    <label class="form-check-label" t-esc="f['string']"/>
+                    <t t-call="visar_field_app.field_help">
+                        <t t-set="help_text" t-value="f['help']"/>
+                    </t>
+                </div>
+
+                <t t-else="">
+                    <label class="form-label mb-1" t-esc="f['string']"/>
+                    <t t-call="visar_field_app.field_help">
+                        <t t-set="help_text" t-value="f['help']"/>
+                    </t>
+
+                    <select t-if="f['type'] == 'selection'" class="form-select"
+                            t-att-name="fname"
+                            t-att-disabled="card_disabled and 'disabled' or None">
+                        <option value="">—</option>
+                        <option t-foreach="f['selection']" t-as="opt" t-att-value="opt[0]"
+                                t-att-selected="f['value'] == opt[0] and 'selected' or None"
+                                t-esc="opt[1]"/>
+                    </select>
+
+                    <select t-elif="f['type'] == 'many2one'" class="form-select"
+                            t-att-name="fname"
+                            t-att-disabled="card_disabled and 'disabled' or None">
+                        <option value="">—</option>
+                        <option t-foreach="f['options']" t-as="opt" t-att-value="opt['id']"
+                                t-att-selected="f['value_id'] == opt['id'] and 'selected' or None"
+                                t-esc="opt['display_name']"/>
+                    </select>
+
+                    <textarea t-elif="f['type'] in ('text', 'html')" rows="2"
+                              class="form-control" t-att-name="fname"
+                              t-att-disabled="card_disabled and 'disabled' or None"><t t-esc="f['value'] or ''"/></textarea>
+
+                    <input t-elif="f['type'] in ('integer', 'float', 'monetary')"
+                           type="number" step="any" class="form-control" t-att-name="fname"
+                           t-att-value="f['value']"
+                           t-att-disabled="card_disabled and 'disabled' or None"/>
+
+                    <input t-elif="f['type'] == 'date'" type="date" class="form-control"
+                           t-att-name="fname" t-att-value="f['value']"
+                           t-att-disabled="card_disabled and 'disabled' or None"/>
+
+                    <!-- Selección múltiple (many2many) → grupo de casillas -->
+                    <div t-elif="f['type'] == 'many2many'">
+                        <div t-foreach="f['options']" t-as="opt" class="form-check">
+                            <input type="checkbox" class="form-check-input" t-att-name="fname"
+                                   t-att-value="opt['id']"
+                                   t-att-id="'%s_%s' % (fname, opt['id'])"
+                                   t-att-checked="opt['id'] in f['value_ids'] and 'checked' or None"
+                                   t-att-disabled="card_disabled and 'disabled' or None"/>
+                            <label class="form-check-label" t-att-for="'%s_%s' % (fname, opt['id'])"
+                                   t-esc="opt['display_name']"/>
+                        </div>
+                    </div>
+
+                    <!-- Fotos por tarjeta: galería (miniaturas + borrado por foto) de las
+                         ya guardadas, más input multi-archivo que agrega al guardar la
+                         hoja de trabajo (la línea no existe hasta guardar). -->
+                    <div t-elif="f['type'] == 'binary'" class="o_visar_line_photos">
+                        <div t-if="f['photos'] and line_id" class="row g-2 mb-2">
+                            <div t-foreach="f['photos']" t-as="pid" class="col-4">
+                                <div class="o_visar_photo position-relative">
+                                    <button type="button" class="btn btn-danger o_visar_photo_x"
+                                            aria-label="Eliminar foto"
+                                            t-att-data-action="'/visar/field/task/%s/line-photo/%s/%s/%s/delete' % (task_id, line_id, f['name'], pid)">&#215;</button>
+                                    <img t-att-src="'/visar/field/task/%s/line-photo/%s/%s/%s' % (task_id, line_id, f['name'], pid)"
+                                         class="img-fluid rounded o_visar_photo_img"/>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="file" accept="image/*" capture="environment"
+                               multiple="multiple" class="form-control" t-att-name="fname"
+                               t-att-disabled="card_disabled and 'disabled' or None"/>
+                        <small class="text-muted d-block mt-1">Se agregan al guardar la hoja de trabajo.</small>
+                    </div>
+
+                    <input t-else="" type="text" class="form-control" t-att-name="fname"
+                           t-att-value="f['value']"
+                           t-att-disabled="card_disabled and 'disabled' or None"/>
+                </t>
+              </div>
+             </div>
+            </t>
+        </div>
     </template>
 
 </odoo>

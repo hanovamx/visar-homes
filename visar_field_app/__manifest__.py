@@ -20,12 +20,13 @@ citas), sin tocar el frontend OWL nativo.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.0.1',
+    'version': '19.0.1.4.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_fsm',
         'website',
         'industry_fsm_report',
+        'base_geolocalize',
     ],
     'data': [
         'security/ir.model.access.csv',
@@ -34,13 +35,18 @@ citas), sin tocar el frontend OWL nativo.
         'views/project_task_views.xml',
         'views/field_session_views.xml',
         'views/menus.xml',
+        'views/geolocalize_action.xml',
     ],
     'assets': {
         'web.assets_frontend': [
+            'visar_field_app/static/src/lib/leaflet/leaflet.css',
             'visar_field_app/static/src/css/field_app.css',
+            'visar_field_app/static/src/lib/leaflet/leaflet.js',
             'visar_field_app/static/src/js/field_app.js',
+            'visar_field_app/static/src/js/field_app_map.js',
         ],
     },
     'installable': True,
     'application': True,
+    'post_init_hook': 'post_init_hook',
 }
