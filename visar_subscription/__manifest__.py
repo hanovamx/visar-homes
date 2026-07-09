@@ -19,6 +19,7 @@ el precio en la renovación.
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
+        'visar_fsm',
         'sale_subscription',
         'industry_fsm',
     ],
