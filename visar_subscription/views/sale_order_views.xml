@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_order_form_visar_sub" model="ir.ui.view">
+        <field name="name">sale.order.form.visar.subscription</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_visar_view_visits" type="object"
+                        class="oe_stat_button" icon="fa-wrench"
+                        invisible="not is_subscription">
+                    <field name="visar_visit_count" widget="statinfo" string="Visitas"/>
+                </button>
+                <button name="action_visar_add_warranty_visit" type="object"
+                        class="oe_stat_button" icon="fa-shield"
+                        invisible="not is_subscription"
+                        string="Visita de garantía"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

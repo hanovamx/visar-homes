@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="product_template_form_view_visar_sub" model="ir.ui.view">
+        <field name="name">product.template.form.visar.subscription</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='list_price']" position="after">
+                <field name="visar_generates_visit"
+                       invisible="not recurring_invoice"/>
+                <field name="visar_fsm_project_id"
+                       invisible="not recurring_invoice or not visar_generates_visit"
+                       required="recurring_invoice and visar_generates_visit"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
