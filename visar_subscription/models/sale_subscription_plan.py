@@ -6,8 +6,9 @@ class SaleSubscriptionPlan(models.Model):
 
     visar_commitment_months = fields.Integer(
         string="Duración del compromiso (meses)",
-        default=12,
+        default=0,
         help="Meses de compromiso de la póliza. Al elegir el plan en una orden, la "
              "fecha 'hasta' (fin) se calcula como fecha de inicio + esta duración. "
-             "0 = sin fecha de fin automática.",
+             "0 = sin fecha de fin automática (déjalo así para planes que no sean "
+             "póliza; para pólizas anuales pon 12).",
     )
