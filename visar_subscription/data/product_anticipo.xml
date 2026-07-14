@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Producto de "anticipo" (depósito no reembolsable) que se agrega como línea
+        única al confirmar una póliza. NO es recurrente: se factura una sola vez en
+        la primera factura. El precio se fija dinámicamente (nº de servicios del plan
+        × precio de zona del servicio base), no se toma del list_price.
+    -->
+    <record id="product_anticipo" model="product.template">
+        <field name="name">Anticipo de póliza (depósito no reembolsable)</field>
+        <field name="type">service</field>
+        <field name="invoice_policy">order</field>
+        <field name="service_tracking">no</field>
+        <field name="list_price">0.0</field>
+        <field name="sale_ok" eval="True"/>
+        <field name="purchase_ok" eval="False"/>
+        <field name="recurring_invoice" eval="False"/>
+        <field name="default_code">VISAR-DEP</field>
+    </record>
+</odoo>

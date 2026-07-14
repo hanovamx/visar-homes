@@ -44,12 +44,57 @@ class SaleOrder(models.Model):
                     order.end_date = end
 
     def action_confirm(self):
+        # Anticipo (depósito) ANTES de confirmar, para que entre en la 1ª factura.
+        for order in self.filtered(lambda o: o.is_subscription):
+            order._visar_ensure_anticipo_line()
         res = super().action_confirm()
         for order in self.filtered(lambda o: o.is_subscription and not o.end_date):
             end = order._visar_compute_end_date()
             if end:
                 order.end_date = end
         return res
+
+    # ------------------------------------------------------------------
+    # Anticipo / depósito no reembolsable (cargo único al alta)
+    # ------------------------------------------------------------------
+    def _visar_ensure_anticipo_line(self):
+        """Agrega (una sola vez) la línea de anticipo = nº de servicios del plan ×
+        precio del servicio base de la póliza. Línea NO recurrente → se factura solo
+        en la primera factura. Idempotente: no se duplica si ya existe."""
+        self.ensure_one()
+        n = self.plan_id.visar_anticipo_services if self.plan_id else 0
+        if n <= 0:
+            return
+        product = self.env.ref(
+            'visar_subscription.product_anticipo', raise_if_not_found=False)
+        variant = product.product_variant_id if product else False
+        if not variant:
+            return
+        # Idempotencia: si ya hay una línea de anticipo, no agregar otra.
+        if self.order_line.filtered(lambda l: l.product_id == variant):
+            return
+        base_lines = self.order_line.filtered(
+            lambda l: l.product_id.product_tmpl_id.visar_generates_visit)
+        if not base_lines:
+            return
+        amount = n * sum(l.price_unit * (l.product_uom_qty or 1.0) for l in base_lines)
+        if amount <= 0:
+            return
+        vals = {
+            'order_id': self.id,
+            'product_id': variant.id,
+            'name': _("Anticipo no reembolsable (%(n)s servicios)", n=n),
+            'product_uom_qty': 1.0,
+            'price_unit': amount,
+        }
+        tax = base_lines[:1].tax_ids
+        if tax:
+            vals['tax_ids'] = [(6, 0, tax.ids)]
+        line = self.env['sale.order.line'].create(vals)
+        # Forzar el precio (el compute podría bajarlo al list_price=0).
+        if line.price_unit != amount:
+            line.price_unit = amount
+        return line
 
     # ------------------------------------------------------------------
     # Generación de visitas por periodo facturado
