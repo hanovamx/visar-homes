@@ -115,7 +115,7 @@
                                                name="group_ids"
                                                t-att-id="'group_%s' % group.id"
                                                t-att-value="group.id"
-                                               t-att-checked="str(group.id) in (values.get('group_ids') or request.httprequest.form.getlist('group_ids') or []) and 'checked' or None"/>
+                                               t-att-checked="group.id in (selections.get('group_ids') or []) and 'checked' or None"/>
                                         <label class="form-check-label"
                                                t-att-for="'group_%s' % group.id"
                                                t-esc="group.wizard_label or group.name"/>
@@ -124,6 +124,7 @@
                                     </div>
                                 </t>
                                 <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
                             </form>
                         </div>
                     </div>
@@ -162,6 +163,7 @@
                                     </div>
                                 </t>
                                 <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
                             </form>
                         </div>
                     </div>
@@ -206,6 +208,7 @@
                                     </fieldset>
                                 </t>
                                 <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
                             </form>
                         </div>
                     </div>
@@ -214,93 +217,433 @@
         </t>
     </template>
 
-    <!-- Paso calificación: plaga/preventivo, roedores, tipo de plaga -->
-    <template id="visar_wizard_calificacion" name="Visar - Wizard calificación">
+    <!-- Paso Motivo (P1): preventivo o correctivo -->
+    <template id="visar_wizard_motivo" name="Visar - Wizard motivo">
         <t t-call="website.layout">
             <div id="wrap" class="oe_structure">
                 <div class="container my-4">
                     <div class="row justify-content-center">
                         <div class="col-lg-7">
-                            <h2>Cuéntanos sobre tu plaga</h2>
+                            <h2>¿Preventivo o ya tienes un problema?</h2>
                             <p class="text-muted">
                                 Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
-                                — Estas respuestas ayudan al técnico a preparar el servicio
                             </p>
                             <div t-if="error" class="alert alert-warning" role="alert">
                                 <t t-esc="error"/>
                             </div>
-                            <form action="/appointment/visar/booking/wizard/calificacion"
-                                  method="post" class="mt-3" id="visar_calificacion_form">
+                            <form action="/appointment/visar/booking/wizard/motivo"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <fieldset class="mb-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="motivo"
+                                               id="motivo_correctivo" value="correctivo" required="required"
+                                               t-att-checked="selections.get('motivo') == 'correctivo' and 'checked' or None"/>
+                                        <label class="form-check-label" for="motivo_correctivo">
+                                            Ya vi algo (plaga activa)
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="motivo"
+                                               id="motivo_preventivo" value="preventivo" required="required"
+                                               t-att-checked="selections.get('motivo') == 'preventivo' and 'checked' or None"/>
+                                        <label class="form-check-label" for="motivo_preventivo">
+                                            Quiero prevenir, no he visto nada todavía
+                                        </label>
+                                    </div>
+                                </fieldset>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso Plagas (P2): categorías + cortes a valoración -->
+    <template id="visar_wizard_plagas" name="Visar - Wizard plagas">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <t t-set="es_correctivo" t-value="selections.get('motivo') == 'correctivo'"/>
+                            <h2 t-if="es_correctivo">¿Qué estás viendo en casa?</h2>
+                            <h2 t-else="">¿Contra qué te gustaría protegerte?</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Puedes elegir más de una opción
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <t t-set="sel" t-value="request.httprequest.form.getlist('servicio_plaga')"/>
+                            <form action="/appointment/visar/booking/wizard/plagas"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <fieldset class="mb-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                               id="plaga_rastreros" value="rastreros"
+                                               t-att-checked="'rastreros' in sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="plaga_rastreros">
+                                            Rastreros <small class="text-muted d-block">Cucarachas, alacranes, hormigas, arañas</small>
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                               id="plaga_voladores" value="voladores"
+                                               t-att-checked="'voladores' in sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="plaga_voladores">
+                                            Voladores <small class="text-muted d-block">Moscas, mosquitos o zancudos</small>
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                               id="plaga_roedores" value="roedores"
+                                               t-att-checked="'roedores' in sel and 'checked' or None"/>
+                                        <label class="form-check-label" for="plaga_roedores">
+                                            Roedores <small class="text-muted d-block">Ratas y ratones</small>
+                                        </label>
+                                    </div>
+
+                                    <!-- Rama preventiva: protección general (no corta a valoración) -->
+                                    <div class="form-check" t-if="not es_correctivo">
+                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                               id="plaga_general" value="proteccion_general"/>
+                                        <label class="form-check-label" for="plaga_general">
+                                            Protección general <small class="text-muted d-block">Las tres: rastreros, voladores y roedores</small>
+                                        </label>
+                                    </div>
+
+                                    <!-- Rama correctiva: opciones que requieren valoración técnica -->
+                                    <t t-if="es_correctivo">
+                                        <hr/>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                                   id="plaga_termitas" value="termitas"/>
+                                            <label class="form-check-label" for="plaga_termitas">
+                                                Termitas <small class="text-muted d-block">Madera dañada, polvo fino, túneles de lodo</small>
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                                   id="plaga_chinches" value="chinches"/>
+                                            <label class="form-check-label" for="plaga_chinches">
+                                                Chinches de cama <small class="text-muted d-block">Picaduras en hilera, manchas de sangre en sábanas</small>
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="servicio_plaga"
+                                                   id="plaga_no_se" value="no_se"/>
+                                            <label class="form-check-label" for="plaga_no_se">
+                                                No estoy seguro de qué es
+                                            </label>
+                                        </div>
+                                    </t>
+                                </fieldset>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso Cobertura (P3): interior / exterior / ambos -->
+    <template id="visar_wizard_cobertura" name="Visar - Wizard cobertura">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>¿Dónde fumigamos?</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/cobertura"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <fieldset class="mb-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="cobertura"
+                                               id="cobertura_interior" value="interior" required="required"
+                                               t-att-checked="selections.get('cobertura') == 'interior' and 'checked' or None"/>
+                                        <label class="form-check-label" for="cobertura_interior">Solo interior</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="cobertura"
+                                               id="cobertura_exterior" value="exterior" required="required"
+                                               t-att-checked="selections.get('cobertura') == 'exterior' and 'checked' or None"/>
+                                        <label class="form-check-label" for="cobertura_exterior">Solo exterior / jardín</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="cobertura"
+                                               id="cobertura_ambos" value="ambos" required="required"
+                                               t-att-checked="selections.get('cobertura') == 'ambos' and 'checked' or None"/>
+                                        <label class="form-check-label" for="cobertura_ambos">Interior y exterior</label>
+                                    </div>
+                                </fieldset>
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso Interior (Etapa 2): sé mis m² (rango) o los estimo (proxy + terreno opcional) -->
+    <template id="visar_wizard_interior" name="Visar - Wizard interior">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Tamaño de la construcción (interior)</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/interior"
+                                  method="post" class="mt-3" id="visar_interior_form">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <t t-set="i_mode" t-value="'estima' if selections.get('interior_proxy') else 'sabe'"/>
+                                <t t-set="i_proxy" t-value="selections.get('interior_proxy') or {}"/>
+
+                                <fieldset class="mb-4">
+                                    <legend class="fs-5">¿Sabes aproximadamente tus m² de construcción?</legend>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="interior_mode"
+                                               id="interior_mode_sabe" value="sabe"
+                                               t-att-checked="i_mode == 'sabe' and 'checked' or None"/>
+                                        <label class="form-check-label" for="interior_mode_sabe">
+                                            Sí, lo sé aproximadamente
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="interior_mode"
+                                               id="interior_mode_estima" value="estima"
+                                               t-att-checked="i_mode == 'estima' and 'checked' or None"/>
+                                        <label class="form-check-label" for="interior_mode_estima">
+                                            No, prefiero que lo estimen
+                                        </label>
+                                    </div>
+                                </fieldset>
+
+                                <!-- Modo: sé mis m² → rango del tabulador -->
+                                <div id="visar_interior_sabe">
+                                    <t t-foreach="dimension_sections" t-as="section">
+                                        <fieldset class="mb-4">
+                                            <legend class="fs-6" t-esc="section['label']"/>
+                                            <t t-foreach="section['tiers']" t-as="tier">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="radio"
+                                                           t-att-name="section['field_name']"
+                                                           t-att-id="'itier_%s' % tier.id"
+                                                           t-att-value="tier.id"
+                                                           t-att-checked="selections.get(section['field_name']) == tier.id and 'checked' or None"/>
+                                                    <label class="form-check-label"
+                                                           t-att-for="'itier_%s' % tier.id"
+                                                           t-esc="tier.name or tier.display_name"/>
+                                                </div>
+                                            </t>
+                                        </fieldset>
+                                    </t>
+                                    <fieldset class="mb-4">
+                                        <legend class="fs-6">¿Tu casa tiene más de un nivel/piso?</legend>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="interior_niveles"
+                                                   id="niveles_pb" value="planta_baja"
+                                                   t-att-checked="selections.get('interior_niveles') == 'planta_baja' and 'checked' or None"/>
+                                            <label class="form-check-label" for="niveles_pb">Solo planta baja</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="interior_niveles"
+                                                   id="niveles_multi" value="dos_o_mas"
+                                                   t-att-checked="selections.get('interior_niveles') == 'dos_o_mas' and 'checked' or None"/>
+                                            <label class="form-check-label" for="niveles_multi">2 niveles o más</label>
+                                        </div>
+                                    </fieldset>
+                                </div>
+
+                                <!-- Modo: estimar por proxies -->
+                                <div id="visar_interior_estima" style="display:none;">
+                                    <div class="row g-3 mb-3">
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label" for="rec">Recámaras</label>
+                                            <input type="number" class="form-control" id="rec" name="rec"
+                                                   min="0" t-att-value="i_proxy.get('rec', 3)"/>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label" for="ban">Baños completos</label>
+                                            <input type="number" class="form-control" id="ban" name="ban"
+                                                   min="0" t-att-value="i_proxy.get('ban', 2)"/>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label" for="niv">Niveles</label>
+                                            <input type="number" class="form-control" id="niv" name="niv"
+                                                   min="1" t-att-value="i_proxy.get('niv', 1)"/>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label" for="gar">Cajones de auto</label>
+                                            <input type="number" class="form-control" id="gar" name="gar"
+                                                   min="0" t-att-value="i_proxy.get('gar', 1)"/>
+                                        </div>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label" for="predio">
+                                            Tamaño del terreno <small class="text-muted">(opcional, m²)</small>
+                                        </label>
+                                        <div class="input-group" style="max-width:320px;">
+                                            <input type="number" class="form-control" id="predio" name="predio"
+                                                   min="0" placeholder="Ej: 200"
+                                                   t-att-value="i_proxy.get('predio') or ''"/>
+                                            <a class="btn btn-outline-secondary" target="_blank"
+                                               href="https://www.google.com/maps">Ver en Google Maps</a>
+                                        </div>
+                                        <small class="form-text text-muted">
+                                            Si no lo sabes, déjalo vacío. Para medirlo: abre Google Maps,
+                                            clic derecho sobre tu terreno → “Medir distancia”, marca las
+                                            esquinas y copia el área aquí. Mejora la estimación.
+                                        </small>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
+                            </form>
+                            <script type="text/javascript">
+                                (function () {
+                                    var form = document.getElementById('visar_interior_form');
+                                    if (!form) { return; }
+                                    var sabe = document.getElementById('visar_interior_sabe');
+                                    var estima = document.getElementById('visar_interior_estima');
+                                    function toggle() {
+                                        var checked = form.querySelector('input[name="interior_mode"]:checked');
+                                        var isSabe = checked &amp;&amp; checked.value === 'sabe';
+                                        sabe.style.display = isSabe ? 'block' : 'none';
+                                        estima.style.display = isSabe ? 'none' : 'block';
+                                    }
+                                    form.querySelectorAll('input[name="interior_mode"]').forEach(function (el) {
+                                        el.addEventListener('change', toggle);
+                                    });
+                                    toggle();
+                                })();
+                            </script>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- Paso Exterior (Etapa 3): medición única del jardín (banda o comparativo visual) -->
+    <template id="visar_wizard_exterior" name="Visar - Wizard exterior">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-7">
+                            <h2>Tamaño de tu jardín o exterior</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/exterior"
+                                  method="post" class="mt-3" id="visar_exterior_form">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
 
                                 <fieldset class="mb-4">
-                                    <legend class="fs-5">¿Tienes plaga o es preventivo?</legend>
+                                    <legend class="fs-5">¿Conoces el tamaño de tu jardín?</legend>
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="plaga"
-                                               id="plaga_preventivo" value="preventivo" required="required"
-                                               t-att-checked="values.get('plaga') == 'preventivo' and 'checked' or None"/>
-                                        <label class="form-check-label" for="plaga_preventivo">Es preventivo</label>
+                                        <input class="form-check-input" type="radio" name="exterior_mode"
+                                               id="exterior_mode_sabe" value="sabe" checked="checked"/>
+                                        <label class="form-check-label" for="exterior_mode_sabe">
+                                            Sí, lo sé aproximadamente
+                                        </label>
                                     </div>
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="plaga"
-                                               id="plaga_activa" value="plaga" required="required"
-                                               t-att-checked="values.get('plaga') == 'plaga' and 'checked' or None"/>
-                                        <label class="form-check-label" for="plaga_activa">Tengo plaga activa</label>
+                                        <input class="form-check-input" type="radio" name="exterior_mode"
+                                               id="exterior_mode_estima" value="estima"/>
+                                        <label class="form-check-label" for="exterior_mode_estima">
+                                            No, prefiero compararlo
+                                        </label>
                                     </div>
+                                </fieldset>
+
+                                <!-- Modo: sé mis m² → bandas directas -->
+                                <fieldset class="mb-4" id="visar_exterior_sabe">
+                                    <legend class="fs-6">¿Cuál de estos rangos se acerca más?</legend>
+                                    <t t-foreach="measure_bands" t-as="band">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="band_id"
+                                                   t-att-id="'band_%s' % band.id" t-att-value="band.id"
+                                                   t-att-checked="selections.get('exterior_band_id') == band.id and 'checked' or None"/>
+                                            <label class="form-check-label" t-att-for="'band_%s' % band.id"
+                                                   t-esc="band.name"/>
+                                        </div>
+                                    </t>
+                                </fieldset>
+
+                                <!-- Modo: comparativos visuales -->
+                                <fieldset class="mb-4" id="visar_exterior_estima" style="display:none;">
+                                    <legend class="fs-6">¿Cuál se parece más al tamaño?</legend>
+                                    <t t-foreach="comparative_bands" t-as="band">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="band_id"
+                                                   t-att-id="'cband_%s' % band.id" t-att-value="band.id"
+                                                   t-att-checked="selections.get('exterior_band_id') == band.id and 'checked' or None"/>
+                                            <label class="form-check-label" t-att-for="'cband_%s' % band.id"
+                                                   t-esc="band.comparative_label"/>
+                                        </div>
+                                    </t>
                                 </fieldset>
 
                                 <fieldset class="mb-4">
-                                    <legend class="fs-5">¿Tienes problema de roedores?</legend>
+                                    <legend class="fs-6">¿El jardín rodea toda la casa o solo un lado?</legend>
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="roedores"
-                                               id="roedores_si" value="si" required="required"
-                                               t-att-checked="values.get('roedores') == 'si' and 'checked' or None"/>
-                                        <label class="form-check-label" for="roedores_si">Sí, he visto roedores</label>
+                                        <input class="form-check-input" type="radio" name="exterior_rodea"
+                                               id="rodea_todo" value="rodea"
+                                               t-att-checked="selections.get('exterior_rodea') == 'rodea' and 'checked' or None"/>
+                                        <label class="form-check-label" for="rodea_todo">Rodea toda la casa</label>
                                     </div>
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="roedores"
-                                               id="roedores_no" value="no" required="required"
-                                               t-att-checked="values.get('roedores') == 'no' and 'checked' or None"/>
-                                        <label class="form-check-label" for="roedores_no">No</label>
-                                    </div>
-                                </fieldset>
-
-                                <fieldset class="mb-4" id="visar_tipo_plaga_fieldset"
-                                          t-att-style="values.get('plaga') == 'plaga' and 'display:block' or 'display:none'">
-                                    <legend class="fs-5">¿Qué plaga tienes? <small class="text-muted">(opcional)</small></legend>
-                                    <t t-set="tipos_sel" t-value="request.httprequest.form.getlist('tipo_plaga')"/>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
-                                               id="tipo_cucarachas" value="cucarachas"
-                                               t-att-checked="'cucarachas' in tipos_sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="tipo_cucarachas">Cucarachas</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
-                                               id="tipo_hormigas" value="hormigas"
-                                               t-att-checked="'hormigas' in tipos_sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="tipo_hormigas">Hormigas</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="tipo_plaga"
-                                               id="tipo_aranas" value="aranas"
-                                               t-att-checked="'aranas' in tipos_sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="tipo_aranas">Arañas</label>
+                                        <input class="form-check-input" type="radio" name="exterior_rodea"
+                                               id="rodea_lado" value="un_lado"
+                                               t-att-checked="selections.get('exterior_rodea') == 'un_lado' and 'checked' or None"/>
+                                        <label class="form-check-label" for="rodea_lado">Está solo de un lado</label>
                                     </div>
                                 </fieldset>
 
                                 <button type="submit" class="btn btn-primary">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
                             </form>
                             <script type="text/javascript">
                                 (function () {
-                                    var form = document.getElementById('visar_calificacion_form');
+                                    var form = document.getElementById('visar_exterior_form');
                                     if (!form) { return; }
-                                    var fieldset = document.getElementById('visar_tipo_plaga_fieldset');
+                                    var sabe = document.getElementById('visar_exterior_sabe');
+                                    var estima = document.getElementById('visar_exterior_estima');
                                     function toggle() {
-                                        var checked = form.querySelector('input[name="plaga"]:checked');
-                                        fieldset.style.display = (checked &amp;&amp; checked.value === 'plaga') ? 'block' : 'none';
+                                        var checked = form.querySelector('input[name="exterior_mode"]:checked');
+                                        var isSabe = checked &amp;&amp; checked.value === 'sabe';
+                                        sabe.style.display = isSabe ? 'block' : 'none';
+                                        estima.style.display = isSabe ? 'none' : 'block';
                                     }
-                                    form.querySelectorAll('input[name="plaga"]').forEach(function (el) {
+                                    form.querySelectorAll('input[name="exterior_mode"]').forEach(function (el) {
                                         el.addEventListener('change', toggle);
                                     });
                                     toggle();
@@ -342,7 +685,7 @@
                                   method="post" class="mt-3">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                                 <button type="submit" class="btn btn-primary">Continuar</button>
-                                <a href="/appointment/visar/booking/wizard/dimensiones" class="btn btn-link">Volver</a>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link ms-2">Volver</a>
                             </form>
                         </div>
                     </div>
@@ -371,6 +714,7 @@
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                                 <t t-call="visar_appointment.visar_delivery_address_fields"/>
                                 <button type="submit" class="btn btn-primary mt-3">Ver horarios disponibles</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link mt-3 ms-2">Volver</a>
                             </form>
                         </div>
                     </div>

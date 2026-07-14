@@ -18,6 +18,31 @@ _logger = logging.getLogger(__name__)
 
 SESSION_KEY = 'visar_booking'
 
+# Grupos de claves de selección por área del wizard.
+_VISAR_INTERIOR_KEYS = ('interior_niveles', 'interior_estimado_m2', 'interior_proxy')
+_VISAR_EXTERIOR_KEYS = ('exterior_band_id', 'exterior_rodea')
+_VISAR_CUT_KEYS = ('requiere_valoracion', 'motivo_valoracion')
+_VISAR_PLAGA_KEYS = (
+    'servicio_plaga', 'roedores', 'upsell_cebaderos', 'upsell_tapon',
+    'upsell_guardapolvo') + _VISAR_CUT_KEYS
+
+# Al (re)enviar un paso, se limpian estas claves de selección (dependencias que quedan
+# inválidas si esa respuesta cambia). Además, los pasos en _VISAR_CLEARS_TIERS limpian
+# todos los tramos elegidos (tier_*). Solo se limpia lo realmente dependiente: cambiar
+# interior NO invalida exterior (mediciones independientes).
+_VISAR_STEP_CLEARS = {
+    'services': ('motivo',) + _VISAR_PLAGA_KEYS + ('cobertura',)
+                + _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS,
+    'motivo': _VISAR_PLAGA_KEYS,
+    'plagas': _VISAR_PLAGA_KEYS,
+    'cobertura': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
+    'group': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
+    'interior': _VISAR_INTERIOR_KEYS,
+    'exterior': _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
+    'dimensiones': (),
+}
+_VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
+
 
 class VisarAppointmentController(WebsiteAppointmentSale):
 
@@ -161,8 +186,23 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
     # True si algún item del wizard resuelto requiere visita de valoración técnica.
     def _visar_selections_require_valuation(self, selections):
+        # Corte por calificación (termitas/chinches/plaga no identificada) marcado en el paso de plagas.
+        if (selections or {}).get('requiere_valoracion'):
+            return True
         items = request.env['appointment.type'].sudo()._visar_resolve_wizard_items(selections)
         return any(item.get('is_valuation') for item in items)
+
+    # Razón por la que el wizard cortó a valoración (para registrar en la cita).
+    def _visar_resolve_valuation_reason(self, selections):
+        selections = selections or {}
+        reason = selections.get('motivo_valoracion')
+        if reason:
+            return reason
+        # Corte por tramo (área que excede el límite del tabulador, sin flag explícito).
+        items = request.env['appointment.type'].sudo()._visar_resolve_wizard_items(selections)
+        if any(item.get('is_valuation') for item in items):
+            return 'area_excede_limite'
+        return False
 
     # Devuelve los grupos de servicio activos y visibles en el paso 1 del wizard.
     def _visar_wizard_groups(self):
@@ -216,9 +256,35 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         Group = request.env['visar.service.group'].sudo()
         return Group.browse(selections.get('group_ids') or []).exists()
 
-    # True si entre los grupos elegidos está fumigación (dispara el paso de calificación).
+    # True si entre los grupos elegidos está fumigación (dispara motivo/plagas/cobertura).
     def _visar_fumigacion_selected(self, selections):
         return any(g.code == 'fumigacion' for g in self._visar_selected_groups(selections))
+
+    # Grupo cuyas dimensiones se eligen por el paso de cobertura (interior/exterior/ambos).
+    def _visar_coverage_group(self):
+        return request.env['visar.service.group'].sudo().search(
+            [('code', '=', 'fumigacion')], limit=1)
+
+    # Dimensiones del grupo fumigación que corresponden a la cobertura elegida.
+    def _visar_fum_dimensions_for_coverage(self, coverage):
+        group = self._visar_coverage_group()
+        if not group:
+            return request.env['visar.service.dimension']
+        dims = group.dimension_ids.filtered('active')
+        interior = dims.filtered(lambda d: d.measure_type == 'interior')
+        exterior = dims.filtered(lambda d: d.measure_type == 'exterior')
+        if coverage == 'interior':
+            return interior
+        if coverage == 'exterior':
+            return exterior
+        return interior | exterior
+
+    # True si la dimensión ya tiene un tramo elegido en las selecciones.
+    def _visar_dim_has_tier(self, selections, dimension):
+        key = dimension._visar_tier_field_name()
+        return bool(
+            (selections or {}).get(key)
+            or ((selections or {}).get('tiers') or {}).get(str(dimension.id)))
 
     # True si el cliente declaró problema de roedores en el paso de calificación.
     def _visar_booking_has_roedores(self, booking):
@@ -239,10 +305,17 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return len(group.dimension_ids.filtered('active')) > 1
 
     def _visar_next_group_substep(self, selections):
-        """Primer grupo seleccionado que aún no tiene dimensiones elegidas."""
+        """Primer grupo seleccionado que aún no tiene dimensiones elegidas.
+
+        Excluye el grupo de fumigación: sus dimensiones se eligen en el paso de
+        cobertura (interior/exterior/ambos), no en el sub-paso genérico.
+        """
         selected_groups = self._visar_selected_groups(selections)
+        coverage_group = self._visar_coverage_group()
         dimension_ids = set(selections.get('dimension_ids') or [])
         for group in selected_groups.sorted('sequence'):
+            if group == coverage_group:
+                continue
             if not self._visar_group_needs_substep(group):
                 continue
             group_dim_ids = set(group.dimension_ids.filtered('active').ids)
@@ -250,12 +323,17 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 return group
         return request.env['visar.service.group']
 
-    def _visar_dimension_sections(self, selections):
-        """Secciones del paso de tramos por dimensión elegida."""
+    def _visar_dimension_sections(self, selections, measure_type='direct'):
+        """Secciones de tramos (radio por rango) para las dimensiones del tipo dado.
+
+        - 'direct': paso de rango directo (fallback / legacy).
+        - 'interior': modo 'sé mis m²' del paso interior (mismos rangos del tabulador).
+        Las dimensiones de exterior no usan secciones: se resuelven por banda unificada.
+        """
         ProductTemplate = request.env['product.template'].sudo()
-        Dimension = request.env['visar.service.dimension'].sudo()
         sections = []
-        for dimension in self._visar_selection_dimension_ids(selections):
+        for dimension in self._visar_selection_dimension_ids(selections).filtered(
+                lambda d: d.measure_type == measure_type):
             template = ProductTemplate._visar_get_service_template_for_dimension(dimension)
             if not template:
                 continue
@@ -264,27 +342,168 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'dimension_id': dimension.id,
                 'label': dimension._visar_wizard_label(),
                 'field_name': dimension._visar_tier_field_name(),
-                'tiers': template.visar_tier_ids.sorted('sequence'),
+                'tiers': template._visar_tiers_for_dimension(dimension),
             })
         return sections
+
+    # Dimensiones seleccionadas con el tipo de medición dado.
+    def _visar_dims_by_measure(self, selections, measure_type):
+        return self._visar_selection_dimension_ids(selections).filtered(
+            lambda d: d.measure_type == measure_type)
+
+    # Tramo cuyo rango de m² contiene el valor dado, para una dimensión concreta.
+    # (Acotado por measure_scope; ante solapes gana el rango más angosto.)
+    def _visar_tier_for_dimension_m2(self, dimension, m2):
+        ProductTemplate = request.env['product.template'].sudo()
+        template = ProductTemplate._visar_get_service_template_for_dimension(dimension)
+        if not template:
+            return request.env['visar.service.tier']
+        return template._visar_tier_for_dimension_m2(dimension, m2)
 
     # Delega en el modelo para obtener las dimensiones activas de las selecciones actuales.
     def _visar_selection_dimension_ids(self, selections):
         return request.env['appointment.type'].sudo()._visar_selection_dimension_ids(selections)
 
-    def _visar_wizard_step_count(self, selections=None):
-        """Pasos: grupos + substeps + dimensiones + calificación (fumigación) + zona."""
-        selections = selections or {}
-        groups = self._visar_selected_groups(selections) or self._visar_wizard_groups()
-        substeps = sum(1 for g in groups if self._visar_group_needs_substep(g))
-        calification = 1 if self._visar_fumigacion_selected(selections) else 0
-        return 1 + substeps + 1 + calification + 1
+    def _visar_wizard_steps(self, selections):
+        """Lista ordenada de claves de paso aplicables a las selecciones actuales.
 
-    # Renderiza el paso de dirección (último paso) calculando su número según calificación.
+        Sirve para el indicador 'Paso X de Y'. Los pasos de medición se infieren
+        de los measure_type de las dimensiones elegidas; si aún no se eligió la
+        cobertura, se anticipan los de fumigación.
+        """
+        selections = selections or {}
+        steps = ['services']
+        fum = self._visar_fumigacion_selected(selections)
+        if fum:
+            steps += ['motivo', 'plagas', 'cobertura']
+
+        coverage_group = self._visar_coverage_group()
+        for group in self._visar_selected_groups(selections).sorted('sequence'):
+            if group == coverage_group:
+                continue
+            if self._visar_group_needs_substep(group):
+                steps.append('group_%s' % group.id)
+
+        measure_types = {
+            d.measure_type for d in self._visar_selection_dimension_ids(selections)
+        }
+        if fum and not selections.get('cobertura') and coverage_group:
+            measure_types |= {
+                d.measure_type for d in coverage_group.dimension_ids.filtered('active')
+            }
+        for mtype, key in (('interior', 'interior'), ('exterior', 'exterior'),
+                           ('direct', 'dimensiones')):
+            if mtype in measure_types:
+                steps.append(key)
+        steps.append('address')
+        return steps
+
+    # Devuelve (índice 1-based, total) del paso actual para el indicador de progreso.
+    def _visar_wizard_position(self, selections, step_key):
+        steps = self._visar_wizard_steps(selections)
+        idx = steps.index(step_key) + 1 if step_key in steps else 1
+        return idx, len(steps)
+
+    # URL (ruta GET) del paso dado.
+    def _visar_step_url(self, step_key):
+        base = '/appointment/visar/booking'
+        if step_key.startswith('group_'):
+            return base + '/wizard/group/%s' % step_key[len('group_'):]
+        return {
+            'services': base,
+            'motivo': base + '/wizard/motivo',
+            'plagas': base + '/wizard/plagas',
+            'cobertura': base + '/wizard/cobertura',
+            'interior': base + '/wizard/interior',
+            'exterior': base + '/wizard/exterior',
+            'dimensiones': base + '/wizard/dimensiones',
+            'address': base + '/wizard/direccion',
+        }.get(step_key, base)
+
+    # URL del paso anterior al actual (para el botón "Volver"); None si es el primero.
+    def _visar_wizard_prev_url(self, step_key, selections):
+        steps = self._visar_wizard_steps(selections)
+        if step_key not in steps:
+            return None
+        idx = steps.index(step_key)
+        if idx <= 0:
+            return None
+        return self._visar_step_url(steps[idx - 1])
+
+    # Limpia las selecciones que quedan inválidas al (re)enviar el paso dado.
+    def _visar_clear_downstream(self, selections, step_key):
+        norm = 'group' if step_key.startswith('group_') else step_key
+        keys = set(_VISAR_STEP_CLEARS.get(norm, ()))
+        clears_tiers = norm in _VISAR_CLEARS_TIERS
+        result = {}
+        for key, value in (selections or {}).items():
+            if key in keys:
+                continue
+            if clears_tiers and key.startswith('tier_'):
+                continue
+            result[key] = value
+        return result
+
+    # Aplica la respuesta de un paso: limpia estado aguas abajo y fusiona los nuevos valores.
+    def _visar_commit_step(self, step_key, updates):
+        booking = self._visar_get_booking_session()
+        if not booking.get('mode'):
+            master = self._visar_master_appointment_type()
+            booking['mode'] = 'wizard'
+            booking['master_appointment_type_id'] = master.id if master else False
+        selections = self._visar_clear_downstream(booking.get('selections') or {}, step_key)
+        selections.update(updates)
+        booking['selections'] = selections
+        self._visar_persist_booking(booking)
+        return selections
+
+    # Ruta del siguiente paso incompleto del wizard según las selecciones actuales.
+    def _visar_wizard_next(self, selections=None):
+        booking = self._visar_get_booking_session()
+        selections = selections if selections is not None else (booking.get('selections') or {})
+        base = '/appointment/visar/booking'
+        if not selections.get('group_ids'):
+            return base
+
+        # Corte a valoración (plaga compleja o banda de exterior fuera de rango):
+        # atajo global para no re-preguntar mediciones cuando ya se decidió valoración.
+        if selections.get('requiere_valoracion'):
+            return base + '/wizard/valoracion-aviso'
+
+        if self._visar_fumigacion_selected(selections):
+            if not selections.get('motivo'):
+                return base + '/wizard/motivo'
+            if not selections.get('servicio_plaga'):
+                return base + '/wizard/plagas'
+            if not selections.get('cobertura'):
+                return base + '/wizard/cobertura'
+
+        next_group = self._visar_next_group_substep(selections)
+        if next_group:
+            return base + '/wizard/group/%s' % next_group.id
+
+        dims = self._visar_selection_dimension_ids(selections)
+
+        def needs(measure_type):
+            return any(
+                d.measure_type == measure_type and not self._visar_dim_has_tier(selections, d)
+                for d in dims)
+
+        if needs('interior'):
+            return base + '/wizard/interior'
+        if needs('exterior'):
+            return base + '/wizard/exterior'
+        if needs('direct'):
+            return base + '/wizard/dimensiones'
+
+        if self._visar_selections_require_valuation(selections):
+            return base + '/wizard/valoracion-aviso'
+        return base + '/wizard/direccion'
+
+    # Renderiza el paso de dirección (último paso del wizard).
     def _visar_render_address(self, selections, values=None, error=None):
-        step = 5 if self._visar_fumigacion_selected(selections) else 4
         ctx = self._visar_wizard_context_base(
-            step, selections=selections, error=error, values=values or {})
+            'address', selections=selections, error=error, values=values or {})
         return request.render('visar_appointment.visar_wizard_zona', ctx)
 
     # Extrae y normaliza los campos de dirección de entrega del formulario.
@@ -313,14 +532,17 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return cp_record.zone_id, address, None
 
     # Construye el dict de contexto base común a todos los pasos del wizard.
-    def _visar_wizard_context_base(self, step, selections=None, error=None, values=None):
+    def _visar_wizard_context_base(self, step_key, selections=None, error=None, values=None):
+        selections = selections or {}
+        idx, total = self._visar_wizard_position(selections, step_key)
         return {
             'wizard_groups': self._visar_wizard_groups(),
-            'wizard_step': step,
-            'wizard_total_steps': self._visar_wizard_step_count(selections),
+            'wizard_step': idx,
+            'wizard_total_steps': total,
+            'back_url': self._visar_wizard_prev_url(step_key, selections),
             'error': error,
             'values': values or {},
-            'selections': selections or {},
+            'selections': selections,
         }
 
     # Determina el flujo Visar del tipo de cita consultando el campo y los parámetros de sistema.
@@ -406,14 +628,14 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.not_found()
         entry_flow = self._visar_ensure_entry_flow(appointment_type)
         if entry_flow == 'wizard':
-            return request.redirect('/appointment/visar/booking')
+            return request.redirect('/appointment/visar/booking?restart=1')
         if entry_flow == 'valuation':
             if not self._visar_valuation_done(appointment_type_id, kwargs):
                 return request.redirect(
                     '/appointment/%s/visar/valoracion' % appointment_type_id)
             return super().appointment_type_page(appointment_type_id, **kwargs)
         if appointment_type.visar_is_master and not self._visar_wizard_done(appointment_type_id, kwargs):
-            return request.redirect('/appointment/visar/booking')
+            return request.redirect('/appointment/visar/booking?restart=1')
         return super().appointment_type_page(appointment_type_id, **kwargs)
 
     # ------------------------------------------------------------------
@@ -423,14 +645,21 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     @http.route(['/appointment/visar/booking'],
                 type='http', auth='public', website=True, sitemap=False)
     def visar_wizard_start(self, **kwargs):
-        master = self._visar_init_wizard_session()
+        booking = self._visar_get_booking_session()
+        # Reinicia al entrar desde el selector (restart=1) o si no hay sesión activa;
+        # al regresar con "Volver" (sin restart) conserva las respuestas ya dadas.
+        if kwargs.get('restart') or booking.get('mode') != 'wizard':
+            master = self._visar_init_wizard_session()
+        else:
+            master = self._visar_master_appointment_type()
         if not master:
             return request.not_found()
-        ctx = self._visar_wizard_context_base(1, values=kwargs)
+        selections = self._visar_get_booking_session().get('selections') or {}
+        ctx = self._visar_wizard_context_base('services', selections=selections, values=kwargs)
         ctx['error'] = kwargs.get('error')
         return request.render('visar_appointment.visar_wizard_services', ctx)
 
-    # Procesa el POST del paso 1 y avanza al siguiente sub-paso o al paso de dimensiones.
+    # Procesa el POST del paso 1 (grupos) y delega el siguiente paso al resolutor.
     @http.route(['/appointment/visar/booking/wizard/services'],
                 type='http', auth='public', website=True, methods=['POST'], sitemap=False)
     def visar_wizard_services(self, **post):
@@ -440,20 +669,16 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         group_ids = self._visar_form_id_list('group_ids')
         groups = request.env['visar.service.group'].sudo().browse(group_ids).exists()
         if not groups:
-            ctx = self._visar_wizard_context_base(1, error=_('Selecciona al menos un servicio.'), values=post)
+            ctx = self._visar_wizard_context_base(
+                'services', error=_('Selecciona al menos un servicio.'), values=post)
             return request.render('visar_appointment.visar_wizard_services', ctx)
 
         dimension_ids = self._visar_auto_dimensions_for_groups(groups, [])
-        selections = {
+        selections = self._visar_commit_step('services', {
             'group_ids': groups.ids,
             'dimension_ids': dimension_ids,
-        }
-        self._visar_update_selections(selections)
-
-        next_group = self._visar_next_group_substep(selections)
-        if next_group:
-            return request.redirect('/appointment/visar/booking/wizard/group/%s' % next_group.id)
-        return request.redirect('/appointment/visar/booking/wizard/dimensiones')
+        })
+        return request.redirect(self._visar_wizard_next(selections))
 
     # Muestra y procesa el sub-paso de dimensiones para un grupo con múltiples opciones.
     @http.route(['/appointment/visar/booking/wizard/group/<int:group_id>'],
@@ -465,8 +690,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if not group or group.id not in (selections.get('group_ids') or []):
             return request.redirect('/appointment/visar/booking')
 
+        step_key = 'group_%s' % group.id
         if request.httprequest.method == 'GET':
-            ctx = self._visar_wizard_context_base(2, selections=selections, values=post)
+            ctx = self._visar_wizard_context_base(step_key, selections=selections, values=post)
             ctx.update({
                 'wizard_group': group,
                 'wizard_dimensions': group.dimension_ids.filtered('active'),
@@ -478,7 +704,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         chosen = [d for d in dimension_ids if d in valid_ids]
         if not chosen:
             ctx = self._visar_wizard_context_base(
-                2, selections=selections, error=_('Selecciona al menos una opción.'), values=post)
+                step_key, selections=selections, error=_('Selecciona al menos una opción.'),
+                values=post)
             ctx.update({
                 'wizard_group': group,
                 'wizard_dimensions': group.dimension_ids.filtered('active'),
@@ -491,13 +718,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         for dim_id in valid_ids:
             if dim_id not in chosen:
                 current.discard(dim_id)
-        selections['dimension_ids'] = list(current)
-        self._visar_update_selections(selections)
-
-        next_group = self._visar_next_group_substep(selections)
-        if next_group:
-            return request.redirect('/appointment/visar/booking/wizard/group/%s' % next_group.id)
-        return request.redirect('/appointment/visar/booking/wizard/dimensiones')
+        selections = self._visar_commit_step(step_key, {'dimension_ids': list(current)})
+        return request.redirect(self._visar_wizard_next(selections))
 
     # Muestra y procesa el paso de selección de tramos (m²) por cada dimensión elegida.
     @http.route(['/appointment/visar/booking/wizard/dimensiones'],
@@ -508,8 +730,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         sections = self._visar_dimension_sections(selections)
         if request.httprequest.method == 'GET':
             if not sections:
-                return request.redirect('/appointment/visar/booking')
-            ctx = self._visar_wizard_context_base(3, selections=selections, values=post)
+                return request.redirect(self._visar_wizard_next(selections))
+            ctx = self._visar_wizard_context_base('dimensiones', selections=selections, values=post)
             ctx['dimension_sections'] = sections
             return request.render('visar_appointment.visar_wizard_dimensiones', ctx)
 
@@ -518,59 +740,232 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             tier_id = post.get(section['field_name'])
             if not tier_id:
                 ctx = self._visar_wizard_context_base(
-                    3, selections=selections,
+                    'dimensiones', selections=selections,
                     error=_('Selecciona un rango para cada servicio.'), values=post)
                 ctx['dimension_sections'] = sections
                 return request.render('visar_appointment.visar_wizard_dimensiones', ctx)
             tier_updates[section['field_name']] = int(tier_id)
-        self._visar_update_selections(tier_updates)
-        booking = self._visar_get_booking_session()
-        selections = booking.get('selections') or {}
-        if self._visar_selections_require_valuation(selections):
-            return request.redirect('/appointment/visar/booking/wizard/valoracion-aviso')
+        selections = self._visar_commit_step('dimensiones', tier_updates)
+        return request.redirect(self._visar_wizard_next(selections))
 
-        if self._visar_fumigacion_selected(selections):
-            return request.redirect('/appointment/visar/booking/wizard/calificacion')
-        return self._visar_render_address(selections, values=post)
-
-    # Muestra y procesa el paso de calificación (plaga/preventivo, roedores, tipo de plaga).
-    @http.route(['/appointment/visar/booking/wizard/calificacion'],
+    # Paso Motivo (P1): preventivo o correctivo. Solo aplica con fumigación.
+    @http.route(['/appointment/visar/booking/wizard/motivo'],
                 type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
-    def visar_wizard_calificacion(self, **post):
+    def visar_wizard_motivo(self, **post):
         booking = self._visar_get_booking_session()
         if not booking or booking.get('mode') != 'wizard':
             return request.redirect('/appointment/visar/booking')
         selections = booking.get('selections') or {}
         if not self._visar_fumigacion_selected(selections):
-            return self._visar_render_address(selections, values=post)
+            return request.redirect(self._visar_wizard_next(selections))
 
         if request.httprequest.method == 'GET':
-            ctx = self._visar_wizard_context_base(4, selections=selections, values=post)
-            return request.render('visar_appointment.visar_wizard_calificacion', ctx)
+            ctx = self._visar_wizard_context_base('motivo', selections=selections, values=post)
+            return request.render('visar_appointment.visar_wizard_motivo', ctx)
 
-        plaga = post.get('plaga')
-        roedores = post.get('roedores')
-        if plaga not in ('preventivo', 'plaga') or roedores not in ('si', 'no'):
+        motivo = post.get('motivo')
+        if motivo not in ('preventivo', 'correctivo'):
             ctx = self._visar_wizard_context_base(
-                4, selections=selections,
-                error=_('Responde si tienes plaga o es preventivo, y si tienes problema de roedores.'),
-                values=post)
-            return request.render('visar_appointment.visar_wizard_calificacion', ctx)
+                'motivo', selections=selections,
+                error=_('Indica si es preventivo o correctivo.'), values=post)
+            return request.render('visar_appointment.visar_wizard_motivo', ctx)
 
-        valid_tipos = request.env['appointment.type']._VISAR_TIPO_PLAGA_LABELS.keys()
-        tipo_plaga = [
-            t for t in request.httprequest.form.getlist('tipo_plaga')
-            if t in valid_tipos
-        ] if plaga == 'plaga' else []
+        selections = self._visar_commit_step('motivo', {'motivo': motivo})
+        return request.redirect(self._visar_wizard_next(selections))
 
-        self._visar_update_selections({
-            'plaga': plaga,
-            'roedores': roedores,
-            'tipo_plaga': tipo_plaga,
-        })
+    # Paso Plagas (P2): categorías + cortes a valoración (termitas/chinches/no identificada).
+    @http.route(['/appointment/visar/booking/wizard/plagas'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_plagas(self, **post):
         booking = self._visar_get_booking_session()
+        if not booking or booking.get('mode') != 'wizard':
+            return request.redirect('/appointment/visar/booking')
         selections = booking.get('selections') or {}
-        return self._visar_render_address(selections, values=post)
+        if not self._visar_fumigacion_selected(selections) or not selections.get('motivo'):
+            return request.redirect(self._visar_wizard_next(selections))
+
+        if request.httprequest.method == 'GET':
+            ctx = self._visar_wizard_context_base('plagas', selections=selections, values=post)
+            return request.render('visar_appointment.visar_wizard_plagas', ctx)
+
+        motivo = selections.get('motivo')
+        chosen = set(request.httprequest.form.getlist('servicio_plaga'))
+        categories = [c for c in ('rastreros', 'voladores', 'roedores') if c in chosen]
+
+        # Protección general (rama preventiva): activa las tres categorías, sin corte.
+        if 'proteccion_general' in chosen:
+            categories = ['rastreros', 'voladores', 'roedores']
+
+        # Cortes a valoración: solo en la rama correctiva.
+        cut_reason = False
+        if motivo == 'correctivo':
+            if 'termitas' in chosen:
+                cut_reason = 'termitas'
+            elif 'chinches' in chosen:
+                cut_reason = 'chinches'
+            elif 'no_se' in chosen:
+                cut_reason = 'plaga_no_identificada'
+
+        if not categories and not cut_reason:
+            ctx = self._visar_wizard_context_base(
+                'plagas', selections=selections,
+                error=_('Selecciona al menos una opción.'), values=post)
+            return request.render('visar_appointment.visar_wizard_plagas', ctx)
+
+        updates = {
+            'servicio_plaga': categories,
+            'roedores': 'si' if 'roedores' in categories else 'no',
+            # Flags de upsell candidato (guardados para fase posterior, sin UI aún).
+            'upsell_cebaderos': 'roedores' in categories,
+            'upsell_tapon': 'rastreros' in categories,
+            'upsell_guardapolvo': 'rastreros' in categories,
+        }
+        if cut_reason:
+            updates['requiere_valoracion'] = True
+            updates['motivo_valoracion'] = cut_reason
+        selections = self._visar_commit_step('plagas', updates)
+        return request.redirect(self._visar_wizard_next(selections))
+
+    # Paso Cobertura (P3): interior / exterior / ambos. Fija las dimensiones de fumigación.
+    @http.route(['/appointment/visar/booking/wizard/cobertura'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_cobertura(self, **post):
+        booking = self._visar_get_booking_session()
+        if not booking or booking.get('mode') != 'wizard':
+            return request.redirect('/appointment/visar/booking')
+        selections = booking.get('selections') or {}
+        if not self._visar_fumigacion_selected(selections):
+            return request.redirect(self._visar_wizard_next(selections))
+
+        if request.httprequest.method == 'GET':
+            ctx = self._visar_wizard_context_base('cobertura', selections=selections, values=post)
+            return request.render('visar_appointment.visar_wizard_cobertura', ctx)
+
+        coverage = post.get('cobertura')
+        if coverage not in ('interior', 'exterior', 'ambos'):
+            ctx = self._visar_wizard_context_base(
+                'cobertura', selections=selections,
+                error=_('Indica si fumigamos interior, exterior o ambos.'), values=post)
+            return request.render('visar_appointment.visar_wizard_cobertura', ctx)
+
+        fum_group = self._visar_coverage_group()
+        fum_dim_ids = set(fum_group.dimension_ids.filtered('active').ids) if fum_group else set()
+        chosen_dim_ids = self._visar_fum_dimensions_for_coverage(coverage).ids
+        # Conserva las dimensiones de otros grupos (p. ej. corte) y fija las de fumigación.
+        current = [d for d in (selections.get('dimension_ids') or []) if d not in fum_dim_ids]
+        current += chosen_dim_ids
+        selections = self._visar_commit_step('cobertura', {
+            'cobertura': coverage,
+            'dimension_ids': current,
+        })
+        return request.redirect(self._visar_wizard_next(selections))
+
+    # Paso Interior (Etapa 2): sé mis m² (rango) o los estimo (proxy + terreno opcional).
+    @http.route(['/appointment/visar/booking/wizard/interior'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_interior(self, **post):
+        booking = self._visar_get_booking_session()
+        if not booking or booking.get('mode') != 'wizard':
+            return request.redirect('/appointment/visar/booking')
+        selections = booking.get('selections') or {}
+        sections = self._visar_dimension_sections(selections, measure_type='interior')
+        if not sections:
+            return request.redirect(self._visar_wizard_next(selections))
+
+        if request.httprequest.method == 'GET':
+            ctx = self._visar_wizard_context_base('interior', selections=selections, values=post)
+            ctx['dimension_sections'] = sections
+            return request.render('visar_appointment.visar_wizard_interior', ctx)
+
+        def _error(msg):
+            ctx = self._visar_wizard_context_base(
+                'interior', selections=selections, error=msg, values=post)
+            ctx['dimension_sections'] = sections
+            return request.render('visar_appointment.visar_wizard_interior', ctx)
+
+        mode = post.get('interior_mode')
+        updates = {'interior_niveles': post.get('interior_niveles') or ''}
+
+        if mode == 'sabe':
+            for section in sections:
+                tier_id = post.get(section['field_name'])
+                if not tier_id:
+                    return _error(_('Selecciona un rango para cada servicio.'))
+                updates[section['field_name']] = int(tier_id)
+        elif mode == 'estima':
+            def _num(key):
+                try:
+                    return max(int(post.get(key) or 0), 0)
+                except (TypeError, ValueError):
+                    return 0
+            rec, ban, niv, gar = _num('rec'), _num('ban'), max(_num('niv'), 1), _num('gar')
+            predio = _num('predio')
+            if rec <= 0:
+                return _error(_('Indica al menos el número de recámaras.'))
+            m2 = request.env['visar.estimator.factor'].sudo()._visar_estimate_interior_m2(
+                rec, ban, niv, gar, predio)
+            for section in sections:
+                tier = self._visar_tier_for_dimension_m2(section['dimension'], m2)
+                if not tier:
+                    return _error(_('No pudimos estimar el tamaño. Intenta con el rango directo.'))
+                updates[section['field_name']] = tier.id
+            updates.update({
+                'interior_estimado_m2': m2,
+                'interior_proxy': {'rec': rec, 'ban': ban, 'niv': niv, 'gar': gar, 'predio': predio},
+            })
+        else:
+            return _error(_('Indica si conoces tus metros cuadrados o si prefieres estimarlos.'))
+
+        selections = self._visar_commit_step('interior', updates)
+        return request.redirect(self._visar_wizard_next(selections))
+
+    # Paso Exterior (Etapa 3): medición única del jardín (banda directa o comparativo visual).
+    @http.route(['/appointment/visar/booking/wizard/exterior'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_exterior(self, **post):
+        booking = self._visar_get_booking_session()
+        if not booking or booking.get('mode') != 'wizard':
+            return request.redirect('/appointment/visar/booking')
+        selections = booking.get('selections') or {}
+        exterior_dims = self._visar_dims_by_measure(selections, 'exterior')
+        if not exterior_dims:
+            return request.redirect(self._visar_wizard_next(selections))
+
+        Band = request.env['visar.measure.band'].sudo()
+        bands = Band._visar_exterior_bands()
+
+        if request.httprequest.method == 'GET':
+            ctx = self._visar_wizard_context_base('exterior', selections=selections, values=post)
+            ctx['measure_bands'] = bands
+            ctx['comparative_bands'] = bands.filtered('comparative_label')
+            return request.render('visar_appointment.visar_wizard_exterior', ctx)
+
+        def _error(msg):
+            ctx = self._visar_wizard_context_base(
+                'exterior', selections=selections, error=msg, values=post)
+            ctx['measure_bands'] = bands
+            ctx['comparative_bands'] = bands.filtered('comparative_label')
+            return request.render('visar_appointment.visar_wizard_exterior', ctx)
+
+        band = Band.browse(int(post.get('band_id') or 0)).exists()
+        if band not in bands:
+            return _error(_('Selecciona el tamaño de tu jardín o exterior.'))
+
+        updates = {
+            'exterior_band_id': band.id,
+            'exterior_rodea': post.get('exterior_rodea') or '',
+        }
+        if band.is_valuation:
+            updates['requiere_valoracion'] = True
+            updates['motivo_valoracion'] = 'area_excede_limite'
+        else:
+            for dimension in exterior_dims:
+                tier = self._visar_tier_for_dimension_m2(dimension, band.m2_ref)
+                if not tier:
+                    return _error(_('No hay un rango configurado para ese tamaño. Contáctanos.'))
+                updates[dimension._visar_tier_field_name()] = tier.id
+        selections = self._visar_commit_step('exterior', updates)
+        return request.redirect(self._visar_wizard_next(selections))
 
     # Muestra el aviso de que el servicio seleccionado requiere valoración técnica previa.
     @http.route(['/appointment/visar/booking/wizard/valoracion-aviso'],
@@ -581,7 +976,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.redirect('/appointment/visar/booking')
         selections = booking.get('selections') or {}
         if not self._visar_selections_require_valuation(selections):
-            return request.redirect('/appointment/visar/booking/wizard/dimensiones')
+            return request.redirect(self._visar_wizard_next(selections))
         valuation_type = self._visar_valuation_appointment_type()
         if not valuation_type:
             return request.not_found()
@@ -591,11 +986,21 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             valuation_tmpl.currency_id if valuation_tmpl
             else request.env.company.currency_id
         )
+        # "Volver" del aviso: regresa al paso que originó el corte para poder cambiarlo.
+        if selections.get('motivo_valoracion') in ('termitas', 'chinches', 'plaga_no_identificada'):
+            back_step = 'plagas'
+        elif self._visar_dims_by_measure(selections, 'exterior'):
+            back_step = 'exterior'
+        elif self._visar_dims_by_measure(selections, 'interior'):
+            back_step = 'interior'
+        else:
+            back_step = 'dimensiones'
         return request.render('visar_appointment.visar_wizard_valuation_notice', {
             'valuation_product': valuation_tmpl,
             'valuation_price': ProductTemplate._visar_valuation_price(),
             'valuation_currency': currency,
             'valuation_appointment_type': valuation_type,
+            'back_url': self._visar_step_url(back_step),
         })
 
     # Redirige al flujo de valoración al confirmar el aviso desde el wizard.
@@ -607,7 +1012,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.redirect('/appointment/visar/booking')
         selections = booking.get('selections') or {}
         if not self._visar_selections_require_valuation(selections):
-            return request.redirect('/appointment/visar/booking/wizard/dimensiones')
+            return request.redirect(self._visar_wizard_next(selections))
         valuation_type = self._visar_valuation_appointment_type()
         if not valuation_type:
             return request.not_found()
@@ -631,9 +1036,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             payload = {'found': False}
         return request.make_json_response(payload)
 
-    # Procesa la dirección de entrega, deriva la zona del CP, verifica pools y redirige.
+    # Muestra (GET) y procesa (POST) el paso de dirección de entrega.
     @http.route(['/appointment/visar/booking/wizard/direccion'],
-                type='http', auth='public', website=True, methods=['POST'], sitemap=False)
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
     def visar_wizard_address(self, **post):
         booking = self._visar_get_booking_session()
         master = self._visar_master_appointment_type()
@@ -642,6 +1047,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         selections = booking.get('selections') or {}
         if self._visar_selections_require_valuation(selections):
             return request.redirect('/appointment/visar/booking/wizard/valoracion-aviso')
+
+        if request.httprequest.method == 'GET':
+            return self._visar_render_address(selections, values=post)
 
         zone, address, error = self._visar_resolve_address_zone(post)
         if error:
@@ -722,11 +1130,25 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             })
         valuation_tmpl = request.env['product.template']._visar_get_valuation_template()
         variant = valuation_tmpl.product_variant_id if valuation_tmpl else False
+
+        # Si el corte vino del wizard, arrastra el contexto de calificación (motivo,
+        # plagas, razón del corte) para que quede registrado en la cita de valoración.
+        valuation_selections = {}
+        if self._visar_parse_bool(kwargs.get('from_wizard')):
+            prior = self._visar_get_booking_session()
+            if prior.get('mode') == 'wizard':
+                valuation_selections = dict(prior.get('selections') or {})
+                reason = self._visar_resolve_valuation_reason(valuation_selections)
+                if reason:
+                    valuation_selections['motivo_valoracion'] = reason
+                valuation_selections['requiere_valoracion'] = True
+
         self._visar_persist_booking({
             'mode': 'valuation',
             'appointment_type_id': appointment_type_id,
             'zone_id': zone.id,
             'delivery_address': address,
+            'selections': valuation_selections,
             'items': [{
                 'dimension_id': False,
                 'variant_id': variant.id if variant else False,
@@ -906,6 +1328,18 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return description + Markup('<br/>') + snippet
         return snippet
 
+    def _visar_append_notes_to_description(self, description, notes):
+        """Añade notas de confirmación ligera (niveles, jardín, m² estimados) a la descripción."""
+        if not notes:
+            return description
+        snippet = Markup('<br/>').join([
+            Markup('<br/><strong>%s</strong>') % _('Notas de calificación'),
+            Markup('<br/>').join(Markup('<span>%s</span>') % note for note in notes),
+        ])
+        if description:
+            return description + Markup('<br/>') + snippet
+        return snippet
+
     # Crea un registro calendar.booking con todos los campos necesarios para el flujo de pago.
     def _visar_create_calendar_booking(
         self, appointment_type, date_start, date_end, description, allday,
@@ -957,6 +1391,10 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         answer_input_values, visar_inputs = self._visar_enrich_answer_inputs(
             appointment_type, booking, answer_input_values, customer)
         description = self._visar_append_answers_to_description(description, visar_inputs)
+        if booking:
+            notes = request.env['appointment.type'].sudo()._visar_calification_notes(
+                booking.get('selections'))
+            description = self._visar_append_notes_to_description(description, notes)
 
         wizard_booking = self._visar_resolve_wizard_payment_booking(booking, appointment_type)
         visar_wizard_payment = bool(wizard_booking)

@@ -49,4 +49,28 @@
         <field name="sequence">5</field>
     </record>
 
+    <record id="appointment_question_visar_motivo" model="appointment.question">
+        <field name="name">Motivo</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">6</field>
+    </record>
+
+    <record id="appointment_question_visar_servicio_plaga" model="appointment.question">
+        <field name="name">Plagas a tratar</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">7</field>
+    </record>
+
+    <record id="appointment_question_visar_motivo_valoracion" model="appointment.question">
+        <field name="name">Motivo de valoración</field>
+        <field name="question_type">char</field>
+        <field name="question_required" eval="False"/>
+        <field name="is_reusable" eval="False"/>
+        <field name="sequence">8</field>
+    </record>
+
 </odoo>

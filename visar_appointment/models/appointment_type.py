@@ -120,6 +120,21 @@ class AppointmentType(models.Model):
         return self.env.ref(
             'visar_appointment.appointment_question_visar_tipo_plaga', raise_if_not_found=False)
 
+    @api.model
+    def _visar_question_motivo(self):
+        return self.env.ref(
+            'visar_appointment.appointment_question_visar_motivo', raise_if_not_found=False)
+
+    @api.model
+    def _visar_question_servicio_plaga(self):
+        return self.env.ref(
+            'visar_appointment.appointment_question_visar_servicio_plaga', raise_if_not_found=False)
+
+    @api.model
+    def _visar_question_motivo_valoracion(self):
+        return self.env.ref(
+            'visar_appointment.appointment_question_visar_motivo_valoracion', raise_if_not_found=False)
+
     # Etiquetas legibles para las respuestas de calificación capturadas en el wizard.
     _VISAR_PLAGA_LABELS = {'preventivo': 'Preventivo', 'plaga': 'Plaga activa'}
     _VISAR_ROEDORES_LABELS = {'si': 'Sí', 'no': 'No'}
@@ -127,6 +142,34 @@ class AppointmentType(models.Model):
         'cucarachas': 'Cucarachas',
         'hormigas': 'Hormigas',
         'aranas': 'Arañas',
+    }
+    _VISAR_MOTIVO_LABELS = {
+        'preventivo': 'Preventivo',
+        'correctivo': 'Correctivo (plaga activa)',
+    }
+    _VISAR_SERVICIO_PLAGA_LABELS = {
+        'rastreros': 'Rastreros',
+        'voladores': 'Voladores',
+        'roedores': 'Roedores',
+    }
+    _VISAR_MOTIVO_VALORACION_LABELS = {
+        'termitas': 'Termitas',
+        'chinches': 'Chinches de cama',
+        'plaga_no_identificada': 'Plaga no identificada',
+        'area_excede_limite': 'Área excede el límite del tabulador',
+    }
+    _VISAR_NIVELES_LABELS = {
+        'planta_baja': 'Solo planta baja',
+        'dos_o_mas': '2 niveles o más',
+    }
+    _VISAR_RODEA_LABELS = {
+        'rodea': 'Rodea toda la casa',
+        'un_lado': 'Solo de un lado',
+    }
+    _VISAR_UPSELL_LABELS = {
+        'upsell_cebaderos': 'Estaciones antirroedores',
+        'upsell_tapon': 'Tapón de drenaje',
+        'upsell_guardapolvo': 'Guardapolvo',
     }
 
     @api.model
@@ -187,39 +230,66 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_build_calification_answer_inputs(self, base, selections):
-        """Respuestas P1/P2/P3 (plaga, roedores, tipo de plaga) para el bloque Questions & Answers."""
+        """Respuestas del guión (motivo, plagas, roedores, valoración) + notas de confirmación
+        y flags de upsell candidato, para el bloque Questions & Answers de la cita."""
         inputs = []
 
-        plaga_q = self._visar_question_plaga()
-        plaga = selections.get('plaga')
-        if plaga_q and plaga:
-            inputs.append({
-                **base,
-                'question_id': plaga_q.id,
-                'value_text_box': self._VISAR_PLAGA_LABELS.get(plaga, plaga),
-            })
+        def _add(question, value):
+            if question and value:
+                inputs.append({**base, 'question_id': question.id, 'value_text_box': value})
 
-        roedores_q = self._visar_question_roedores()
+        # Motivo (preventivo / correctivo).
+        motivo = selections.get('motivo')
+        _add(self._visar_question_motivo(),
+             self._VISAR_MOTIVO_LABELS.get(motivo, motivo) if motivo else '')
+
+        # Roedores (derivado de las categorías de plaga; conservado por compatibilidad).
         roedores = selections.get('roedores')
-        if roedores_q and roedores:
-            inputs.append({
-                **base,
-                'question_id': roedores_q.id,
-                'value_text_box': self._VISAR_ROEDORES_LABELS.get(roedores, roedores),
-            })
+        _add(self._visar_question_roedores(),
+             self._VISAR_ROEDORES_LABELS.get(roedores, roedores) if roedores else '')
 
-        tipo_q = self._visar_question_tipo_plaga()
-        tipos = selections.get('tipo_plaga') or []
-        if isinstance(tipos, str):
-            tipos = [t for t in tipos.split(',') if t]
-        if tipo_q and tipos:
-            labels = [self._VISAR_TIPO_PLAGA_LABELS.get(t, t) for t in tipos]
-            inputs.append({
-                **base,
-                'question_id': tipo_q.id,
-                'value_text_box': ', '.join(labels),
-            })
+        # Plagas a tratar (categorías) + flags de upsell candidato como nota.
+        servicio = selections.get('servicio_plaga') or []
+        if isinstance(servicio, str):
+            servicio = [s for s in servicio.split(',') if s]
+        plaga_bits = []
+        if servicio:
+            plaga_bits.append(', '.join(
+                self._VISAR_SERVICIO_PLAGA_LABELS.get(s, s) for s in servicio))
+        upsells = [
+            self._VISAR_UPSELL_LABELS[key]
+            for key in ('upsell_cebaderos', 'upsell_tapon', 'upsell_guardapolvo')
+            if selections.get(key)
+        ]
+        if upsells:
+            plaga_bits.append('Candidatos a ofrecer: %s' % ', '.join(upsells))
+        _add(self._visar_question_servicio_plaga(), ' — '.join(plaga_bits))
+
+        # Motivo de valoración (solo si se activó el corte).
+        if selections.get('requiere_valoracion'):
+            motivo_val = selections.get('motivo_valoracion')
+            _add(self._visar_question_motivo_valoracion(),
+                 self._VISAR_MOTIVO_VALORACION_LABELS.get(motivo_val, motivo_val)
+                 if motivo_val else '')
+
         return inputs
+
+    @api.model
+    def _visar_calification_notes(self, selections):
+        """Notas de confirmación ligera (niveles, si el jardín rodea la casa, m² estimados)
+        para anexar a la descripción del evento. No accionables (solo referencia)."""
+        selections = selections or {}
+        bits = []
+        niveles = selections.get('interior_niveles')
+        if niveles:
+            bits.append('Niveles: %s' % self._VISAR_NIVELES_LABELS.get(niveles, niveles))
+        estimado = selections.get('interior_estimado_m2')
+        if estimado:
+            bits.append('Construcción estimada: %s m²' % estimado)
+        rodea = selections.get('exterior_rodea')
+        if rodea:
+            bits.append('Jardín: %s' % self._VISAR_RODEA_LABELS.get(rodea, rodea))
+        return bits
 
     @api.model
     def _visar_unlink_questions_from_entry_types(self):
@@ -234,6 +304,9 @@ class AppointmentType(models.Model):
             | self._visar_question_plaga()
             | self._visar_question_roedores()
             | self._visar_question_tipo_plaga()
+            | self._visar_question_motivo()
+            | self._visar_question_servicio_plaga()
+            | self._visar_question_motivo_valoracion()
         )
         # También busca por nombre para cubrir duplicados/manuales creados fuera del módulo.
         Question = self.env['appointment.question'].sudo()
@@ -243,6 +316,7 @@ class AppointmentType(models.Model):
             'Dirección de servicio', 'Dirección', 'Direccion', 'Dirección de entrega',
             'Domicilio', 'Address', 'Dirección de servicio (Visar)',
             '¿Tienes plaga o es preventivo?', '¿Tienes problema de roedores?', '¿Qué plaga tienes?',
+            'Motivo', 'Plagas a tratar', 'Motivo de valoración', 'Motivo de valoracion',
         ])])
         all_questions = native_questions | extra_questions
         if not all_questions:
