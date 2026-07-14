@@ -31,4 +31,16 @@
               action="visar_combo_rule_action"
               sequence="83"/>
 
+    <menuitem id="menu_visar_measure_band"
+              name="Bandas de exterior"
+              parent="appointment.appointment_menu_config"
+              action="visar_measure_band_action"
+              sequence="84"/>
+
+    <menuitem id="menu_visar_estimator_factor"
+              name="Factores de estimación"
+              parent="appointment.appointment_menu_config"
+              action="visar_estimator_factor_action"
+              sequence="85"/>
+
 </odoo>

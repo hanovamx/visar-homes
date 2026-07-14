@@ -142,6 +142,31 @@ class ProductTemplate(models.Model):
             ('active', '=', True),
         ], limit=1)
 
+    def _visar_tiers_for_dimension(self, dimension):
+        """Tramos del producto aplicables a una dimensión, acotados por measure_scope.
+
+        Un mismo producto puede servir a interior y exterior; el alcance del tramo
+        ('all' / 'interior' / 'exterior') evita mezclar tabuladores. 'all' siempre aplica.
+        """
+        self.ensure_one()
+        scope = dimension.measure_type if dimension else False
+        return self.visar_tier_ids.filtered(
+            lambda t: t.measure_scope == 'all' or t.measure_scope == scope
+        ).sorted('sequence')
+
+    def _visar_tier_for_dimension_m2(self, dimension, m2):
+        """Tramo cuyo rango contiene m2 para la dimensión dada.
+
+        Ante solapes, gana el rango más angosto (más específico); desempata la
+        secuencia. Requiere tramos acotados por measure_scope para no mezclar
+        tabuladores de interior y exterior.
+        """
+        self.ensure_one()
+        matches = self._visar_tiers_for_dimension(dimension).filtered(
+            lambda t: t.m2_min <= m2 <= t.m2_max)
+        return matches.sorted(
+            key=lambda t: (t.m2_max - t.m2_min, t.sequence))[:1]
+
     @api.model
     def _visar_get_valuation_template(self):
         param = self.env['ir.config_parameter'].sudo().get_param(

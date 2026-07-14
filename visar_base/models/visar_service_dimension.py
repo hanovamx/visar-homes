@@ -21,6 +21,20 @@ class VisarServiceDimension(models.Model):
         'product.template', string="Producto servicio",
         domain="[('visar_is_service', '=', True)]",
         help="Producto cuyo tabulador (tramos m²) se muestra en el wizard.")
+    measure_type = fields.Selection(
+        selection=[
+            ('direct', 'Rango directo'),
+            ('interior', 'Estimación interior (proxy)'),
+            ('exterior', 'Banda unificada de exterior'),
+        ],
+        string="Tipo de medición",
+        default='direct',
+        required=True,
+        help="Cómo pregunta el wizard el tamaño para esta dimensión:\n"
+             "- Rango directo: el cliente elige un tramo del tabulador (legacy).\n"
+             "- Estimación interior: sabe m² o los estima por recámaras/baños/niveles/cochera.\n"
+             "- Banda unificada de exterior: una sola medición de jardín compartida por "
+             "fumigación exterior y corte de pasto.")
 
     _sql_constraints = [
         ('code_uniq', 'unique(code)', "El código de dimensión debe ser único."),

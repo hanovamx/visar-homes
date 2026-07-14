@@ -13,3 +13,7 @@ access_visar_combo_rule_user,visar.combo.rule.user,model_visar_combo_rule,base.g
 access_visar_combo_rule_manager,visar.combo.rule.manager,model_visar_combo_rule,appointment.group_appointment_manager,1,1,1,1
 access_visar_product_optional_line_user,visar.product.optional.line.user,model_visar_product_optional_line,base.group_user,1,0,0,0
 access_visar_product_optional_line_manager,visar.product.optional.line.manager,model_visar_product_optional_line,appointment.group_appointment_manager,1,1,1,1
+access_visar_measure_band_user,visar.measure.band.user,model_visar_measure_band,base.group_user,1,0,0,0
+access_visar_measure_band_manager,visar.measure.band.manager,model_visar_measure_band,appointment.group_appointment_manager,1,1,1,1
+access_visar_estimator_factor_user,visar.estimator.factor.user,model_visar_estimator_factor,base.group_user,1,0,0,0
+access_visar_estimator_factor_manager,visar.estimator.factor.manager,model_visar_estimator_factor,appointment.group_appointment_manager,1,1,1,1

@@ -10,6 +10,7 @@
                 <field name="name"/>
                 <field name="m2_min"/>
                 <field name="m2_max"/>
+                <field name="measure_scope"/>
                 <field name="product_id"
                        domain="[('product_tmpl_id', '=', product_tmpl_id)]"/>
                 <field name="is_valuation"/>
@@ -30,6 +31,7 @@
                         <field name="name"/>
                         <field name="m2_min"/>
                         <field name="m2_max"/>
+                        <field name="measure_scope"/>
                         <field name="product_id"
                                domain="[('product_tmpl_id', '=', product_tmpl_id)]"/>
                         <field name="is_valuation"/>

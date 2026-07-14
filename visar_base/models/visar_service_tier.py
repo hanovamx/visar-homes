@@ -37,6 +37,18 @@ class VisarServiceTier(models.Model):
     combo_discount_eligible = fields.Boolean(
         "Aplica descuento combo",
         help="Si una regla de combo aplica, esta línea puede recibir el descuento configurado.")
+    measure_scope = fields.Selection(
+        selection=[
+            ('all', 'Todas'),
+            ('interior', 'Interior'),
+            ('exterior', 'Exterior'),
+        ],
+        string="Alcance de medición",
+        default='all',
+        required=True,
+        help="Acota el tramo a un tipo de dimensión cuando un mismo producto sirve a "
+             "interior y exterior a la vez (evita solapes al resolver m² → tramo).\n"
+             "'Todas' = aplica a cualquier dimensión de este producto.")
     sequence = fields.Integer("Secuencia", default=10)
 
     # Valida que m2_max no sea menor que m2_min en el tramo definido.

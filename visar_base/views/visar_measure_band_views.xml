@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_measure_band_view_list" model="ir.ui.view">
+        <field name="name">visar.measure.band.list</field>
+        <field name="model">visar.measure.band</field>
+        <field name="arch" type="xml">
+            <list string="Bandas de exterior" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="m2_ref"/>
+                <field name="comparative_label"/>
+                <field name="is_valuation"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_measure_band_view_form" model="ir.ui.view">
+        <field name="name">visar.measure.band.form</field>
+        <field name="model">visar.measure.band</field>
+        <field name="arch" type="xml">
+            <form string="Banda de exterior">
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="m2_ref"/>
+                        <field name="comparative_label"/>
+                        <field name="is_valuation"/>
+                        <field name="sequence"/>
+                        <field name="active"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_measure_band_action" model="ir.actions.act_window">
+        <field name="name">Bandas de exterior</field>
+        <field name="res_model">visar.measure.band</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <record id="visar_estimator_factor_view_list" model="ir.ui.view">
+        <field name="name">visar.estimator.factor.list</field>
+        <field name="model">visar.estimator.factor</field>
+        <field name="arch" type="xml">
+            <list string="Factores de estimación" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="predio_max"/>
+                <field name="factor"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_estimator_factor_action" model="ir.actions.act_window">
+        <field name="name">Factores de estimación</field>
+        <field name="res_model">visar.estimator.factor</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+</odoo>

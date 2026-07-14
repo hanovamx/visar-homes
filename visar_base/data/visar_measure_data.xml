@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <!-- Bandas unificadas de exterior (jardín / área verde).
+         m2_ref = punto interior de la banda que resuelve el tramo correcto de
+         cada servicio de exterior (fumigación exterior y corte de pasto).
+         Editables desde Citas → Configuración → Bandas de exterior. -->
+
+    <record id="visar_measure_band_0_50" model="visar.measure.band">
+        <field name="name">0 – 50 m²</field>
+        <field name="m2_ref">25</field>
+        <field name="comparative_label">Como 1 o 2 cajones de estacionamiento</field>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="visar_measure_band_51_100" model="visar.measure.band">
+        <field name="name">51 – 100 m²</field>
+        <field name="m2_ref">75</field>
+        <field name="comparative_label">Como media cancha de básquetbol</field>
+        <field name="sequence">20</field>
+    </record>
+
+    <record id="visar_measure_band_101_150" model="visar.measure.band">
+        <field name="name">101 – 150 m²</field>
+        <field name="m2_ref">125</field>
+        <field name="comparative_label">Como una cancha de básquetbol completa</field>
+        <field name="sequence">30</field>
+    </record>
+
+    <record id="visar_measure_band_151_200" model="visar.measure.band">
+        <field name="name">151 – 200 m²</field>
+        <field name="m2_ref">175</field>
+        <field name="sequence">40</field>
+    </record>
+
+    <record id="visar_measure_band_201_500" model="visar.measure.band">
+        <field name="name">201 – 500 m²</field>
+        <field name="m2_ref">350</field>
+        <field name="comparative_label">Más grande que una cancha de básquetbol</field>
+        <field name="sequence">50</field>
+    </record>
+
+    <record id="visar_measure_band_500_plus" model="visar.measure.band">
+        <field name="name">Más de 500 m²</field>
+        <field name="m2_ref">750</field>
+        <field name="comparative_label">Es un terreno grande, tipo rancho o quinta</field>
+        <field name="is_valuation" eval="True"/>
+        <field name="sequence">60</field>
+    </record>
+
+    <!-- Factores de estimación interior por tamaño de predio (de fumiquote.html).
+         Editables desde Citas → Configuración → Factores de estimación. -->
+
+    <record id="visar_estimator_factor_100" model="visar.estimator.factor">
+        <field name="predio_max">100</field>
+        <field name="factor">0.72</field>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="visar_estimator_factor_150" model="visar.estimator.factor">
+        <field name="predio_max">150</field>
+        <field name="factor">0.84</field>
+        <field name="sequence">20</field>
+    </record>
+
+    <record id="visar_estimator_factor_250" model="visar.estimator.factor">
+        <field name="predio_max">250</field>
+        <field name="factor">1.00</field>
+        <field name="sequence">30</field>
+    </record>
+
+    <record id="visar_estimator_factor_400" model="visar.estimator.factor">
+        <field name="predio_max">400</field>
+        <field name="factor">1.20</field>
+        <field name="sequence">40</field>
+    </record>
+
+    <record id="visar_estimator_factor_700" model="visar.estimator.factor">
+        <field name="predio_max">700</field>
+        <field name="factor">1.45</field>
+        <field name="sequence">50</field>
+    </record>
+
+    <record id="visar_estimator_factor_max" model="visar.estimator.factor">
+        <field name="predio_max">999999</field>
+        <field name="factor">1.70</field>
+        <field name="sequence">60</field>
+    </record>
+
+</odoo>

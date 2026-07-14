@@ -38,6 +38,7 @@
                                     <field name="name"/>
                                     <field name="code"/>
                                     <field name="wizard_label"/>
+                                    <field name="measure_type"/>
                                     <field name="product_tmpl_id"/>
                                     <field name="active"/>
                                 </list>
