@@ -59,12 +59,48 @@ class SaleOrder(models.Model):
                     order.end_date = end
 
     def action_confirm(self):
+        for order in self.filtered(lambda o: o.is_subscription):
+            order._visar_apply_combo_discount()
         res = super().action_confirm()
         for order in self.filtered(lambda o: o.is_subscription and not o.end_date):
             end = order._visar_compute_end_date()
             if end:
                 order.end_date = end
         return res
+
+    # ------------------------------------------------------------------
+    # Descuento de combo para pólizas (Fase 4) — reusa visar.combo.rule
+    # ------------------------------------------------------------------
+    def _visar_apply_combo_discount(self):
+        """Aplica el descuento de combo a las líneas de una póliza que incluye varios
+        servicios base cuyas dimensiones cumplen una regla de visar.combo.rule. Así
+        una 'póliza combo' (p.ej. Fumigación + Corte) recibe el mismo descuento que
+        en el flujo de booking. Idempotente: fija el mismo % si se re-ejecuta."""
+        self.ensure_one()
+        if not self._visar_is_poliza():
+            return
+        lines = self.order_line.filtered(
+            lambda l: l.product_id.product_tmpl_id.visar_generates_visit
+            and l.product_id.product_tmpl_id.visar_dimension_id)
+        dim_ids = lines.mapped('product_id.product_tmpl_id.visar_dimension_id').ids
+        if len(set(dim_ids)) < 2:
+            return
+        rules = self.env['visar.combo.rule'].sudo().search(
+            [('active', '=', True)], order='sequence')
+        for rule in rules:
+            if not rule._visar_applies_to_items(dim_ids):
+                continue
+            pct = rule._visar_discount_percent()
+            for line in lines:
+                if line.product_id.product_tmpl_id.visar_dimension_id.id in rule.discount_dimension_ids.ids:
+                    line.discount = pct
+            break  # primera regla aplicable por secuencia
+
+    def action_visar_apply_combo_discount(self):
+        """Botón para previsualizar el descuento de combo antes de confirmar."""
+        for order in self:
+            order._visar_apply_combo_discount()
+        return True
 
     # ------------------------------------------------------------------
     # Bloqueo de cambio de dirección de servicio en pólizas (Fase 3)

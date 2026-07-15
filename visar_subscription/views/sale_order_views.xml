@@ -16,6 +16,12 @@
                         invisible="not is_subscription"
                         string="Visita de garantía"/>
             </xpath>
+            <!-- Fase 4: previsualizar descuento de combo antes de confirmar -->
+            <xpath expr="//header" position="inside">
+                <button name="action_visar_apply_combo_discount" type="object"
+                        string="Aplicar descuento combo"
+                        invisible="not visar_is_poliza or state not in ('draft', 'sent')"/>
+            </xpath>
             <!-- Fase 3: bloquear cambio de dirección de servicio en pólizas confirmadas -->
             <field name="partner_shipping_id" position="attributes">
                 <attribute name="readonly">visar_is_poliza and state == 'sale'</attribute>
