@@ -86,6 +86,30 @@
                 if (input) {
                     input.value = canvas.toDataURL("image/png");
                 }
+
+                // Auto-guardado de la hoja de trabajo ANTES de cerrar: el form de
+                // worksheet y el de cierre son independientes, así que cerrar sin
+                // pulsar "Guardar hoja de trabajo" perdía lo escrito. Aquí, al
+                // cerrar, primero se envía la worksheet (con sus fotos/subfichas)
+                // por fetch y, al terminar, se reenvía el cierre. Se hace una sola
+                // vez (form.submit() nativo NO re-dispara este listener).
+                var wsForm = document.getElementById("visar-worksheet-form");
+                if (wsForm && !form.dataset.wsSaved) {
+                    ev.preventDefault();
+                    var btn = form.querySelector('button[type="submit"]');
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.textContent = "Guardando y cerrando…";
+                    }
+                    var closeAndSubmit = function () {
+                        form.dataset.wsSaved = "1";
+                        form.submit();
+                    };
+                    fetch(wsForm.getAttribute("action"), {
+                        method: "POST",
+                        body: new FormData(wsForm),
+                    }).then(closeAndSubmit, closeAndSubmit);
+                }
             });
         }
     }
@@ -404,6 +428,63 @@
         });
     }
 
+    /* "Voy en camino": intenta adjuntar la ubicación del técnico (lat/lng) para que
+       el servidor calcule la ETA con Mapbox. Si el navegador no la da (permiso
+       denegado, timeout o contexto no seguro), envía SIN coords → el servidor cae a
+       la ETA fija. Nunca bloquea el envío. */
+    function initEnroute() {
+        var form = document.querySelector(".o_visar_enroute_form");
+        if (!form) {
+            return;
+        }
+        // navigator.geolocation solo existe en contexto seguro (HTTPS); si no está,
+        // se deja el envío normal (el servidor usará la ETA fija).
+        if (!navigator.geolocation || !window.isSecureContext) {
+            return;
+        }
+        form.addEventListener("submit", function (ev) {
+            if (form.dataset.geoDone) {
+                return; // reenvío tras resolver/fallar: dejar pasar.
+            }
+            ev.preventDefault();
+            var btn = form.querySelector('button[type="submit"]');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = "Obteniendo ubicación…";
+            }
+            var submitted = false;
+            var go = function () {
+                if (submitted) {
+                    return;
+                }
+                submitted = true;
+                form.dataset.geoDone = "1";
+                form.submit();
+            };
+            // Salvaguarda: si el navegador nunca responde, enviar igual (ETA fija).
+            var guard = setTimeout(go, 9000);
+            navigator.geolocation.getCurrentPosition(
+                function (pos) {
+                    clearTimeout(guard);
+                    var lat = form.querySelector('input[name="lat"]');
+                    var lng = form.querySelector('input[name="lng"]');
+                    if (lat) {
+                        lat.value = pos.coords.latitude;
+                    }
+                    if (lng) {
+                        lng.value = pos.coords.longitude;
+                    }
+                    go();
+                },
+                function () {
+                    clearTimeout(guard);
+                    go(); // permiso denegado / error → sin coords, ETA fija.
+                },
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+            );
+        });
+    }
+
     function init() {
         initSignaturePad();
         initO2M();
@@ -411,6 +492,7 @@
         initWsPhotos();
         initPhotoActions();
         initWaiting();
+        initEnroute();
         evalCondFields();
         document.addEventListener("change", evalCondFields);
     }

@@ -84,7 +84,8 @@
                             muestran en la lista y en cada servicio con "Abrir en Google Maps".
                         </div>
                         <div id="visar-field-map"
-                             t-att-data-tasks="map_tasks_json"></div>
+                             t-att-data-tasks="map_tasks_json"
+                             t-att-data-route="map_route_json"></div>
                     </div>
                 </div>
             </div>
@@ -128,11 +129,15 @@
                         <t t-set="status_action"
                            t-value="'/visar/field/task/%s/status' % task.id"/>
 
-                        <!-- Programado → Voy en camino -->
+                        <!-- Programado → Voy en camino. El JS intenta adjuntar la
+                             ubicación del técnico (lat/lng) para una ETA por Mapbox;
+                             si el navegador la niega, se envía sin coords (ETA fija). -->
                         <form t-if="flow_state == 'programado'" t-att-action="status_action"
-                              method="post" class="m-0">
+                              method="post" class="m-0 o_visar_enroute_form">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                             <input type="hidden" name="action" value="enroute"/>
+                            <input type="hidden" name="lat" value=""/>
+                            <input type="hidden" name="lng" value=""/>
                             <button type="submit" class="btn btn-primary btn-lg w-100">🚗 Voy en camino</button>
                         </form>
 
@@ -144,39 +149,15 @@
                             <button type="submit" class="btn btn-primary btn-lg w-100">📍 Confirmar llegada</button>
                         </form>
 
-                        <!-- Llegó → acción principal "Comenzar servicio"; la espera es
-                             una opción secundaria (temporizador + botón discreto) arriba. -->
-                        <t t-if="flow_state == 'llego'">
-                            <div class="alert alert-info py-2">
-                                Asegúrese de avisarle al cliente que ya llegó, tiene
-                                <t t-esc="waiting_minutes"/> mins para abrir tras ser notificado.
-                            </div>
-                            <!-- Opción secundaria: temporizador editable + iniciar espera -->
-                            <form t-att-action="status_action" method="post"
-                                  class="m-0 mb-2 border rounded px-2 py-2 d-flex flex-wrap
-                                         align-items-center gap-2 small text-muted">
-                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                                <input type="hidden" name="action" value="waiting"/>
-                                <label class="mb-0">⏱ Temporizador de espera:</label>
-                                <input type="number" name="minutes" min="1" step="1"
-                                       t-att-value="waiting_minutes"
-                                       class="form-control form-control-sm" style="width: 4.5rem;"/>
-                                <span>min</span>
-                                <button type="submit"
-                                        class="btn btn-outline-warning btn-sm o_visar_waiting_btn ms-auto">
-                                    Esperar al cliente
-                                </button>
-                            </form>
-                            <!-- Acción principal -->
-                            <form t-att-action="status_action" method="post" class="m-0">
-                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                                <input type="hidden" name="action" value="start"/>
-                                <button type="submit" class="btn btn-success btn-lg w-100">▶ Comenzar servicio</button>
-                            </form>
-                        </t>
-
-                        <!-- Esperando → cuenta regresiva + comenzar / cliente no llegó -->
+                        <!-- Esperando → cuenta regresiva + comenzar / cliente no llegó.
+                             'Confirmar llegada' arranca la espera automáticamente y
+                             avisa al cliente, así que se entra aquí directo (sin paso
+                             manual de "Esperar al cliente"). -->
                         <t t-if="flow_state == 'esperando'">
+                            <div class="alert alert-info py-2 small mb-2">
+                                Se avisó al cliente que usted llegó y que tiene
+                                <t t-esc="waiting_minutes"/> min para recibirlo.
+                            </div>
                             <div id="visar-waiting" class="o_visar_waiting alert alert-warning text-center mb-2"
                                  t-att-data-start="waiting_start_iso"
                                  t-att-data-minutes="waiting_minutes">
@@ -229,7 +210,8 @@
                     </div>
                     <form t-if="has_worksheet_template"
                           t-att-action="'/visar/field/task/%s/worksheet' % task.id" method="post"
-                          enctype="multipart/form-data" class="card p-3 mb-4">
+                          enctype="multipart/form-data" id="visar-worksheet-form"
+                          class="card p-3 mb-4">
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                         <h6 class="mb-3">Hoja de trabajo</h6>
 

@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- Reemplaza el render AUTOGENERADO de la worksheet (report_view_id) por una
+         maqueta Visar limpia: secciones = pestañas del notebook, filas etiqueta/
+         valor, subfichas o2m como tabla, fotos dimensionadas. Si la tarea no
+         produjo secciones legibles (`visar_worksheet_map` sin su id), se conserva
+         el render nativo como respaldo. -->
+    <template id="visar_worksheet_report_page"
+              inherit_id="industry_fsm.worksheet_custom_page" priority="99">
+        <xpath expr="//t[div[@name='worksheet_map']]" position="replace">
+            <t t-if="visar_worksheet_map and visar_worksheet_map.get(doc.id)">
+                <!-- Acento = color de marca de la empresa (mismo que usa la cabecera
+                     del reporte, external_layout), para que TODO el documento sea
+                     coherente en vez de meter azul suelto. Se interpola aquí porque
+                     el WebKit de wkhtmltopdf no soporta variables CSS (var()). -->
+                <t t-set="visar_accent" t-value="doc.company_id.primary_color or '#5faf33'"/>
+                <div class="o_visar_ws">
+                    <style>
+                        .o_visar_ws { margin-top: 12px; font-size: 12px; color: #202020; }
+                        .o_visar_ws h2.o_visar_ws_heading {
+                            font-size: 17px; font-weight: 700; margin: 0 0 10px 0;
+                            padding-bottom: 4px;
+                            border-bottom: 2px solid <t t-esc="visar_accent"/>;
+                            color: <t t-esc="visar_accent"/>;
+                        }
+                        .o_visar_ws_section { margin-bottom: 14px; }
+                        .o_visar_ws_title {
+                            font-size: 13px; font-weight: 700; text-transform: uppercase;
+                            letter-spacing: .03em; color: <t t-esc="visar_accent"/>;
+                            margin: 12px 0 6px 0; padding-bottom: 3px;
+                            border-bottom: 1px solid <t t-esc="visar_accent"/>;
+                        }
+                        .o_visar_ws_row {
+                            display: flex; align-items: baseline; gap: 10px;
+                            padding: 4px 0; border-bottom: 1px solid #eef1f5;
+                            page-break-inside: avoid;
+                        }
+                        .o_visar_ws_label {
+                            flex: 0 0 34%; font-weight: 600; color: #555;
+                        }
+                        .o_visar_ws_value { flex: 1 1 auto; word-break: break-word; }
+                        .o_visar_ws_value p { margin: 0 0 4px 0; }
+                        .o_visar_ws_badge {
+                            display: inline-block; padding: 1px 9px; border-radius: 10px;
+                            font-size: 11px; font-weight: 700;
+                        }
+                        .o_visar_ws_badge.is-yes {
+                            background: <t t-esc="visar_accent"/>; color: #fff;
+                        }
+                        .o_visar_ws_badge.is-no  { background: #f2f3f5; color: #6b7280; }
+                        .o_visar_ws_img {
+                            max-height: 190px; max-width: 100%;
+                            border: 1px solid #e0e0e0; border-radius: 4px;
+                        }
+                        .o_visar_ws_block { padding: 6px 0; }
+                        .o_visar_ws_block > .o_visar_ws_label {
+                            display: block; margin-bottom: 5px;
+                        }
+                        table.o_visar_ws_table {
+                            width: 100%; border-collapse: collapse; font-size: 11px;
+                        }
+                        table.o_visar_ws_table th {
+                            background: <t t-esc="visar_accent"/>; color: #fff;
+                            text-align: left; padding: 5px 7px; font-weight: 600;
+                        }
+                        table.o_visar_ws_table td {
+                            padding: 4px 7px; border-bottom: 1px solid #e6e9ef;
+                            vertical-align: top;
+                        }
+                        table.o_visar_ws_table tr:nth-child(even) td { background: #f4f8ee; }
+                        table.o_visar_ws_table tr { page-break-inside: avoid; }
+                        .o_visar_ws_thumb {
+                            max-height: 54px; max-width: 90px;
+                            border: 1px solid #e0e0e0; border-radius: 3px;
+                        }
+                    </style>
+                    <h2 class="o_visar_ws_heading">Hoja de trabajo</h2>
+                    <t t-foreach="visar_worksheet_map.get(doc.id)" t-as="section"
+                       t-key="section_index">
+                        <div class="o_visar_ws_section">
+                            <div t-if="section['title']" class="o_visar_ws_title"
+                                 t-out="section['title']"/>
+                            <t t-foreach="section['fields']" t-as="f" t-key="f_index">
+                                <!-- Subficha one2many como tabla -->
+                                <div t-if="f['kind'] == 'table'" class="o_visar_ws_block">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <table class="o_visar_ws_table">
+                                        <thead>
+                                            <tr>
+                                                <th t-foreach="f['columns']" t-as="col"
+                                                    t-key="col_index" t-out="col"/>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr t-foreach="f['rows']" t-as="row"
+                                                t-key="row_index">
+                                                <td t-foreach="row" t-as="cell"
+                                                    t-key="cell_index">
+                                                    <img t-if="cell['kind'] == 'image' and cell['image']"
+                                                         class="o_visar_ws_thumb"
+                                                         t-att-src="image_data_uri(cell['image'])"/>
+                                                    <span t-elif="cell['kind'] == 'bool'"
+                                                          t-out="'Sí' if cell['bool'] else 'No'"/>
+                                                    <span t-elif="cell['kind'] == 'scalar'"
+                                                          t-out="cell['text']"/>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <!-- Foto (campo binario principal) -->
+                                <div t-elif="f['kind'] == 'image'" class="o_visar_ws_block">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <div><img class="o_visar_ws_img"
+                                              t-att-src="image_data_uri(f['image'])"/></div>
+                                </div>
+                                <!-- Texto enriquecido (html) -->
+                                <div t-elif="f['kind'] == 'html'" class="o_visar_ws_row">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <div class="o_visar_ws_value" t-out="f['html']"/>
+                                </div>
+                                <!-- Booleano -->
+                                <div t-elif="f['kind'] == 'bool'" class="o_visar_ws_row">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <div class="o_visar_ws_value">
+                                        <span t-attf-class="o_visar_ws_badge #{'is-yes' if f['bool'] else 'is-no'}"
+                                              t-out="'Sí' if f['bool'] else 'No'"/>
+                                    </div>
+                                </div>
+                                <!-- Escalar / relacional simple -->
+                                <div t-else="" class="o_visar_ws_row">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <div class="o_visar_ws_value" t-out="f['text']"/>
+                                </div>
+                            </t>
+                        </div>
+                    </t>
+                </div>
+            </t>
+            <!-- Respaldo: render nativo autogenerado si no hay lectura Visar. -->
+            <t t-elif="doc.worksheet_count and doc.worksheet_template_id.report_view_id and worksheet_map.get(doc.id)">
+                <div name="worksheet_map" style="page-break-inside: avoid">
+                    <br/>
+                    <h2>Worksheet</h2>
+                    <t t-set="worksheet" t-value="worksheet_map.get(doc.id)"/>
+                    <t t-call="#{doc.worksheet_template_id.report_view_id.id}"/>
+                </div>
+            </t>
+        </xpath>
+    </template>
+</odoo>

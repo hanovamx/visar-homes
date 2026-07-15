@@ -1,10 +1,9 @@
 /* Visar - App de Campo: vista de mapa de servicios (Leaflet + OpenStreetMap),
-   vanilla JS (sin OWL). Plotea un marcador por servicio geolocalizado y alterna
-   entre la vista Lista y la vista Mapa. Convive con field_app.js. */
+   vanilla JS (sin OWL). Plotea un pin numerado por servicio geolocalizado, en orden
+   de agenda, y dibuja la ruta entre paradas; alterna entre las vistas Lista y Mapa.
+   Convive con field_app.js. */
 (function () {
     "use strict";
-
-    var LEAFLET_IMG = "/visar_field_app/static/src/lib/leaflet/images/";
 
     /* Alternador Lista / Mapa: muestra el panel elegido y marca el botón activo.
        Devuelve el nombre de la vista recién activada (o null si no cambió). */
@@ -42,23 +41,22 @@
         } catch (e) {
             tasks = [];
         }
+        // Ruta que sigue las calles (Directions de Mapbox, calculada en el servidor
+        // para no exponer el token). Puntos [[lat, lng], ...]. Vacío si no hay token.
+        var route;
+        try {
+            route = JSON.parse(el.getAttribute("data-route") || "[]");
+        } catch (e2) {
+            route = [];
+        }
+        // Solo servicios geolocalizados, ordenados por parada (orden de agenda).
         var located = tasks.filter(function (t) {
             return t.has_coords;
+        }).sort(function (a, b) {
+            return (a.order || 0) - (b.order || 0);
         });
 
         var L = window.L;
-        // Icono explícito con rutas ABSOLUTAS al módulo. No se usa L.Icon.Default:
-        // este antepone su `imagePath` a la URL y duplicaba la ruta (404). L.icon
-        // (Icon base) usa las URLs tal cual.
-        var icon = L.icon({
-            iconUrl: LEAFLET_IMG + "marker-icon.png",
-            iconRetinaUrl: LEAFLET_IMG + "marker-icon-2x.png",
-            shadowUrl: LEAFLET_IMG + "marker-shadow.png",
-            iconSize: [25, 41],
-            iconAnchor: [12, 41],
-            popupAnchor: [1, -34],
-            shadowSize: [41, 41],
-        });
 
         // Centro por defecto: Monterrey, MX (se ajusta a los marcadores si hay).
         var map = L.map(el).setView([25.6866, -100.3161], 11);
@@ -67,9 +65,27 @@
             attribution: "&copy; OpenStreetMap",
         }).addTo(map);
 
+        // --- Ruta: polilínea sobre las calles (Mapbox) o, si no hay, líneas rectas
+        //     entre paradas en orden como respaldo visual. ---
+        var routeLayer = null;
+        if (route && route.length > 1) {
+            routeLayer = L.polyline(route, {
+                color: "#0d6efd", weight: 5, opacity: 0.7,
+            }).addTo(map);
+        } else if (located.length > 1) {
+            routeLayer = L.polyline(located.map(function (t) {
+                return [t.lat, t.lng];
+            }), {
+                color: "#0d6efd", weight: 4, opacity: 0.5, dashArray: "6 8",
+            }).addTo(map);
+        }
+
         var markers = [];
         located.forEach(function (t) {
-            var marker = L.marker([t.lat, t.lng], { icon: icon }).addTo(map);
+            // Pin numerado (número de parada) como los waypoints del mapa nativo.
+            var marker = L.marker([t.lat, t.lng], {
+                icon: numberedIcon(L, t.order),
+            }).addTo(map);
             var link = document.createElement("a");
             link.href = t.url;
             link.textContent = t.name || "Ver servicio";
@@ -85,8 +101,13 @@
             markers.push(marker);
         });
 
-        var group = markers.length ? L.featureGroup(markers) : null;
-        // Encuadra a todos los marcadores; maxZoom evita acercarse de más con uno solo.
+        // Encuadra a todos los marcadores (y la ruta si la hay); maxZoom evita
+        // acercarse de más con una sola parada.
+        var fitLayers = markers.slice();
+        if (routeLayer) {
+            fitLayers.push(routeLayer);
+        }
+        var group = fitLayers.length ? L.featureGroup(fitLayers) : null;
         function fitToMarkers() {
             if (group) {
                 map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 16 });
@@ -101,6 +122,19 @@
                 map.invalidateSize();
                 fitToMarkers();
             }
+        });
+    }
+
+    /* Pin numerado como divIcon (número de parada centrado sobre la gota). */
+    function numberedIcon(L, number) {
+        var label = number == null ? "" : String(number);
+        return L.divIcon({
+            className: "o-visar-route-marker",
+            html: '<span class="o-visar-route-marker-pin"></span>' +
+                '<span class="o-visar-route-marker-num">' + label + "</span>",
+            iconSize: [30, 42],
+            iconAnchor: [15, 42],
+            popupAnchor: [0, -38],
         });
     }
 

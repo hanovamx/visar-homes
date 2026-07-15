@@ -68,6 +68,42 @@
     max-width: none;
 }
 
+/* Pin numerado de ruta (waypoint): gota de color + número de parada encima.
+   Se dibuja con CSS (divIcon) en vez de la imagen PNG de Leaflet, para poder
+   superponer el número como en el mapa nativo de Servicio externo. */
+.o-visar-route-marker {
+    position: relative;
+}
+
+/* La "gota": cuadrado rotado 45° con esquina inferior en punta. */
+.o-visar-route-marker-pin {
+    position: absolute;
+    left: 3px;
+    top: 0;
+    width: 24px;
+    height: 24px;
+    background: #0d6efd;
+    border: 2px solid #fff;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* El número, centrado sobre la parte redonda de la gota (sin rotar). */
+.o-visar-route-marker-num {
+    position: absolute;
+    left: 0;
+    top: 2px;
+    width: 30px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
 /* Cuenta regresiva de espera al cliente. */
 .o_visar_waiting_clock {
     font-variant-numeric: tabular-nums;

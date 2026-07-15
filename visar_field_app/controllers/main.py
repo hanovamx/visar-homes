@@ -4,6 +4,7 @@ import json
 import logging
 from urllib.parse import urlencode
 
+import requests
 from lxml import etree
 
 from odoo import fields, http
@@ -106,13 +107,28 @@ class VisarFieldApp(http.Controller):
         Las coordenadas viven en el cliente (`partner_id.partner_latitude/longitude`,
         campos base poblados por base_geolocalize). Se consideran "sin ubicación"
         las coordenadas nulas o 0.0/0.0 (valor por defecto sin geocodificar).
+
+        `tasks` llega ya en orden de agenda (`planned_date_begin asc`, ver
+        `_employee_tasks`); ese es el orden de la RUTA. A cada servicio geolocalizado
+        se le asigna un número de parada consecutivo (`order`) en ese mismo orden,
+        que el mapa dibuja sobre el pin (como los waypoints numerados del mapa nativo
+        de Servicio externo). Los servicios sin ubicación no reciben número.
+
+        > **Nota (futuro):** hoy el orden = hora agendada. Se puede sustituir por una
+        > optimización de ruta (vecino más cercano) para minimizar traslados; ver
+        > `_task_route_geometry` y la decisión documentada en 25-field-app.md.
         """
         payload = []
+        stop_number = 0
         for task in tasks:
             partner = task.partner_id
             lat = partner.partner_latitude if partner else 0.0
             lng = partner.partner_longitude if partner else 0.0
             has_coords = bool(partner) and bool(lat) and bool(lng)
+            order = None
+            if has_coords:
+                stop_number += 1
+                order = stop_number
             payload.append({
                 'id': task.id,
                 'name': task.name or '',
@@ -122,8 +138,62 @@ class VisarFieldApp(http.Controller):
                 'lat': lat,
                 'lng': lng,
                 'has_coords': has_coords,
+                'order': order,
             })
         return payload
+
+    # Directions API de Mapbox (misma cuenta/token que el mapa nativo web_map y
+    # que la geocodificación de res_partner). Límite duro: 25 coordenadas por
+    # petición. `overview=full` devuelve la geometría completa de la ruta.
+    MAPBOX_DIRECTIONS_URL = (
+        'https://api.mapbox.com/directions/v5/mapbox/driving/%s')
+    MAPBOX_DIRECTIONS_MAX_POINTS = 25
+
+    def _task_route_geometry(self, payload):
+        """Geometría de la ruta que sigue las calles entre los servicios geolocalizados,
+        en el orden de agenda. Se calcula **en el servidor** llamando a la Directions
+        API de Mapbox, de modo que el token NO se expone en la página pública del
+        técnico (mismo principio que la geocodificación server-side de res_partner).
+
+        Devuelve una lista de puntos `[[lat, lng], ...]` (ya en orden Leaflet) lista
+        para dibujar como polilínea, o `None` si no hay token, hay <2 paradas, o la
+        API falla (el JS cae a líneas rectas entre paradas como respaldo visual).
+        """
+        located = [p for p in payload if p.get('has_coords')]
+        if len(located) < 2:
+            return None
+        token = request.env['ir.config_parameter'].sudo().get_param(
+            'web_map.token_map_box')
+        if not token:
+            return None
+        # La Directions API topa en 25 coordenadas; si hay más, se rutea hasta ahí
+        # (las paradas restantes siguen numeradas y con pin, solo sin línea trazada).
+        if len(located) > self.MAPBOX_DIRECTIONS_MAX_POINTS:
+            _logger.info(
+                "Ruta Mapbox: %s paradas > %s; se rutean las primeras %s.",
+                len(located), self.MAPBOX_DIRECTIONS_MAX_POINTS,
+                self.MAPBOX_DIRECTIONS_MAX_POINTS)
+            located = located[:self.MAPBOX_DIRECTIONS_MAX_POINTS]
+        coords = ';'.join('%s,%s' % (p['lng'], p['lat']) for p in located)
+        try:
+            resp = requests.get(
+                self.MAPBOX_DIRECTIONS_URL % coords,
+                params={
+                    'access_token': token,
+                    'geometries': 'geojson',
+                    'overview': 'full',
+                },
+                timeout=10)
+            resp.raise_for_status()
+            routes = resp.json().get('routes') or []
+        except Exception as err:  # noqa: BLE001 - red/API: degradar a líneas rectas
+            _logger.warning("Directions Mapbox falló: %s", err)
+            return None
+        if not routes:
+            return None
+        # GeoJSON entrega [lon, lat]; Leaflet dibuja [lat, lng].
+        line = routes[0].get('geometry', {}).get('coordinates') or []
+        return [[pt[1], pt[0]] for pt in line] or None
 
     # ==================================================================
     # Contacto del cliente / flujo en sitio (Req 2)
@@ -160,15 +230,6 @@ class VisarFieldApp(http.Controller):
         except (TypeError, ValueError):
             return 10
 
-    def _coerce_waiting_minutes(self, raw):
-        """Coacciona los minutos elegidos por el técnico; si no es válido o < 1,
-        usa el valor por defecto."""
-        try:
-            val = int(float(raw))
-        except (TypeError, ValueError):
-            return self._default_waiting_minutes()
-        return val if val >= 1 else self._default_waiting_minutes()
-
     def _task_flow_state(self, task):
         """Sub-fase del flujo en sitio para elegir qué botón mostrar.
 
@@ -177,8 +238,8 @@ class VisarFieldApp(http.Controller):
         camino" (llegada/espera no tienen etapa propia); el `write` de project.task
         los deja consistentes con la etapa, así que aquí no pueden "ganarle".
 
-        Devuelve: 'programado' | 'en_camino' | 'llego' | 'esperando' |
-                  'en_ejecucion' | 'cerrado' | 'reagenda'.
+        Devuelve: 'programado' | 'en_camino' | 'esperando' | 'en_ejecucion' |
+                  'cerrado' | 'reagenda'.
         """
         stage = task.stage_id
         s1 = task._visar_fsm_stage(1)  # En camino
@@ -190,15 +251,17 @@ class VisarFieldApp(http.Controller):
         if s4 and stage == s4:
             return 'reagenda'
         if s2 and stage == s2:
-            # 'Confirmar llegada' ya movió la etapa a En ejecución; las sub-fases
-            # (llegada → espera → servicio) se distinguen por los sellos de tiempo.
+            # 'Confirmar llegada' ya movió la etapa a En ejecución Y arrancó la espera
+            # automáticamente; las sub-fases (espera → servicio) se distinguen por los
+            # sellos de tiempo.
             if task.visar_service_start:
                 return 'en_ejecucion'
             if task.visar_waiting_start:
                 return 'esperando'
-            if task.visar_arrived_at:
-                return 'llego'
-            return 'en_ejecucion'  # etapa puesta a mano sin sellos: servicio en curso
+            # Sin sellos de espera (etapa puesta a mano, o llegada heredada previa a la
+            # espera automática): se trata como servicio en curso para no dejar la
+            # pantalla sin acción.
+            return 'en_ejecucion'
         if s1 and stage == s1:
             return 'en_camino'
         return 'programado'  # Programado o cualquier otra etapa
@@ -798,10 +861,12 @@ class VisarFieldApp(http.Controller):
             return request.redirect('/visar/field')
         tasks = self._employee_tasks(employee)
         payload = self._task_map_payload(tasks)
+        route = self._task_route_geometry(payload)
         return request.render('visar_field_app.field_tasks', {
             'employee': employee,
             'tasks': tasks,
             'map_tasks_json': json.dumps(payload),
+            'map_route_json': json.dumps(route) if route else '',
             'geocoded_count': sum(1 for t in payload if t['has_coords']),
         })
 
@@ -1005,17 +1070,31 @@ class VisarFieldApp(http.Controller):
 
         action = post.get('action')
         if action == 'enroute':
+            # Sella la salida (solo la primera vez, para preservar el momento real
+            # de partida si se vuelve a pulsar), calcula la ETA con la ubicación del
+            # técnico (Mapbox) si el navegador la envió —si no, valor fijo— y avisa al
+            # cliente. Alimenta `visar_travel_minutes`.
+            if not task.visar_enroute_at:
+                task.visar_enroute_at = fields.Datetime.now()
+                eta = task._visar_enroute_eta_minutes(post.get('lat'), post.get('lng'))
+                task.visar_enroute_eta_minutes = eta
+                task._visar_notify_client(
+                    task._visar_msg_enroute(eta, employee), event='enroute')
             task._visar_set_stage(1)  # En camino
         elif action == 'arrived':
+            # La espera arranca AUTOMÁTICamente al llegar (antes era un botón manual):
+            # se sella el inicio y los minutos por defecto, y se avisa al cliente que
+            # tiene esa ventana para recibir. El flujo cae directo en 'esperando'.
             if not task.visar_arrived_at:
                 task.visar_arrived_at = fields.Datetime.now()
+                minutes = self._default_waiting_minutes()
+                task.visar_waiting_minutes = minutes
+                task.visar_waiting_start = fields.Datetime.now()
+                task._visar_notify_client(
+                    task._visar_msg_arrived(minutes, employee), event='arrived')
             task._visar_set_stage(2)  # llegada → directo a En ejecución (etapa FSM)
-        elif action == 'waiting':
-            # Guarda los minutos elegidos y (re)sella el inicio de espera.
-            task.visar_waiting_minutes = self._coerce_waiting_minutes(post.get('minutes'))
-            task.visar_waiting_start = fields.Datetime.now()
         elif action == 'start':
-            # Registra cuánto se esperó al cliente (de 'Esperar al cliente' hasta ahora).
+            # Registra cuánto se esperó al cliente (de la llegada/espera hasta ahora).
             if task.visar_waiting_start and not task.visar_service_start:
                 waited = fields.Datetime.now() - task.visar_waiting_start
                 task.visar_client_wait_minutes = max(waited.total_seconds() / 60.0, 0.0)

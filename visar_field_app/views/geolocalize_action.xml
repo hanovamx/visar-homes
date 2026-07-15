@@ -16,4 +16,23 @@
               action="visar_field_geolocalize_action" sequence="30"
               groups="hr.group_hr_user"/>
 
+    <!-- Cron: geolocaliza en segundo plano las direcciones de servicio que aún no
+         tienen coordenadas (mismo método que la acción manual, force=False → solo
+         las faltantes). Así los servicios nuevos aparecen en el mapa de la app sin
+         que gestión ni el técnico tengan que dispararlo a mano.
+         En un bloque noupdate para que ajustes del admin (frecuencia, activar/
+         desactivar) no se pisen al actualizar el módulo. -->
+    <data noupdate="1">
+        <record id="visar_field_geolocalize_cron" model="ir.cron">
+            <field name="name">Visar App de Campo: geolocalizar direcciones de servicio</field>
+            <field name="model_id" ref="project.model_project_task"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_geolocalize_service_partners()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">hours</field>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+
 </odoo>

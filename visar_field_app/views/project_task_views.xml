@@ -15,7 +15,10 @@
                 <page name="visar_field" string="Visar - Campo">
                     <group>
                         <group string="Flujo en sitio">
+                            <field name="visar_enroute_at" readonly="1"/>
+                            <field name="visar_enroute_eta_minutes" readonly="1"/>
                             <field name="visar_arrived_at" readonly="1"/>
+                            <field name="visar_travel_minutes" readonly="1"/>
                             <field name="visar_waiting_start" readonly="1"/>
                             <field name="visar_service_start" readonly="1"/>
                             <field name="visar_client_wait_minutes" readonly="1"/>

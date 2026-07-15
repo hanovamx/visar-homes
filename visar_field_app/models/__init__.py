@@ -4,3 +4,4 @@ from . import field_session
 from . import res_partner
 from . import project_task
 from . import ir_attachment
+from . import report_worksheet
