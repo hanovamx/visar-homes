@@ -1,6 +1,7 @@
 from dateutil.relativedelta import relativedelta
 
 from odoo import _, api, fields, models
+from odoo.exceptions import UserError
 
 
 class SaleOrder(models.Model):
@@ -13,6 +14,9 @@ class SaleOrder(models.Model):
     visar_visit_count = fields.Integer(
         string="Nº de visitas", compute='_compute_visar_visit_count',
     )
+    visar_is_poliza = fields.Boolean(
+        string="Es póliza (genera visitas)", compute='_compute_visar_is_poliza',
+    )
 
     def _compute_visar_visit_count(self):
         data = self.env['project.task']._read_group(
@@ -22,6 +26,17 @@ class SaleOrder(models.Model):
         counts = {order.id: count for order, count in data}
         for order in self:
             order.visar_visit_count = counts.get(order.id, 0)
+
+    @api.depends('is_subscription', 'order_line.product_id')
+    def _compute_visar_is_poliza(self):
+        for order in self:
+            order.visar_is_poliza = order._visar_is_poliza()
+
+    def _visar_is_poliza(self):
+        self.ensure_one()
+        return bool(self.is_subscription and any(
+            l.product_id.product_tmpl_id.visar_generates_visit
+            for l in self.order_line))
 
     # ------------------------------------------------------------------
     # Fecha "hasta" (fin) automática según la duración del plan/póliza
@@ -44,9 +59,6 @@ class SaleOrder(models.Model):
                     order.end_date = end
 
     def action_confirm(self):
-        # Anticipo (depósito) ANTES de confirmar, para que entre en la 1ª factura.
-        for order in self.filtered(lambda o: o.is_subscription):
-            order._visar_ensure_anticipo_line()
         res = super().action_confirm()
         for order in self.filtered(lambda o: o.is_subscription and not o.end_date):
             end = order._visar_compute_end_date()
@@ -55,81 +67,71 @@ class SaleOrder(models.Model):
         return res
 
     # ------------------------------------------------------------------
-    # Anticipo / depósito no reembolsable (cargo único al alta)
+    # Bloqueo de cambio de dirección de servicio en pólizas (Fase 3)
     # ------------------------------------------------------------------
-    def _visar_ensure_anticipo_line(self):
-        """Agrega (una sola vez) la línea de anticipo = nº de servicios del plan ×
-        precio del servicio base de la póliza. Línea NO recurrente → se factura solo
-        en la primera factura. Idempotente: no se duplica si ya existe."""
+    def write(self, vals):
+        if 'partner_shipping_id' in vals:
+            new_id = vals.get('partner_shipping_id')
+            for order in self:
+                if (order.state == 'sale' and order._visar_is_poliza()
+                        and order.partner_shipping_id.id != new_id):
+                    raise UserError(_(
+                        "No se puede cambiar la dirección de servicio de una "
+                        "póliza confirmada (%s).", order.name))
+        return super().write(vals)
+
+    # ------------------------------------------------------------------
+    # Cobro inicial de N periodos (primera factura) — Fase 1
+    # ------------------------------------------------------------------
+    def _visar_first_invoice_periods(self):
+        """Nº de mensualidades cobradas en la primera factura (y nº de visitas del
+        primer ciclo). 1 = normal; pólizas usan 2."""
         self.ensure_one()
-        n = self.plan_id.visar_anticipo_services if self.plan_id else 0
-        if n <= 0:
-            return
-        product = self.env.ref(
-            'visar_subscription.product_anticipo', raise_if_not_found=False)
-        variant = product.product_variant_id if product else False
-        if not variant:
-            return
-        # Idempotencia: si ya hay una línea de anticipo, no agregar otra.
-        if self.order_line.filtered(lambda l: l.product_id == variant):
-            return
-        base_lines = self.order_line.filtered(
-            lambda l: l.product_id.product_tmpl_id.visar_generates_visit)
-        if not base_lines:
-            return
-        amount = n * sum(l.price_unit * (l.product_uom_qty or 1.0) for l in base_lines)
-        if amount <= 0:
-            return
-        vals = {
-            'order_id': self.id,
-            'product_id': variant.id,
-            'name': _("Anticipo no reembolsable (%(n)s servicios)", n=n),
-            'product_uom_qty': 1.0,
-            'price_unit': amount,
-        }
-        tax = base_lines[:1].tax_ids
-        if tax:
-            vals['tax_ids'] = [(6, 0, tax.ids)]
-        line = self.env['sale.order.line'].create(vals)
-        # Forzar el precio (el compute podría bajarlo al list_price=0).
-        if line.price_unit != amount:
-            line.price_unit = amount
-        return line
+        n = self.plan_id.visar_first_invoice_periods if self.plan_id else 1
+        return n if n and n > 0 else 1
+
+    def _visar_is_first_poliza_invoice(self):
+        """True cuando estamos por facturar la PRIMERA factura de una póliza nueva
+        (no renovación/upsell). Se evalúa antes de postear la factura, cuando
+        last_invoice_date todavía es falsy."""
+        self.ensure_one()
+        return bool(
+            self.is_subscription
+            and self.subscription_state == '3_progress'
+            and not self.origin_order_id            # excluye renovaciones/hijos
+            and not self.last_invoice_date          # aún no hay factura posteada
+            and self._visar_is_poliza()
+        )
 
     # ------------------------------------------------------------------
-    # Generación de visitas por periodo facturado
+    # Generación de visitas — gatada al PAGO de la factura (Fase 1)
+    # (disparada desde account.move._invoice_paid_hook)
     # ------------------------------------------------------------------
-    def _post_invoice_hook(self):
-        """Hook nativo de sale_subscription: se ejecuta por suscripción después de
-        facturar un periodo. Aprovechamos para generar la visita FSM del periodo."""
-        res = super()._post_invoice_hook()
-        for order in self:
-            order._visar_generate_period_visit()
-        return res
-
-    def _visar_generate_period_visit(self):
+    def _visar_generate_period_visit(self, invoice):
         self.ensure_one()
         if not self.is_subscription or self.subscription_state != '3_progress':
             return
-        Task = self.env['project.task']
-        invoice = self.invoice_ids.filtered(
-            lambda m: m.move_type == 'out_invoice'
-        ).sorted('id')[-1:]
-        if not invoice:
+        if not invoice or invoice.move_type != 'out_invoice':
             return
+        Task = self.env['project.task']
+        first_invoice = self.invoice_ids.filtered(
+            lambda m: m.move_type == 'out_invoice').sorted('id')[:1]
+        # 1ª factura del contrato → N visitas; siguientes → 1.
+        n = self._visar_first_invoice_periods() if invoice == first_invoice else 1
         for line in self.order_line:
             tmpl = line.product_id.product_tmpl_id
             if not tmpl.visar_generates_visit or not tmpl.visar_fsm_project_id:
                 continue
-            # Idempotencia: una visita (no garantía) por periodo/factura.
-            already = Task.search_count([
+            # Idempotencia por (orden, factura, línea): crear las que falten.
+            existing = Task.search_count([
                 ('visar_subscription_order_id', '=', self.id),
                 ('visar_source_invoice_id', '=', invoice.id),
+                ('visar_source_line_id', '=', line.id),
                 ('visar_is_warranty', '=', False),
             ])
-            if already:
-                continue
-            Task.create(self._visar_visit_vals(line, tmpl.visar_fsm_project_id, invoice))
+            for _i in range(max(0, n - existing)):
+                Task.create(self._visar_visit_vals(
+                    line, tmpl.visar_fsm_project_id, invoice))
 
     def _visar_visit_vals(self, line, project, invoice, warranty=False):
         self.ensure_one()
@@ -143,6 +145,7 @@ class SaleOrder(models.Model):
             'company_id': self.company_id.id,
             'visar_subscription_order_id': self.id,
             'visar_source_invoice_id': False if warranty else (invoice.id if invoice else False),
+            'visar_source_line_id': False if warranty else line.id,
             'visar_is_warranty': warranty,
         }
 
@@ -150,7 +153,7 @@ class SaleOrder(models.Model):
     # Acciones
     # ------------------------------------------------------------------
     def action_visar_add_warranty_visit(self):
-        """Crea una visita de garantía (sin costo) ligada a la póliza (punto 4)."""
+        """Crea una visita de garantía (sin costo) ligada a la póliza."""
         self.ensure_one()
         line = self.order_line.filtered(
             lambda l: l.product_id.product_tmpl_id.visar_generates_visit

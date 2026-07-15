@@ -20,6 +20,15 @@ class ProjectTask(models.Model):
         copy=False,
         help="Factura del periodo de la póliza que generó esta visita.",
     )
+    visar_source_line_id = fields.Many2one(
+        'sale.order.line',
+        string="Línea de póliza",
+        index=True,
+        ondelete='set null',
+        copy=False,
+        help="Línea de la póliza (servicio base) que generó esta visita. Permite "
+             "idempotencia por línea y soporta pólizas combo (varias visitas/periodo).",
+    )
     visar_is_warranty = fields.Boolean(
         string="Visita de garantía",
         default=False,

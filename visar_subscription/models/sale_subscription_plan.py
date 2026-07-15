@@ -12,10 +12,12 @@ class SaleSubscriptionPlan(models.Model):
              "0 = sin fecha de fin automática (déjalo así para planes que no sean "
              "póliza; para pólizas anuales pon 12).",
     )
-    visar_anticipo_services = fields.Integer(
-        string="Anticipo (nº de servicios)",
-        default=0,
-        help="Depósito no reembolsable que se cobra UNA sola vez al confirmar la "
-             "póliza, además del cobro recurrente. Se calcula como este número × el "
-             "precio (de zona) del servicio base de la póliza. 0 = sin anticipo.",
+    visar_first_invoice_periods = fields.Integer(
+        string="Periodos en la 1ª factura",
+        default=1,
+        help="Nº de mensualidades que se cobran por adelantado en la PRIMERA factura "
+             "de la póliza (y nº de visitas generadas en ese primer ciclo). La próxima "
+             "factura se emite hasta después de esos periodos; luego la cadencia es "
+             "nativa. 1 = comportamiento normal. Para pólizas pon 2 (cobra 2 meses de "
+             "entrada y crea 2 visitas).",
     )
