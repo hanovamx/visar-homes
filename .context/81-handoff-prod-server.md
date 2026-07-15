@@ -1,0 +1,309 @@
+# Handoff — Deploy & verify latest Visar changes on the production server
+
+> **Audience:** an agent/operator with SSH + code access to the host running the
+> **productive Odoo 19 Enterprise** instance (`visar_prod`). You do the deploy and
+> the post-deploy configuration/verification. This doc is self-contained; you do
+> **not** need the `.context/` history, but `80-deploy-prod.md` and `25-field-app.md`
+> in the module repo have the deep background.
+>
+> **Written:** 2026-07-08. **Repo state at handoff:** branch `main`, latest commit
+> `feat(visar_field_app): jump to In-Progress on arrival + track client wait time`.
+
+---
+
+## 0. TL;DR
+
+1. Back up the DB and filestore.
+2. `git pull` the module repo on the server (branch `main`).
+3. Upgrade the four modules with `-u` in dependency order, then **restart** Odoo.
+4. Do the **manual post-deploy steps** in §4 — the code does NOT do them:
+   **assign worksheet templates to FSM projects**, run the **geocode action**,
+   **de-duplicate technician PINs**.
+5. Run the **verification checklist** (§5).
+6. Watch for the **gotchas** in §6 (idempotent seeder overwrites Studio edits;
+   `visar_appointment` has no install hook).
+
+---
+
+## 1. What you are deploying
+
+Four custom modules (technical names) with these versions **in the repo now**:
+
+| Module | Repo version | Depends on | Install hook | Migrations present |
+|---|---|---|---|---|
+| `visar_base` | `19.0.1.1.0` | `sale`, `product`, `appointment` | — | none (setup via `data/`) |
+| `visar_fsm` | `19.0.1.0.4` | `visar_base`, `appointment`, `hr`, `industry_fsm`, `industry_fsm_sale` | `post_init_hook` | none |
+| `visar_appointment` | `19.0.2.0.20` | `visar_base`, `visar_fsm`, `website_appointment`, `website_appointment_sale`, `website_sale`, `hr`, `worksheet` | **none** ⚠️ | `19.0.2.0.0`…`19.0.2.0.20` |
+| `visar_field_app` | `19.0.1.4.0` | `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize` | `post_init_hook` | `19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0` |
+
+**Dependency / upgrade order:** `visar_base` → `visar_fsm` → `visar_appointment` → `visar_field_app`.
+
+**New third-party dependency since the last prod deploy:** `base_geolocalize`
+(pulled in by `visar_field_app` for the service map / geocoding). It ships with Odoo
+core — no external install, but the upgrade must be allowed to auto-install it.
+
+### What actually changed in this batch (the "latest")
+
+Mostly `visar_field_app` (the field-technician web app), 07–08 Jul 2026:
+
+- **Worksheet renderer** over the *native* worksheet: one2many as cards, many2many as
+  checkbox groups (incl. inside cards), per-line images, per-field help (ⓘ),
+  conditional "Otro" companion fields, multi-photo galleries; technician-photo delete.
+- **Service map + geocoding** (Leaflet + OSM tiles, Mapbox/OSM geocoding server-side),
+  "Open in Google Maps".
+- **On-site stage flow (Req 2):** Enroute → Arrive → Wait (editable countdown + alarm)
+  → Start → Close, plus a "client no-show → reschedule" path. Reuses **native FSM
+  stages** and the **native timesheet**. Latest tweak: **"Confirm arrival" now jumps
+  the FSM stage straight to *En ejecución*** and records client wait minutes
+  (`visar_client_wait_minutes`).
+- **Worksheet template seeder** (`hooks.py`): builds three `worksheet.template`
+  records in code (see §3).
+
+`visar_base` / `visar_fsm` / `visar_appointment` may also carry version bumps vs. what
+is currently installed in prod — the `-u` in §3 upgrades all four regardless, so you do
+not need to diff them by hand.
+
+---
+
+## 2. Pre-deploy checklist
+
+- [ ] **Backup** the database and the **filestore** (worksheet photos, signatures live
+      as `ir.attachment` on disk). This deploy runs schema migrations — a rollback
+      needs both.
+- [ ] Confirm the instance is **Odoo 19 Enterprise** (worksheets need `industry_fsm*`
+      + `worksheet`, all Enterprise).
+- [ ] Record the **currently-installed versions** so you know which migrations will run:
+      ```sql
+      SELECT name, latest_version, state FROM ir_module_module
+      WHERE name IN ('visar_base','visar_fsm','visar_appointment','visar_field_app',
+                     'base_geolocalize');
+      ```
+- [ ] Confirm the module repo path is on Odoo's `addons_path` and pull the latest
+      `main` there.
+- [ ] Do this in a **maintenance window** — an active countdown/close in the field app
+      during restart is fine (state is on the task), but avoid mid-checkout on `/appointment`.
+
+---
+
+## 3. Deploy mechanics
+
+### 3.1 Pull + upgrade + restart
+
+```bash
+# On the server, in the module repo:
+git pull origin main
+
+# Upgrade all four in one shot (dependency order is resolved by Odoo, but list base first):
+<odoo-bin> -c <odoo.conf> \
+  -u visar_base,visar_fsm,visar_appointment,visar_field_app \
+  --stop-after-init
+
+# Then RESTART the Odoo service (workers cache the model registry, QWeb templates
+# and assets — a live worker will serve stale code/worksheet arch until restarted).
+```
+
+> Replace `<odoo-bin>` / `<odoo.conf>` with the host's actual launcher and config.
+
+### 3.2 What the upgrade runs automatically
+
+- **`visar_base`** — reloads `data/` (incl. the SEPOMEX CP→zone catalog
+  `visar_zone_cp_data.xml`). No hook.
+- **`visar_fsm`** — `post_init_hook` only runs on clean install; on `-u` its setup is
+  idempotent via prior migrations. Ensures FSM projects + `project_id`/`service_tracking`
+  on products.
+- **`visar_appointment`** — runs any pending `migrations/19.0.2.0.*` (legacy catalog
+  linking, entry types `visar_flow`, master type "Servicios Visar", question
+  detachment, etc.).
+- **`visar_field_app`** — runs `migrations/19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`,
+  **each of which calls `seed_worksheet_templates(env)`** (idempotent). This creates/updates
+  the three worksheet templates and their dynamic models/fields:
+  - **"Fumigación interior o exterior (App v2)"**
+  - **"Mantenimiento de áreas verdes (App v2)"**
+  - **"Visita de valoración técnica (App v2)"**
+
+  If the module in prod is already at `19.0.1.4.0` (no migration to run) but the
+  templates need re-seeding, run the seeder manually:
+  ```bash
+  <odoo-bin> shell -c <odoo.conf> -d visar_prod
+  >>> from odoo.addons.visar_field_app.hooks import seed_worksheet_templates
+  >>> seed_worksheet_templates(env)
+  >>> env.cr.commit()
+  ```
+
+### 3.3 Install vs upgrade (why it matters)
+
+| Action | Runs | Does NOT run |
+|---|---|---|
+| `-u` (upgrade — the normal prod path) | `migrations/*` + `data/` | `post_init_hook` |
+| `-i` (clean install on an empty DB) | `data/` + `post_init_hook` | `migrations/*` |
+
+Prod is an **existing DB → `-u`**, so migrations (and thus the field-app seeder) run.
+The clean-`-i` path has **never been tested end-to-end on an empty DB** and has a known
+gap (`visar_appointment`, see §6) — only relevant if you ever rebuild from scratch.
+
+---
+
+## 4. Manual post-deploy steps (REQUIRED — code does not do these)
+
+### 4.1 Assign worksheet templates to FSM projects  ⭐ most important
+
+Seeding only **creates** the templates; it does **not** attach them. The field app
+reads `project.task.worksheet_template_id`, which tasks inherit from their
+**project** (`project.project.worksheet_template_id`). Since `visar_fsm` creates **one
+task per project**, assignment is effectively per-project.
+
+- In **Servicio externo (Field Service) → Configuración → Proyectos**, set each FSM
+  project's **Plantilla de hoja de trabajo** to the matching v2 template:
+  - Fumigación project → **"Fumigación interior o exterior (App v2)"**
+  - Áreas verdes / jardinería project → **"Mantenimiento de áreas verdes (App v2)"**
+  - Valoración técnica project → **"Visita de valoración técnica (App v2)"**
+- ⚠️ Changing a project's template affects **new** tasks only; existing tasks keep the
+  template they were created with. Re-point existing test tasks by hand if needed.
+
+Verify the templates exist first:
+```sql
+SELECT id, name FROM worksheet_template WHERE name ILIKE '%(App v2)%';
+```
+
+### 4.2 Geocode service addresses (for the map)
+
+Run once after deploy: menu **App de Campo Visar → "Geolocalizar direcciones de
+clientes"**. It geocodes the **service (delivery) partner** of each task
+(`task.partner_id`), not the billing customer.
+
+- By default it processes only partners **without** coordinates. To re-geocode
+  everything (e.g. after adding a Mapbox token), call with `force=True`:
+  ```bash
+  >>> env['project.task'].sudo()._visar_geolocalize_service_partners(force=True)
+  >>> env.cr.commit()
+  ```
+- The notification reports how many resolved to **street level** vs **CP centroid**.
+
+### 4.3 (Optional) Mapbox/Google token for precise geocoding
+
+Without a token, geocoding uses **OSM Nominatim**, which has poor MX residential-street
+coverage and falls back to the CP centroid (two streets in one CP → same point).
+
+- Set `ir.config_parameter` **`web_map.token_map_box`** (shared with the native FSM
+  map) or **`base_geolocalize.google_map_api_key`** for street-level accuracy.
+- Geocoding is **server-side** (token never exposed). **Map tiles stay on OSM** because
+  the technician page is public — do not put a token in client JS.
+- After setting a token, re-run 4.2 with `force=True`.
+
+### 4.4 De-duplicate technician PINs  ⚠️ data bug
+
+In `visar_prod` the PIN `123` was found on **two** employees (Pedro Martínez **and**
+Administrator). Login-by-PIN returns an arbitrary match → **non-deterministic close /
+timesheet attribution**. Ensure each active technician has a **unique** `visar_field_pin`
+(field on the employee form, under the native PIN). Set a real PIN on real technicians
+and clear/deconflict Administrator.
+```sql
+SELECT id, name, visar_field_pin FROM hr_employee
+WHERE visar_field_pin IS NOT NULL AND visar_field_pin != '' ORDER BY visar_field_pin;
+```
+
+### 4.5 Confirm technician→task linkage
+
+A task shows in the app only if `visar_technician_ids` is populated. `visar_fsm` fills
+it from `calendar.event` appointment resources that have `visar_employee_id`. If an
+appointment resource lacks `visar_employee_id`, the task has no technician and won't
+appear — assign the technician manually on the task, and set `visar_employee_id` on the
+resource for future bookings.
+
+---
+
+## 5. Verification checklist
+
+### 5.1 Deploy sanity
+- [ ] All four modules `state = installed` at the repo versions (query in §2).
+- [ ] `base_geolocalize` installed.
+- [ ] No errors in the Odoo log during `-u`; server restarted; assets rebuilt (load
+      `/visar/field` and confirm Leaflet CSS/JS 200, not 404).
+
+### 5.2 Field app — technician flow (`/visar/field`)
+- [ ] Login with a **unique** PIN → shift opens (`visar.field.session`).
+- [ ] Task list shows only that technician's open tasks. (Label says "hoy" but there is
+      **no date filter** yet — expected, see §7.)
+- [ ] **List ⇄ Map** toggle: markers appear for geocoded services; popup links to detail;
+      "Abrir en Google Maps" opens the service address.
+- [ ] Task detail: client **contact** block (phone / Llamar / WhatsApp) present.
+- [ ] **Worksheet** renders per its template: o2m cards ("+ Agregar"), m2m checkboxes,
+      per-field help (ⓘ), conditional "Otro" fields show/hide, per-card image capture +
+      thumbnail. **Save** persists (re-open to confirm).
+- [ ] **Photos:** upload, thumbnail, tap-to-delete (× only on technician photos — the
+      signature must NOT be deletable here).
+- [ ] **Stage flow:** "Voy en camino" → "Confirmar llegada" (**backend stage jumps to
+      *En ejecución***) → optional "Esperar al cliente" (editable countdown; on expiry:
+      alarm + "Cliente no llegó" button) → "Comenzar servicio" (records
+      `visar_client_wait_minutes`) → "Cerrar servicio".
+- [ ] **Close validation:** blocked without signature + name (JS and server).
+- [ ] On close: task → stage **Completado** + `state='1_done'`; a **timesheet line**
+      (`account.analytic.line`) is written, attributed to the technician employee;
+      `visar_field_closed_by_id/_at` set.
+- [ ] **Reschedule:** "Cliente no llegó" → stage **Incidencia—Reprogramar** +
+      `state='1_canceled'` + an **activity** (assigned to salesperson if technician has
+      no user) + a chatter note.
+- [ ] **Backend↔app stage sync:** manually move the task's stage back to *Programado* in
+      the backend → app reflects it and sub-phase stamps are cleared (no phantom
+      timer/reschedule).
+- [ ] `GET …/task/<id>/report` renders the native `industry_fsm.worksheet_custom` PDF.
+
+### 5.3 Booking + FSM (regression — only if `visar_appointment` changed)
+- [ ] `/appointment` shows exactly **Valoración Técnica** and **Cita de Servicios**.
+- [ ] Wizard (services → ranges → qualification → zone → schedule → checkout), incl.
+      add-ons and the `is_valuation` branch → $500 valuation flow.
+- [ ] After payment: FSM tasks generated, grouped one-per-project, with technician/date
+      from the appointment.
+
+### 5.4 On a **real phone** (cannot be verified over HTTP)
+- [ ] Wait-timer **audible alarm + vibration** on expiry.
+- [ ] Mapbox geocoding success path (only if a real token is set — see §4.3).
+
+---
+
+## 6. Gotchas / risks (read before and after deploy)
+
+- **The seeder is idempotent and rewrites the worksheet view `arch` to canonical.**
+  Any **Studio edits** made directly in prod to the three "(App v2)" templates are
+  **lost** on the next upgrade/seed. The **code (`hooks.py`) is the source of truth**
+  for those three templates. If ops needs a template change, change it in code, don't
+  Studio-edit in prod.
+- **`visar_appointment` has NO `post_init_hook`.** Its legacy catalog (service
+  groups/dimensions/combo rule) and entry-type setup live **only in `migrations/`**. On
+  the normal `-u` prod path this is fine (migrations run). But a **clean `-i` on an empty
+  DB will NOT create them** — so a from-scratch rebuild needs either the migration path
+  or manual catalog setup. This is the top open structural gap (see §7 / `80-deploy-prod.md`).
+- **Clean `-i` on an empty DB is unverified** for the whole stack. Treat any rebuild as a
+  project, not a routine op.
+- **`visar_client_wait_minutes` is a new column** — that is why this batch needs `-u`,
+  not just a restart.
+- **PIN is plaintext, no throttling, no uniqueness constraint** (prototype-grade). §4.4
+  is a data workaround, not a fix.
+
+---
+
+## 7. Still to IMPLEMENT (backlog — not done, do not expect it to work)
+
+Ordered roughly by operational impact. IDs reference `.context/90-improvements-later.md`.
+
+| # | Item | Notes |
+|---|---|---|
+| **I-01** | `visar_appointment` idempotent **install hook** for legacy catalog + entry types | Mirror `visar_fsm`'s pattern; make migrations call the same function (DRY). Unblocks clean `-i`. |
+| **I-05** | **Required / conditional-mandatory enforcement on close** | App does conditional *visibility* ("Otro" companions) but does **not block** close on `required="1"` or conditional rules (dose-if-pesticide, photo-if-treated). Close only checks signature + name. |
+| **#2** | **Multiple photos per field** (galleries) + remove the separate external "Fotos" section | Photo fields were relabeled to plural but full gallery capture is not implemented. |
+| **I-08** | **Travel timer** ("en camino") | Deferred; only the client-wait timer exists. |
+| — | **"Mis servicios de hoy" date filter** | `_employee_tasks` has no date filter; it shows all open tasks. Either add the filter or fix the label. |
+| — | **Worksheet + close are separate forms** | Closing without pressing "Guardar hoja de trabajo" loses worksheet input. Consider merging or warning. |
+| — | **Harden identity** | Hash PINs, add throttling, cap `/report`. |
+| — | **Dual report (internal vs client)** | D-07 still open; app serves one native PDF. |
+| — | **Offline capture** | None; a `1_done` task disappears from the technician list. Whole flow assumes connectivity. |
+
+---
+
+## 8. Rollback
+
+1. Stop Odoo.
+2. Restore the **database** and **filestore** from the §2 backup (schema migrations are
+   not auto-reversible).
+3. `git checkout` the previous commit in the module repo.
+4. Restart Odoo. Do **not** run `-u` against the restored (older) DB with the newer code.

@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FumiQuote – Cotizador de Fumigación</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #21262d;
+    --border: #30363d;
+    --accent: #39d353;
+    --accent2: #58a6ff;
+    --warn: #f0883e;
+    --text: #e6edf3;
+    --muted: #8b949e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: linear-gradient(rgba(57,211,83,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(57,211,83,0.04) 1px, transparent 1px);
+    background-size: 40px 40px; pointer-events: none; z-index: 0;
+  }
+  .container { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 5rem; }
+
+  header { display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  .logo-icon { width: 48px; height: 48px; background: var(--accent); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
+  h1 { font-family: 'Syne', sans-serif; font-size: 1.8rem; font-weight: 800; line-height: 1; }
+  h1 span { color: var(--accent); }
+  .subtitle { font-size: 0.78rem; color: var(--muted); font-family: 'DM Mono', monospace; margin-top: 0.3rem; }
+
+  .mode-toggle { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .mode-btn { flex: 1; padding: 0.65rem 1rem; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.78rem; cursor: pointer; transition: all 0.15s; text-align: center; }
+  .mode-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(57,211,83,0.08); }
+  .mode-btn .mode-icon { font-size: 1.2rem; display: block; margin-bottom: 0.2rem; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.25rem; }
+  .card-title { font-family: 'DM Mono', monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 1rem; }
+
+  .search-row { display: flex; gap: 0.75rem; }
+  .search-input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 0.95rem; transition: border-color 0.2s; outline: none; }
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--muted); }
+
+  .btn { padding: 0.75rem 1.25rem; border-radius: 8px; border: none; cursor: pointer; font-family: 'DM Mono', monospace; font-size: 0.8rem; font-weight: 500; transition: all 0.15s; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.4rem; }
+  .btn-primary { background: var(--accent); color: #0d1117; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-maps { background: #1a73e8; color: #fff; }
+  .btn-maps:hover { background: #1557b0; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  /* MAPS INSTRUCTION BOX */
+  .maps-box { background: rgba(26,115,232,0.07); border: 1px solid rgba(26,115,232,0.25); border-radius: 10px; padding: 1.25rem; margin-top: 1rem; }
+  .maps-box-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .maps-box-title { font-weight: 600; font-size: 0.9rem; color: var(--accent2); }
+  .maps-steps { display: flex; flex-direction: column; gap: 0.5rem; }
+  .maps-step { display: flex; align-items: flex-start; gap: 0.75rem; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+  .maps-step .step-num { background: rgba(88,166,255,0.15); color: var(--accent2); border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-family: 'DM Mono', monospace; font-size: 0.68rem; flex-shrink: 0; margin-top: 0.1rem; }
+  .maps-step kbd { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.4rem; font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--text); }
+
+  .area-section { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+  .input-group label { display: block; font-size: 0.72rem; color: var(--muted); font-family: 'DM Mono', monospace; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .input-with-unit { display: flex; align-items: center; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: border-color 0.2s; }
+  .input-with-unit:focus-within { border-color: var(--accent); }
+  .input-with-unit input { flex: 1; background: none; border: none; padding: 0.75rem 1rem; color: var(--text); font-family: 'DM Mono', monospace; font-size: 1rem; outline: none; min-width: 0; }
+  .unit-badge { padding: 0 0.75rem; font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); background: var(--border); height: 100%; display: flex; align-items: center; }
+
+  /* CUARTOS */
+  .rooms-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; }
+  .room-control { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; text-align: center; }
+  .room-control .room-icon { font-size: 1.3rem; margin-bottom: 0.3rem; }
+  .room-control .room-label { font-size: 0.68rem; color: var(--muted); font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.5rem; }
+  .counter { display: flex; align-items: center; justify-content: center; gap: 0.4rem; }
+  .counter-btn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.12s; }
+  .counter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .counter-val { font-family: 'DM Mono', monospace; font-size: 1.1rem; font-weight: 500; min-width: 1.5rem; text-align: center; }
+
+  .estimacion-box { margin-top: 1rem; padding: 1rem; background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.2); border-radius: 8px; }
+  .est-row { display: flex; justify-content: space-between; align-items: center; }
+  .est-label { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); }
+  .est-val { font-family: 'DM Mono', monospace; font-size: 1rem; color: var(--accent2); font-weight: 500; }
+  .est-note { font-size: 0.72rem; color: var(--muted); margin-top: 0.5rem; line-height: 1.5; }
+
+  /* SERVICIOS */
+  .service-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-top: 0.5rem; }
+  .service-option { background: var(--surface2); border: 1.5px solid var(--border); border-radius: 10px; padding: 1rem; cursor: pointer; transition: all 0.15s; text-align: center; }
+  .service-option:hover { border-color: var(--accent2); }
+  .service-option.active { border-color: var(--accent); background: rgba(57,211,83,0.08); }
+  .service-option .svc-icon { font-size: 1.6rem; margin-bottom: 0.4rem; }
+  .service-option .svc-name { font-size: 0.85rem; font-weight: 500; }
+  .service-option .svc-desc { font-size: 0.7rem; color: var(--muted); margin-top: 0.2rem; line-height: 1.4; }
+  .service-option .svc-rate { font-family: 'DM Mono', monospace; font-size: 0.78rem; color: var(--accent); margin-top: 0.4rem; font-weight: 500; }
+
+  .cebaderos-row { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; padding: 1rem; background: rgba(240,136,62,0.06); border: 1px solid rgba(240,136,62,0.2); border-radius: 8px; }
+  .ceb-label { flex: 1; }
+  .ceb-title { font-size: 0.85rem; font-weight: 500; }
+  .ceb-sub { font-size: 0.72rem; color: var(--muted); font-family: 'DM Mono', monospace; margin-top: 0.15rem; }
+  .cebaderos-total { font-family: 'DM Mono', monospace; font-size: 0.85rem; color: var(--warn); font-weight: 500; white-space: nowrap; }
+
+  /* ALERTA VISITA */
+  .visita-alert { display: none; background: rgba(240,136,62,0.08); border: 1.5px solid var(--warn); border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; }
+  .visita-alert.show { display: flex; gap: 1rem; align-items: flex-start; }
+  .va-icon { font-size: 1.8rem; flex-shrink: 0; }
+  .va-title { font-family: 'Syne', sans-serif; font-size: 1.1rem; font-weight: 700; color: var(--warn); margin-bottom: 0.3rem; }
+  .va-body { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+  /* RESULTADO */
+  .result-card { background: linear-gradient(135deg, rgba(57,211,83,0.08), rgba(88,166,255,0.05)); border: 1px solid var(--accent); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.25rem; display: none; }
+  .result-card.show { display: block; animation: fadeIn 0.3s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .result-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; gap: 1rem; }
+  .result-price { font-family: 'Syne', sans-serif; font-size: 3.2rem; font-weight: 800; color: var(--accent); line-height: 1; }
+  .result-price .currency { font-size: 1.5rem; vertical-align: top; margin-top: 0.4rem; display: inline-block; }
+  .result-range { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+  .result-badges { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start; }
+  .badge { padding: 0.3rem 0.7rem; border-radius: 20px; font-family: 'DM Mono', monospace; font-size: 0.7rem; font-weight: 500; }
+  .badge-green  { background: rgba(57,211,83,0.15);  color: var(--accent);  border: 1px solid rgba(57,211,83,0.3);  }
+  .badge-blue   { background: rgba(88,166,255,0.15); color: var(--accent2); border: 1px solid rgba(88,166,255,0.3); }
+  .badge-orange { background: rgba(240,136,62,0.15); color: var(--warn);    border: 1px solid rgba(240,136,62,0.3); }
+  .result-breakdown { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .breakdown-item label { font-size: 0.68rem; color: var(--muted); font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.25rem; }
+  .breakdown-item .value { font-family: 'DM Mono', monospace; font-size: 0.9rem; color: var(--text); }
+
+  /* TABULADOR */
+  .tabulador-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  .tabulador-table th { text-align: left; padding: 0.6rem 0.75rem; font-family: 'DM Mono', monospace; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .tabulador-table td { padding: 0.7rem 0.75rem; border-bottom: 1px solid rgba(48,54,61,0.5); font-family: 'DM Mono', monospace; font-size: 0.82rem; }
+  .tabulador-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .tabulador-table tr.active-row td { background: rgba(57,211,83,0.07); color: var(--accent); }
+  .tabulador-table tr.visita-row td { color: var(--warn); }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: none; align-items: center; justify-content: center; padding: 1rem; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; width: 100%; max-width: 440px; max-height: 90vh; overflow-y: auto; }
+  .modal h3 { font-family: 'Syne', sans-serif; margin-bottom: 0.4rem; font-size: 1.1rem; }
+  .modal .modal-sub { font-size: 0.75rem; color: var(--muted); font-family: 'DM Mono', monospace; margin-bottom: 1.25rem; }
+  .modal-field { margin-bottom: 0.85rem; }
+  .modal-field label { display: block; font-size: 0.7rem; color: var(--muted); font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }
+  .modal-field input { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 1rem; color: var(--text); font-family: 'DM Mono', monospace; font-size: 0.95rem; outline: none; }
+  .modal-field input:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+  .modal-section-title { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; margin: 1rem 0 0.6rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .modal-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; }
+
+  .mode-section { display: none; }
+  .mode-section.active { display: block; }
+
+  @media(max-width:600px) {
+    .rooms-grid { grid-template-columns: repeat(2,1fr); }
+    .area-section { grid-template-columns: 1fr; }
+    .result-breakdown { grid-template-columns: 1fr 1fr; }
+    .result-price { font-size: 2.2rem; }
+    .service-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 1.4rem; }
+    .maps-box-header { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo-icon">🦟</div>
+    <div>
+      <h1>Fumi<span>Quote</span></h1>
+      <div class="subtitle">Rastreros · Voladores · Roedores</div>
+    </div>
+  </header>
+
+  <div class="mode-toggle">
+    <div class="mode-btn active" id="modeExtBtn" onclick="setMode('exterior')">
+      <span class="mode-icon">🛰️</span>Exterior / Terreno
+    </div>
+    <div class="mode-btn" id="modeIntBtn" onclick="setMode('interior')">
+      <span class="mode-icon">🏠</span>Interior / Construcción
+    </div>
+  </div>
+
+  <!-- PASO 1 -->
+  <div class="card">
+    <div class="card-title">📍 Paso 1 — Dirección del cliente</div>
+    <div class="search-row">
+      <input type="text" class="search-input" id="addressInput"
+        placeholder="Ej: Calle Pino 23, Col. Del Bosque, Monterrey"
+        onkeydown="if(event.key==='Enter') abrirGoogleMaps()" />
+      <button class="btn btn-maps" onclick="abrirGoogleMaps()">
+        🗺️ Ver en Maps
+      </button>
+    </div>
+
+    <div class="maps-box">
+      <div class="maps-box-header">
+        <div>
+          <div class="maps-box-title">📐 Cómo medir el área en Google Maps</div>
+        </div>
+        <button class="btn btn-maps" onclick="abrirGoogleMaps()" style="font-size:0.75rem;padding:0.5rem 0.9rem;">
+          Abrir Maps →
+        </button>
+      </div>
+      <div class="maps-steps">
+        <div class="maps-step">
+          <div class="step-num">1</div>
+          <div>Haz clic en <strong>"Abrir Maps →"</strong> — se abre Google Maps en la dirección del cliente</div>
+        </div>
+        <div class="maps-step">
+          <div class="step-num">2</div>
+          <div>En el mapa, <strong>clic derecho</strong> sobre el predio → selecciona <kbd>Medir distancia</kbd></div>
+        </div>
+        <div class="maps-step">
+          <div class="step-num">3</div>
+          <div>Haz clic en cada esquina del lote para trazar el perímetro. Cierra haciendo clic en el primer punto</div>
+        </div>
+        <div class="maps-step">
+          <div class="step-num">4</div>
+          <div>Google Maps muestra el área abajo — <strong>ingresa ese número aquí abajo</strong> y el precio aparece automáticamente</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PASO 2A EXTERIOR -->
+  <div class="mode-section active" id="secExterior">
+    <div class="card">
+      <div class="card-title">📐 Paso 2 — Área del predio</div>
+      <div class="area-section">
+        <div class="input-group">
+          <label>Área en m² — del mapa o ingresa manualmente</label>
+          <div class="input-with-unit">
+            <input type="number" id="areaM2" placeholder="0" oninput="calcularExt()" min="1"/>
+            <span class="unit-badge">m²</span>
+          </div>
+        </div>
+        <div class="input-group">
+          <label>En hectáreas</label>
+          <div class="input-with-unit">
+            <input type="number" id="areaHa" placeholder="0.0000" step="0.0001" oninput="desdeHa()" min="0"/>
+            <span class="unit-badge">ha</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PASO 2B INTERIOR -->
+  <div class="mode-section" id="secInterior">
+    <div class="card">
+      <div class="card-title">🏠 Paso 2 — Características de la casa</div>
+      <div class="rooms-grid">
+        <div class="room-control">
+          <div class="room-icon">🛏️</div>
+          <div class="room-label">Recámaras</div>
+          <div class="counter">
+            <button class="counter-btn" onclick="cambiarCuarto('rec',-1)">−</button>
+            <div class="counter-val" id="valRec">3</div>
+            <button class="counter-btn" onclick="cambiarCuarto('rec',1)">+</button>
+          </div>
+        </div>
+        <div class="room-control">
+          <div class="room-icon">🚿</div>
+          <div class="room-label">Baños</div>
+          <div class="counter">
+            <button class="counter-btn" onclick="cambiarCuarto('ban',-1)">−</button>
+            <div class="counter-val" id="valBan">2</div>
+            <button class="counter-btn" onclick="cambiarCuarto('ban',1)">+</button>
+          </div>
+        </div>
+        <div class="room-control">
+          <div class="room-icon">🏗️</div>
+          <div class="room-label">Niveles</div>
+          <div class="counter">
+            <button class="counter-btn" onclick="cambiarCuarto('niv',-1)">−</button>
+            <div class="counter-val" id="valNiv">1</div>
+            <button class="counter-btn" onclick="cambiarCuarto('niv',1)">+</button>
+          </div>
+        </div>
+        <div class="room-control">
+          <div class="room-icon">🅿️</div>
+          <div class="room-label">Cajones auto</div>
+          <div class="counter">
+            <button class="counter-btn" onclick="cambiarCuarto('gar',-1)">−</button>
+            <div class="counter-val" id="valGar">1</div>
+            <button class="counter-btn" onclick="cambiarCuarto('gar',1)">+</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:1rem;">
+        <div class="input-group">
+          <label>Tamaño del predio (de Google Maps)</label>
+          <div class="input-with-unit" style="max-width:280px;">
+            <input type="number" id="predioM2Int" placeholder="Ej: 200" oninput="calcularInt()" min="1"/>
+            <span class="unit-badge">m² predio</span>
+          </div>
+        </div>
+      </div>
+      <div class="estimacion-box" id="estimacionBox" style="display:none;">
+        <div class="est-row">
+          <span class="est-label">Construcción estimada</span>
+          <span class="est-val" id="estConstruccion">—</span>
+        </div>
+        <div class="est-row" style="margin-top:0.4rem;">
+          <span class="est-label">Desglose</span>
+          <span class="est-val" id="estDesglose" style="font-size:0.78rem;color:var(--muted);">—</span>
+        </div>
+        <div class="est-note" id="estNota"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PASO 3 -->
+  <div class="card">
+    <div class="card-title">🧪 Paso 3 — Tipo de servicio</div>
+    <div class="service-grid" id="serviceGrid"></div>
+    <div class="cebaderos-row" id="cebaderosRow" style="display:none;">
+      <div class="ceb-label">
+        <div class="ceb-title">🧲 Estaciones cebo / Cebaderos</div>
+        <div class="ceb-sub">$100 c/u — solo si el cliente los solicita</div>
+      </div>
+      <div class="counter">
+        <button class="counter-btn" onclick="cambiarCebaderos(-1)">−</button>
+        <div class="counter-val" id="valCebaderos">0</div>
+        <button class="counter-btn" onclick="cambiarCebaderos(1)">+</button>
+      </div>
+      <div class="cebaderos-total" id="cebaderosTotal">$0</div>
+    </div>
+  </div>
+
+  <!-- ALERTA VISITA -->
+  <div class="visita-alert" id="visitaAlert">
+    <div class="va-icon">🔍</div>
+    <div>
+      <div class="va-title">Requiere visita de inspección</div>
+      <div class="va-body">El área supera los 500 m² — se genera propuesta personalizada después de la visita. No aplica precio de tabulador.</div>
+    </div>
+  </div>
+
+  <!-- RESULTADO -->
+  <div class="result-card" id="resultCard">
+    <div class="result-header">
+      <div>
+        <div style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--muted);margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.05em;">Precio del servicio</div>
+        <div class="result-price"><span class="currency">$</span><span id="precioCentral">0</span></div>
+        <div class="result-range" id="precioRango"></div>
+      </div>
+      <div class="result-badges" id="resultBadges"></div>
+    </div>
+    <div class="result-breakdown">
+      <div class="breakdown-item"><label>Área</label><div class="value" id="rArea">—</div></div>
+      <div class="breakdown-item"><label>Modo</label><div class="value" id="rModo">—</div></div>
+      <div class="breakdown-item"><label>Servicio</label><div class="value" id="rServicio">—</div></div>
+      <div class="breakdown-item"><label>Cebaderos</label><div class="value" id="rCebaderos">—</div></div>
+    </div>
+  </div>
+
+  <!-- TABULADOR -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+      <div class="card-title" style="margin-bottom:0;">📊 Tu tabulador de precios</div>
+      <button class="btn btn-secondary" onclick="abrirModalTabulador()" style="font-size:0.7rem;padding:0.4rem 0.8rem;">✏️ Editar precios</button>
+    </div>
+    <table class="tabulador-table">
+      <thead>
+        <tr>
+          <th>Rango (m²)</th>
+          <th>Rastreros</th>
+          <th>Voladores</th>
+          <th>Roedores</th>
+          <th>Cebadero c/u</th>
+        </tr>
+      </thead>
+      <tbody id="tabuladorBody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h3>✏️ Editar tabulador</h3>
+    <div class="modal-sub">Ajusta tus precios por rango de área</div>
+    <div id="modalFields"></div>
+    <div class="modal-section-title">Cebadero / estación (precio unitario)</div>
+    <div class="modal-field">
+      <input type="number" id="mCebadero" placeholder="100" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="guardarTabulador()">Guardar</button>
+      <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── ESTADO ────────────────────────────────────────────────────────────────────
+let modo = 'exterior';
+let servicioActivo = 0;
+let areaFinal = 0;
+let numCebaderos = 0;
+let cuartos = { rec:3, ban:2, niv:1, gar:1 };
+let PRECIO_CEBADERO = 100;
+const VISITA_LIMITE = 500;
+
+let tabulador = [
+  { min:1,   max:200, label:'1–200 m²',   precios:[600,  600,  600]  },
+  { min:201, max:350, label:'201–350 m²', precios:[800,  800,  800]  },
+  { min:351, max:500, label:'351–500 m²', precios:[1000, 1000, 1000] },
+];
+
+const servicios = [
+  { id:0, icon:'🪳', nombre:'Rastreros',  desc:'Cucarachas, alacranes,\nhormigas, arañas' },
+  { id:1, icon:'🦟', nombre:'Voladores',  desc:'Moscas, mosquitos,\nzancudos' },
+  { id:2, icon:'🐀', nombre:'Roedores',   desc:'Ratas y ratones\n(incluye inspección)' },
+];
+
+// ── GOOGLE MAPS (abre en nueva pestaña) ───────────────────────────────────────
+function abrirGoogleMaps() {
+  const addr = document.getElementById('addressInput').value.trim();
+  const base = 'https://www.google.com/maps/search/?api=1&query=';
+  const url = addr ? base + encodeURIComponent(addr) : 'https://www.google.com/maps';
+  window.open(url, '_blank');
+}
+
+// ── MODO ──────────────────────────────────────────────────────────────────────
+function setMode(m) {
+  modo = m;
+  document.getElementById('modeExtBtn').classList.toggle('active', m==='exterior');
+  document.getElementById('modeIntBtn').classList.toggle('active', m==='interior');
+  document.getElementById('secExterior').classList.toggle('active', m==='exterior');
+  document.getElementById('secInterior').classList.toggle('active', m==='interior');
+  ocultarResultados(); areaFinal = 0;
+  renderServicios(); renderTabulador();
+}
+
+function ocultarResultados() {
+  document.getElementById('resultCard').classList.remove('show');
+  document.getElementById('visitaAlert').classList.remove('show');
+}
+
+// ── EXTERIOR ──────────────────────────────────────────────────────────────────
+function calcularExt() {
+  const val = parseFloat(document.getElementById('areaM2').value) || 0;
+  document.getElementById('areaHa').value = val ? (val/10000).toFixed(4) : '';
+  areaFinal = val;
+  renderServicios(); renderTabulador();
+  procesarArea(val, 'Terreno');
+}
+
+function desdeHa() {
+  const ha = parseFloat(document.getElementById('areaHa').value) || 0;
+  document.getElementById('areaM2').value = ha ? Math.round(ha*10000) : '';
+  areaFinal = ha*10000;
+  renderServicios(); renderTabulador();
+  procesarArea(areaFinal, 'Terreno');
+}
+
+// ── INTERIOR ──────────────────────────────────────────────────────────────────
+function cambiarCuarto(tipo, delta) {
+  const minVal = tipo==='niv' ? 1 : 0;
+  cuartos[tipo] = Math.max(minVal, cuartos[tipo]+delta);
+  document.getElementById('val'+tipo.charAt(0).toUpperCase()+tipo.slice(1)).textContent = cuartos[tipo];
+  calcularInt();
+}
+
+function calcularInt() {
+  const predio = parseFloat(document.getElementById('predioM2Int').value) || 0;
+  const { rec, ban, niv, gar } = cuartos;
+  let f;
+  if      (!predio)        f = 1.00;
+  else if (predio <= 100)  f = 0.72;
+  else if (predio <= 150)  f = 0.84;
+  else if (predio <= 250)  f = 1.00;
+  else if (predio <= 400)  f = 1.20;
+  else if (predio <= 700)  f = 1.45;
+  else                     f = 1.70;
+
+  const mRec=12*f, mBan=5*f, mGar=14*f, mSala=22*f, mCirc=8*f;
+  const pb = mSala + (rec*mRec) + (ban*mBan) + (gar*mGar);
+  let extras = niv>1 ? (niv-1)*(Math.ceil(rec*0.6)*mRec + Math.ceil(ban*0.5)*mBan + mCirc) : 0;
+  let total = Math.round(pb + extras);
+  if (predio) {
+    total = Math.min(total, Math.round(predio*niv*0.82));
+    total = Math.max(total, Math.round(predio*0.35));
+  }
+
+  const box = document.getElementById('estimacionBox');
+  if (rec > 0) {
+    box.style.display = 'block';
+    document.getElementById('estConstruccion').textContent = total.toLocaleString() + ' m²';
+    document.getElementById('estDesglose').textContent =
+      `PB ~${Math.round(pb)} m²${niv>1 ? ` + ${niv-1} piso(s) ~${Math.round(extras)} m²` : ''}`;
+    document.getElementById('estNota').textContent = predio
+      ? `${rec} rec. + ${ban} baños + ${niv} nivel(es) en predio de ${predio.toLocaleString()} m².`
+      : `Sin predio — estimación estándar. Agrega m² del terreno para más precisión.`;
+    areaFinal = total;
+  } else {
+    box.style.display = 'none'; areaFinal = 0;
+  }
+  renderServicios(); renderTabulador();
+  procesarArea(areaFinal, 'Construcción est.');
+}
+
+// ── PRECIO ────────────────────────────────────────────────────────────────────
+function procesarArea(area, modoLabel) {
+  const resultCard  = document.getElementById('resultCard');
+  const visitaAlert = document.getElementById('visitaAlert');
+  if (!area) { ocultarResultados(); return; }
+  if (area > VISITA_LIMITE) {
+    resultCard.classList.remove('show');
+    visitaAlert.classList.add('show');
+    return;
+  }
+  visitaAlert.classList.remove('show');
+  const fila = tabulador.find(r => area >= r.min && area <= r.max);
+  if (!fila) { ocultarResultados(); return; }
+
+  const precioServicio = fila.precios[servicioActivo];
+  const totalCebaderos = numCebaderos * PRECIO_CEBADERO;
+  const total = precioServicio + totalCebaderos;
+
+  document.getElementById('precioCentral').textContent = total.toLocaleString();
+  document.getElementById('precioRango').textContent = totalCebaderos > 0
+    ? `Servicio $${precioServicio.toLocaleString()} + ${numCebaderos} cebadero(s) $${totalCebaderos.toLocaleString()}`
+    : `Rango: ${fila.label}`;
+  document.getElementById('rArea').textContent     = area.toLocaleString() + ' m²';
+  document.getElementById('rModo').textContent     = modoLabel;
+  document.getElementById('rServicio').textContent = servicios[servicioActivo].nombre;
+  document.getElementById('rCebaderos').textContent = numCebaderos > 0
+    ? `${numCebaderos} × $${PRECIO_CEBADERO} = $${totalCebaderos.toLocaleString()}`
+    : 'No solicitados';
+
+  const cat = area<=200 ? ['Casa chica','badge-blue']
+            : area<=350 ? ['Casa mediana','badge-blue']
+            :             ['Casa grande','badge-orange'];
+  document.getElementById('resultBadges').innerHTML =
+    `<span class="badge ${cat[1]}">${cat[0]}</span>
+     <span class="badge badge-green">${servicios[servicioActivo].icon} ${servicios[servicioActivo].nombre}</span>`;
+  resultCard.classList.add('show');
+}
+
+// ── CEBADEROS ─────────────────────────────────────────────────────────────────
+function cambiarCebaderos(delta) {
+  numCebaderos = Math.max(0, numCebaderos + delta);
+  document.getElementById('valCebaderos').textContent = numCebaderos;
+  document.getElementById('cebaderosTotal').textContent = '$' + (numCebaderos * PRECIO_CEBADERO).toLocaleString();
+  if (modo==='exterior') calcularExt(); else calcularInt();
+}
+
+// ── SERVICIOS ─────────────────────────────────────────────────────────────────
+function renderServicios() {
+  document.getElementById('serviceGrid').innerHTML = servicios.map(s => {
+    const fila = tabulador.find(r => areaFinal>=r.min && areaFinal<=r.max);
+    const rate = !areaFinal ? '—' : areaFinal>VISITA_LIMITE ? 'Visita requerida' : fila ? '$'+fila.precios[s.id].toLocaleString() : '—';
+    return `<div class="service-option ${s.id===servicioActivo?'active':''}" onclick="selServicio(${s.id})">
+      <div class="svc-icon">${s.icon}</div>
+      <div class="svc-name">${s.nombre}</div>
+      <div class="svc-desc">${s.desc}</div>
+      <div class="svc-rate">${rate}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('cebaderosRow').style.display = servicioActivo===2 ? 'flex' : 'none';
+}
+
+function selServicio(id) {
+  servicioActivo = id;
+  if (id !== 2) { numCebaderos=0; document.getElementById('valCebaderos').textContent=0; document.getElementById('cebaderosTotal').textContent='$0'; }
+  renderServicios();
+  if (modo==='exterior') calcularExt(); else calcularInt();
+}
+
+// ── TABULADOR ─────────────────────────────────────────────────────────────────
+function renderTabulador() {
+  let html = tabulador.map(row => {
+    const activo = (areaFinal>0 && areaFinal<=VISITA_LIMITE && areaFinal>=row.min && areaFinal<=row.max) ? 'class="active-row"' : '';
+    return `<tr ${activo}>
+      <td>${row.label}</td>
+      ${row.precios.map(p=>`<td>$${p.toLocaleString()}</td>`).join('')}
+      <td>$${PRECIO_CEBADERO}</td>
+    </tr>`;
+  }).join('');
+  html += `<tr ${areaFinal>VISITA_LIMITE ? 'class="visita-row active-row"' : 'class="visita-row"'}>
+    <td>> 500 m²</td>
+    <td colspan="3" style="color:var(--warn);">Visita de inspección → propuesta personalizada</td>
+    <td>$${PRECIO_CEBADERO}</td>
+  </tr>`;
+  document.getElementById('tabuladorBody').innerHTML = html;
+}
+
+// ── MODAL ─────────────────────────────────────────────────────────────────────
+function abrirModalTabulador() {
+  document.getElementById('modalFields').innerHTML = tabulador.map((row,i) => `
+    <div class="modal-section-title" style="${i===0?'border-top:none;margin-top:0;padding-top:0;':''}">${row.label}</div>
+    <div class="modal-3col">
+      <div class="modal-field"><label>Rastreros</label><input type="number" id="m_${i}_0" value="${row.precios[0]}" /></div>
+      <div class="modal-field"><label>Voladores</label><input type="number" id="m_${i}_1" value="${row.precios[1]}" /></div>
+      <div class="modal-field"><label>Roedores</label><input type="number" id="m_${i}_2" value="${row.precios[2]}" /></div>
+    </div>`).join('');
+  document.getElementById('mCebadero').value = PRECIO_CEBADERO;
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+function cerrarModal() { document.getElementById('modalOverlay').classList.remove('show'); }
+
+function guardarTabulador() {
+  tabulador.forEach((row,i) => {
+    row.precios = [0,1,2].map(j => parseFloat(document.getElementById(`m_${i}_${j}`).value)||0);
+  });
+  PRECIO_CEBADERO = parseFloat(document.getElementById('mCebadero').value)||100;
+  cerrarModal();
+  renderServicios(); renderTabulador();
+  if (modo==='exterior') calcularExt(); else calcularInt();
+  localStorage.setItem('fumiquote_v3', JSON.stringify({ tabulador, PRECIO_CEBADERO }));
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target===document.getElementById('modalOverlay')) cerrarModal();
+});
+
+const saved = localStorage.getItem('fumiquote_v3');
+if (saved) { try { const d=JSON.parse(saved); if(d.tabulador) tabulador=d.tabulador; if(d.PRECIO_CEBADERO) PRECIO_CEBADERO=d.PRECIO_CEBADERO; } catch(e){} }
+
+renderServicios();
+renderTabulador();
+</script>
+</body>
+</html>
