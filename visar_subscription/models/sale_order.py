@@ -17,7 +17,23 @@ class SaleOrder(models.Model):
     visar_is_poliza = fields.Boolean(
         string="Es póliza (genera visitas)", compute='_compute_visar_is_poliza',
     )
+    # Siniestralidad (Fase 5): consumo de garantía para ajustar renovación.
+    visar_service_visit_count = fields.Integer(
+        string="Servicios ejecutados", compute='_compute_visar_siniestralidad',
+    )
+    visar_warranty_count = fields.Integer(
+        string="Visitas de garantía", compute='_compute_visar_siniestralidad',
+    )
+    visar_warranty_rate = fields.Float(
+        string="Tasa de garantía (%)", compute='_compute_visar_siniestralidad',
+        help="Visitas de garantía / servicios ejecutados. Indicador de siniestralidad "
+             "para ajustar el precio en la renovación.",
+    )
+    visar_last_warranty_date = fields.Date(
+        string="Última reincidencia", compute='_compute_visar_siniestralidad',
+    )
 
+    @api.depends('visar_visit_ids')
     def _compute_visar_visit_count(self):
         data = self.env['project.task']._read_group(
             [('visar_subscription_order_id', 'in', self.ids)],
@@ -37,6 +53,38 @@ class SaleOrder(models.Model):
         return bool(self.is_subscription and any(
             l.product_id.product_tmpl_id.visar_generates_visit
             for l in self.order_line))
+
+    @api.depends('visar_visit_ids', 'visar_visit_ids.visar_is_warranty')
+    def _compute_visar_siniestralidad(self):
+        for order in self:
+            visits = order.visar_visit_ids
+            warranty = visits.filtered('visar_is_warranty')
+            service = visits - warranty
+            order.visar_service_visit_count = len(service)
+            order.visar_warranty_count = len(warranty)
+            order.visar_warranty_rate = (
+                100.0 * len(warranty) / len(service)) if service else 0.0
+            wdates = [d for d in (order._visar_task_date(t) for t in warranty) if d]
+            order.visar_last_warranty_date = max(wdates) if wdates else False
+
+    @api.model
+    def _visar_task_date(self, task):
+        """Fecha 'de servicio' de una visita: cierre de campo si existe, si no el
+        deadline o la fecha de escritura."""
+        d = getattr(task, 'visar_field_closed_at', False) or task.date_deadline or task.write_date
+        return fields.Date.to_date(d) if d else False
+
+    def _visar_last_service_date(self):
+        """Fecha del último servicio (no garantía) ejecutado; fallback a la última
+        factura de la póliza."""
+        self.ensure_one()
+        service = self.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        dates = [d for d in (self._visar_task_date(t) for t in service) if d]
+        if dates:
+            return max(dates)
+        inv = self.invoice_ids.filtered(
+            lambda m: m.move_type == 'out_invoice' and m.invoice_date).sorted('invoice_date')
+        return inv[-1].invoice_date if inv else False
 
     # ------------------------------------------------------------------
     # Fecha "hasta" (fin) automática según la duración del plan/póliza
@@ -188,9 +236,33 @@ class SaleOrder(models.Model):
     # ------------------------------------------------------------------
     # Acciones
     # ------------------------------------------------------------------
-    def action_visar_add_warranty_visit(self):
-        """Crea una visita de garantía (sin costo) ligada a la póliza."""
+    # Ventana de garantía (días desde el último servicio). Configurable a futuro.
+    VISAR_WARRANTY_DAYS = 30
+
+    def _visar_check_warranty_eligibility(self):
+        """Valida elegibilidad de garantía: póliza activa + reincidencia dentro de la
+        ventana de N días desde el último servicio."""
         self.ensure_one()
+        if self.subscription_state != '3_progress':
+            raise UserError(_(
+                "La póliza no está activa (%s); la garantía no aplica.",
+                self.subscription_state or '—'))
+        last = self._visar_last_service_date()
+        if not last:
+            raise UserError(_(
+                "No hay un servicio previo registrado para validar la garantía."))
+        days = (fields.Date.context_today(self) - last).days
+        if days > self.VISAR_WARRANTY_DAYS:
+            raise UserError(_(
+                "La garantía cubre reincidencias dentro de %(win)s días del último "
+                "servicio; han pasado %(days)s días (último servicio: %(date)s).",
+                win=self.VISAR_WARRANTY_DAYS, days=days, date=last))
+
+    def action_visar_add_warranty_visit(self):
+        """Crea una visita de garantía (sin costo) ligada a la póliza, validando
+        elegibilidad (póliza activa + reincidencia <30 días)."""
+        self.ensure_one()
+        self._visar_check_warranty_eligibility()
         line = self.order_line.filtered(
             lambda l: l.product_id.product_tmpl_id.visar_generates_visit
             and l.product_id.product_tmpl_id.visar_fsm_project_id

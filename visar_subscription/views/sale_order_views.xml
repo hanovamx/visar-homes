@@ -29,6 +29,22 @@
             <xpath expr="//field[@name='partner_shipping_id']" position="before">
                 <field name="visar_is_poliza" invisible="1"/>
             </xpath>
+            <!-- Fase 5: pestaña de siniestralidad (consumo de garantía) -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Póliza — Siniestralidad" name="visar_siniestralidad"
+                      invisible="not visar_is_poliza">
+                    <group>
+                        <group>
+                            <field name="visar_service_visit_count"/>
+                            <field name="visar_warranty_count"/>
+                        </group>
+                        <group>
+                            <field name="visar_warranty_rate"/>
+                            <field name="visar_last_warranty_date"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
         </field>
     </record>
 </odoo>
