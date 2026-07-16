@@ -656,6 +656,102 @@
         </t>
     </template>
 
+    <!-- Paso Extras (upsell): add-ons opcionales recomendados antes del horario -->
+    <template id="visar_wizard_extras" name="Visar - Wizard extras">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <t t-set="quote" t-value="visar_quote or False"/>
+                    <t t-set="quote_currency"
+                       t-value="quote and request.env['res.currency'].browse(quote['currency_id']) or request.env.company.currency_id"/>
+                    <div class="row justify-content-center g-4">
+                        <div class="col-lg-7">
+                            <h2>¿Deseas agregar algo más?</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Con base en lo que nos compartiste, te recomendamos estos artículos.
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/extras"
+                                  method="post" class="mt-3" id="visar_extras_form">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <t t-foreach="extras_offers" t-as="offer">
+                                    <div class="form-check d-flex justify-content-between align-items-center border rounded p-3 mb-2">
+                                        <div>
+                                            <input class="form-check-input me-2" type="checkbox"
+                                                   name="extra_ids"
+                                                   t-att-id="'extra_%s' % offer['product_id']"
+                                                   t-att-value="offer['product_id']"
+                                                   t-att-data-subtotal="offer['subtotal']"
+                                                   t-att-checked="offer['product_id'] in accepted_ids and 'checked' or None"/>
+                                            <label class="form-check-label" t-att-for="'extra_%s' % offer['product_id']">
+                                                <span t-esc="offer['name']"/>
+                                                <span t-if="offer['quantity'] &gt; 1" class="text-muted">
+                                                    ×<t t-esc="offer['quantity']"/>
+                                                </span>
+                                            </label>
+                                        </div>
+                                        <span class="fw-semibold" t-out="offer['subtotal']"
+                                              t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                    </div>
+                                </t>
+                                <button type="submit" class="btn btn-primary mt-2">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link mt-2 ms-2">Volver</a>
+                            </form>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <div class="border rounded p-3 bg-light">
+                                <h5 class="mb-3">Tu reserva</h5>
+                                <t t-if="quote">
+                                    <t t-foreach="quote['lines']" t-as="line">
+                                        <div class="d-flex justify-content-between gap-2 small mb-1"
+                                             t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
+                                            <span t-esc="line['name']"/>
+                                            <span t-out="line['price']"
+                                                  t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                        </div>
+                                    </t>
+                                    <div class="d-flex justify-content-between pt-2 border-top">
+                                        <strong>Total</strong>
+                                        <strong id="visar_extras_total"
+                                                t-att-data-base="quote['total']"
+                                                t-att-data-symbol="quote_currency.symbol"/>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                    </div>
+                    <script type="text/javascript">
+                        (function () {
+                            var form = document.getElementById('visar_extras_form');
+                            var totalEl = document.getElementById('visar_extras_total');
+                            if (!form || !totalEl) { return; }
+                            var base = parseFloat(totalEl.dataset.base) || 0;
+                            var sym = totalEl.dataset.symbol || '';
+                            var boxes = form.querySelectorAll('input[name="extra_ids"]');
+                            function fmt(n) {
+                                return sym + n.toLocaleString(undefined,
+                                    {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            }
+                            function recompute() {
+                                var t = base;
+                                boxes.forEach(function (b) {
+                                    if (b.checked) { t += parseFloat(b.dataset.subtotal) || 0; }
+                                });
+                                totalEl.textContent = fmt(t);
+                            }
+                            boxes.forEach(function (b) { b.addEventListener('change', recompute); });
+                            recompute();
+                        })();
+                    </script>
+                </div>
+            </div>
+        </t>
+    </template>
+
     <!-- Aviso: el rango elegido requiere valoración técnica -->
     <template id="visar_wizard_valuation_notice" name="Visar - Wizard aviso valoración">
         <t t-call="website.layout">

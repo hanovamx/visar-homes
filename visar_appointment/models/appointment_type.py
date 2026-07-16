@@ -608,9 +608,54 @@ class AppointmentType(models.Model):
                 return rule._visar_discount_percent()
         return 0.0
 
+    @api.model
+    def _visar_offered_addons(self, items, zone, include_roedores=False):
+        """Add-ons OPCIONALES (Obligatorio=No) ofrecibles como extras/upsell.
+
+        Junta las líneas opcionales de los productos de la reserva (+ producto de
+        roedores si aplica), suma cantidades por producto y resuelve variante/precio
+        por zona. Omite los de precio 0 (Odoo bloquea líneas a 0)."""
+        ProductTemplate = self.env['product.template']
+        templates = ProductTemplate.browse(
+            [i['product_tmpl_id'] for i in items if i.get('product_tmpl_id')]).exists()
+        if include_roedores:
+            roedores_tmpl = ProductTemplate._visar_get_roedores_template()
+            if roedores_tmpl:
+                templates |= roedores_tmpl
+
+        # Un mismo add-on puede estar listado como opcional en varios productos de la
+        # reserva. Para una oferta opt-in (un solo checkbox) se toma el MÁXIMO de las
+        # cantidades configuradas, no la suma (sumar es la regla de los obligatorios).
+        qty_by_tmpl = {}
+        for tmpl in templates:
+            for line in tmpl.visar_optional_line_ids.filtered(
+                    lambda l: not l.is_mandatory and l.optional_product_id):
+                qty_by_tmpl[line.optional_product_id] = max(
+                    qty_by_tmpl.get(line.optional_product_id, 0), line.quantity)
+
+        offers = []
+        for opt_tmpl, qty in qty_by_tmpl.items():
+            variant = opt_tmpl.product_variant_id
+            if not variant:
+                continue
+            variant = ProductTemplate._visar_variant_for_zone(variant, zone)
+            unit_price = self._visar_list_unit_price(variant, zone)
+            if unit_price <= 0:
+                continue
+            offers.append({
+                'product_id': variant.id,
+                'template_id': opt_tmpl.id,
+                'name': variant.display_name,
+                'quantity': qty,
+                'unit_price': unit_price,
+                'subtotal': unit_price * qty,
+            })
+        offers.sort(key=lambda o: o['name'])
+        return offers
+
     # Construye las líneas de venta con variante por zona, descuento combo e incluidos al 100%.
     @api.model
-    def _visar_build_sale_lines(self, items, zone, include_roedores=False):
+    def _visar_build_sale_lines(self, items, zone, include_roedores=False, extra_addons=None):
         if any(item.get('is_valuation') for item in items):
             valuation_tmpl = self.env['product.template']._visar_get_valuation_template()
             variant = valuation_tmpl.product_variant_id if valuation_tmpl else False
@@ -694,12 +739,26 @@ class AppointmentType(models.Model):
                 'quantity': addon_quantity,
                 'is_addon': True,
             })
+
+        # Extras opcionales aceptados por el cliente en el paso de extras (upsell).
+        for extra in (extra_addons or []):
+            product = Product.browse(extra.get('product_id')).exists()
+            if not product:
+                continue
+            lines.append({
+                'product_id': product.id,
+                'discount': 0.0,
+                'quantity': max(int(extra.get('quantity') or 1), 1),
+                'is_addon': True,
+            })
         return lines
 
     # Calcula los precios estimados de la reserva respetando pricelist de zona y descuentos combo.
     @api.model
-    def _visar_quote_booking(self, items, zone, quantity=1, include_roedores=False):
-        sale_lines = self._visar_build_sale_lines(items, zone, include_roedores=include_roedores)
+    def _visar_quote_booking(self, items, zone, quantity=1, include_roedores=False,
+                             extra_addons=None):
+        sale_lines = self._visar_build_sale_lines(
+            items, zone, include_roedores=include_roedores, extra_addons=extra_addons)
         if not sale_lines:
             return False
 

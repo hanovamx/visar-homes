@@ -65,7 +65,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'selections': dict(raw.get('selections') or {}),
         }
         for key in ('zone_id', 'appointment_type_id', 'm2', 'items', 'service_pools',
-                    'delivery_address'):
+                    'delivery_address', 'extras_accepted'):
             if key in raw:
                 payload[key] = raw[key]
         return payload
@@ -173,7 +173,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
         quote = AppointmentType._visar_quote_booking(
             items, zone, quantity=int(asked_capacity or 1),
-            include_roedores=self._visar_booking_has_roedores(booking))
+            include_roedores=self._visar_booking_has_roedores(booking),
+            extra_addons=booking.get('extras_accepted'))
         return {'visar_quote': quote or False}
 
     # Obtiene el appointment.type maestro del wizard.
@@ -290,6 +291,16 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     def _visar_booking_has_roedores(self, booking):
         return (booking.get('selections') or {}).get('roedores') == 'si'
 
+    # Add-ons opcionales ofrecibles como extras para la reserva actual.
+    def _visar_extras_offers(self, booking):
+        booking = booking or {}
+        zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
+        items = booking.get('items') or []
+        if not zone or not items:
+            return []
+        return request.env['appointment.type'].sudo()._visar_offered_addons(
+            items, zone, include_roedores=self._visar_booking_has_roedores(booking))
+
     def _visar_auto_dimensions_for_groups(self, groups, dimension_ids):
         """Añade dimensiones únicas de grupos con una sola opción."""
         Dimension = request.env['visar.service.dimension'].sudo()
@@ -396,6 +407,10 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             if mtype in measure_types:
                 steps.append(key)
         steps.append('address')
+        # El paso de extras solo existe tras resolver zona/items y si hay algo que ofrecer.
+        booking = self._visar_get_booking_session()
+        if booking.get('zone_id') and booking.get('items') and self._visar_extras_offers(booking):
+            steps.append('extras')
         return steps
 
     # Devuelve (índice 1-based, total) del paso actual para el indicador de progreso.
@@ -418,6 +433,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'exterior': base + '/wizard/exterior',
             'dimensiones': base + '/wizard/dimensiones',
             'address': base + '/wizard/direccion',
+            'extras': base + '/wizard/extras',
         }.get(step_key, base)
 
     # URL del paso anterior al actual (para el botón "Volver"); None si es el primero.
@@ -1070,7 +1086,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'missing_services': missing,
             })
         filter_ids = AptType._visar_filter_resource_ids_for_pools(pools)
-        self._visar_persist_booking({
+        booking = self._visar_persist_booking({
             'mode': 'wizard',
             'master_appointment_type_id': master.id,
             'zone_id': zone.id,
@@ -1079,9 +1095,62 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'items': items,
             'service_pools': {key: pool.ids for key, pool in pools.items()},
         })
+        # Si hay add-ons opcionales para ofrecer, intercala el paso de extras.
+        if self._visar_extras_offers(booking):
+            return request.redirect('/appointment/visar/booking/wizard/extras')
         filter_param = quote_plus(json.dumps(filter_ids))
         return request.redirect(
             '/appointment/%s?filter_resource_ids=%s' % (master.id, filter_param))
+
+    # Paso Extras (upsell): ofrece add-ons opcionales antes de elegir horario.
+    @http.route(['/appointment/visar/booking/wizard/extras'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_extras(self, **post):
+        booking = self._visar_get_booking_session()
+        master = self._visar_master_appointment_type()
+        if not master or not booking or booking.get('mode') != 'wizard' \
+                or not booking.get('zone_id') or not booking.get('items'):
+            return request.redirect('/appointment/visar/booking')
+
+        AptType = request.env['appointment.type'].sudo()
+
+        def _to_schedule():
+            pools = self._visar_get_service_pools(booking)
+            filter_ids = AptType._visar_filter_resource_ids_for_pools(pools)
+            filter_param = quote_plus(json.dumps(filter_ids))
+            return request.redirect(
+                '/appointment/%s?filter_resource_ids=%s' % (master.id, filter_param))
+
+        offers = self._visar_extras_offers(booking)
+        if not offers:
+            return _to_schedule()
+
+        if request.httprequest.method == 'GET':
+            zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
+            # Sidebar base (sin extras); el total se actualiza en vivo por JS.
+            quote = AptType._visar_quote_booking(
+                booking.get('items') or [], zone,
+                include_roedores=self._visar_booking_has_roedores(booking))
+            ctx = self._visar_wizard_context_base(
+                'extras', selections=booking.get('selections') or {}, values=post)
+            ctx.update({
+                'extras_offers': offers,
+                'accepted_ids': [e['product_id'] for e in (booking.get('extras_accepted') or [])],
+                'visar_quote': quote or False,
+            })
+            return request.render('visar_appointment.visar_wizard_extras', ctx)
+
+        # POST: guarda los extras aceptados (checkboxes) y sigue al horario.
+        chosen = set(self._visar_parse_id_list(request.httprequest.form.getlist('extra_ids')))
+        offered_by_id = {o['product_id']: o for o in offers}
+        accepted = [
+            {'product_id': pid, 'quantity': offered_by_id[pid]['quantity']}
+            for pid in chosen if pid in offered_by_id
+        ]
+        booking = dict(booking)
+        booking['extras_accepted'] = accepted
+        self._visar_persist_booking(booking)
+        return _to_schedule()
 
     # ------------------------------------------------------------------
     # Valoración técnica
@@ -1485,7 +1554,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         master = request.env['appointment.type'].sudo().browse(booking['master_appointment_type_id'])
         sale_lines = master._visar_build_sale_lines(
             booking.get('items', []), zone,
-            include_roedores=self._visar_booking_has_roedores(booking))
+            include_roedores=self._visar_booking_has_roedores(booking),
+            extra_addons=booking.get('extras_accepted'))
         if not sale_lines:
             calendar_booking.sudo().unlink()
             return request.redirect('/appointment/%s?%s' % (
