@@ -485,6 +485,47 @@
         });
     }
 
+    /* Traza de los botones Llamar / WhatsApp / Abrir en Google Maps: avisa al
+       servidor (nota en el chatter de la tarea) y deja que el toque siga su curso.
+
+       `sendBeacon` y NO `fetch`: "Llamar"/"WhatsApp" **abandonan la página** (tel:,
+       wa.me), y un fetch en vuelo se cancelaría al descargarse el documento. El
+       beacon lo entrega el navegador en segundo plano, pase lo que pase. Tampoco
+       se retrasa la navegación esperando respuesta: la traza no debe estorbar al
+       técnico (si falla, se pierde la nota, no la llamada). */
+    function initTracking() {
+        var cfg = document.getElementById("visar-track");
+        if (!cfg || !navigator.sendBeacon) {
+            return;
+        }
+        var url = cfg.getAttribute("data-action");
+        var csrf = cfg.getAttribute("data-csrf");
+        var lastAction = "";
+        var lastAt = 0;
+
+        document.addEventListener("click", function (ev) {
+            var link = ev.target.closest("[data-visar-track]");
+            if (!link) {
+                return;
+            }
+            var action = link.getAttribute("data-visar-track");
+            // Doble-toque accidental (el dedo rebota) = una sola nota. Un toque
+            // repetido más tarde SÍ se registra: reintentar una llamada es
+            // información real para gestión.
+            var now = Date.now();
+            if (action === lastAction && now - lastAt < 3000) {
+                return;
+            }
+            lastAction = action;
+            lastAt = now;
+
+            var body = new FormData();
+            body.append("csrf_token", csrf);
+            body.append("action", action);
+            navigator.sendBeacon(url, body);
+        });
+    }
+
     function init() {
         initSignaturePad();
         initO2M();

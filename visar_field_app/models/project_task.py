@@ -128,6 +128,26 @@ class ProjectTask(models.Model):
         if stage:
             self.stage_id = stage.id
 
+    def _visar_stage_pending_signature(self):
+        """Etapa **Pendiente de firma** (entre En ejecución y Completado).
+
+        NO es nativa de industry_fsm: existía a mano en `visar_prod` (archivada,
+        sin xmlid) y el sembrador `hooks.py::seed_signature_stage` la adopta —
+        la activa, la ordena (seq 15) y le pone este xmlid. Si el seed no corrió,
+        devuelve vacío y quien llama simplemente no cambia de etapa."""
+        return self.env.ref(
+            'visar_field_app.visar_stage_pending_signature', raise_if_not_found=False)
+
+    def _visar_set_stage_pending_signature(self):
+        """Pasa a 'Pendiente de firma' al guardar la hoja de trabajo.
+
+        Solo avanza desde **En ejecución**: si gestión ya la movió a Completado o
+        Incidencia, re-guardar la hoja NO debe devolverla hacia atrás."""
+        self.ensure_one()
+        stage = self._visar_stage_pending_signature()
+        if stage and self.stage_id == self._visar_fsm_stage(2):
+            self.stage_id = stage.id
+
     def write(self, vals):
         """Al cambiar de etapa (desde la app O desde el backend "Servicio externo"),
         reconcilia los sellos de sub-fase para que la app muestre los botones que
@@ -147,29 +167,40 @@ class ProjectTask(models.Model):
 
         Desde que 'Confirmar llegada' salta directo a **En ejecución**, todas las
         sub-fases (llegada → espera → servicio) viven en esa etapa (y se conservan
-        en Completado como historial). Si gestión mueve la etapa a Programado / En
-        camino / Incidencia, los sellos se limpian para que la app muestre la fase
-        correcta (sin timer/¡Tiempo!/reagenda fantasma). El `write` resultante no
-        toca `stage_id`, así que no reentra en el override."""
+        en Pendiente de firma / Completado como historial). Si gestión mueve la etapa
+        a Programado / En camino / Incidencia, los sellos se limpian para que la app
+        muestre la fase correcta (sin timer/¡Tiempo!/reagenda fantasma). El `write`
+        resultante no toca `stage_id`, así que no reentra en el override."""
         self.ensure_one()
         s1 = self._visar_fsm_stage(1)  # En camino
         s2 = self._visar_fsm_stage(2)  # En ejecución
         s3 = self._visar_fsm_stage(3)  # Completado
+        sign = self._visar_stage_pending_signature()
         stage = self.stage_id
-        in_service = (s2 and stage == s2) or (s3 and stage == s3)
+        # ⚠️ 'Pendiente de firma' ES etapa de servicio: guardar la hoja de trabajo
+        # mueve la tarea ahí, y si no estuviera en esta lista este mismo método
+        # borraría `visar_service_start` → la app volvería a "esperando" y volvería
+        # a ocultar la hoja recién guardada.
+        in_service = ((s2 and stage == s2) or (s3 and stage == s3)
+                      or (sign and stage == sign))
         # "En ruta" abarca En camino + En ejecución + Completado: mientras la tarea
         # esté en (o haya pasado por) el trayecto, se conserva el sello de salida
         # para poder calcular el traslado al confirmar la llegada.
         on_the_way = (s1 and stage == s1) or in_service
         vals = {}
         if not in_service:
-            # Antes de "Confirmar llegada" no hay llegada/espera/servicio.
+            # Antes de "Confirmar llegada" no hay llegada/espera/servicio. Se borra
+            # también el sello de la hoja de trabajo: al reiniciar el flujo, la firma
+            # vuelve a exigir que se guarde la hoja (el dato capturado NO se toca).
             vals.update({
                 'visar_arrived_at': False,
                 'visar_waiting_start': False,
                 'visar_waiting_minutes': 0,
                 'visar_service_start': False,
                 'visar_client_wait_minutes': 0.0,
+                'visar_worksheet_saved_at': False,
+                'visar_worksheet_saved_by_id': False,
+                'visar_worksheet_last_saved_at': False,
             })
         if not on_the_way:
             # De vuelta a Programado / Incidencia: se cancela también la salida
@@ -230,6 +261,39 @@ class ProjectTask(models.Model):
                 summary="Reagendar servicio — cliente no llegó",
                 note=body)
         self.message_post(body=body)
+
+    # ==================================================================
+    # Traza de acciones del técnico (Llamar / WhatsApp / Google Maps)
+    # ==================================================================
+    # Qué botón se pulsó → (etiqueta para el chatter, emoji). El destino real
+    # (teléfono / dirección) lo resuelve el servidor al registrar, para que la
+    # nota diga a QUIÉN se llamó y no solo "pulsó Llamar".
+    VISAR_TRACK_ACTIONS = {
+        'call': ("Llamar", "📞"),
+        'whatsapp': ("WhatsApp", "💬"),
+        'maps': ("Abrir en Google Maps", "📍"),
+    }
+
+    def _visar_log_field_action(self, employee, action):
+        """Deja en el chatter que el técnico pulsó Llamar / WhatsApp / Maps.
+
+        Es una **nota interna** (`mail.mt_note`): traza para gestión, no se envía
+        a nadie. Un toque = una nota; el JS ya descarta el doble-toque accidental.
+        """
+        self.ensure_one()
+        label, icon = self.VISAR_TRACK_ACTIONS.get(action, (None, None))
+        if not label:
+            return False
+        if action == 'maps':
+            target = self.partner_id.contact_address_complete or ''
+        else:
+            target, _e164 = self._visar_client_phone()
+        detail = (" → %s" % target) if target else ""
+        self.message_post(
+            body=Markup("%s <b>%s</b> pulsó <b>%s</b> desde la app de campo.%s") % (
+                icon, employee.name or '', label, detail),
+            subtype_xmlid='mail.mt_note')
+        return True
 
     # ==================================================================
     # Aviso al cliente (hoy: simulación en chatter; futuro: WhatsApp)

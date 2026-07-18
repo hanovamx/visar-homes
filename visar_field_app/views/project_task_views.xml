@@ -22,8 +22,12 @@
                             <field name="visar_waiting_start" readonly="1"/>
                             <field name="visar_service_start" readonly="1"/>
                             <field name="visar_client_wait_minutes" readonly="1"/>
+                            <field name="visar_worksheet_last_saved_at" readonly="1"/>
+                            <field name="visar_onsite_minutes" readonly="1"/>
                         </group>
                         <group string="Cierre en campo">
+                            <field name="visar_worksheet_saved_at" readonly="1"/>
+                            <field name="visar_worksheet_saved_by_id" readonly="1"/>
                             <field name="visar_field_closed_by_id" readonly="1"/>
                             <field name="visar_field_closed_at" readonly="1"/>
                         </group>

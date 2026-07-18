@@ -479,5 +479,73 @@ def seed_worksheet_templates(env):
     _seed_visita(env)
 
 
+# ======================================================================
+# Etapa "Pendiente de firma" (entre En ejecución y Completado)
+# ======================================================================
+# xmlid propio para poder referenciarla desde el código (env.ref). La etapa
+# YA existía en visar_prod (creada a mano, sin xmlid y archivada); el sembrador
+# la adopta en vez de duplicarla.
+SIGN_STAGE_XMLID = 'visar_stage_pending_signature'
+SIGN_STAGE_NAME_ES = "Pendiente de firma"
+SIGN_STAGE_NAME_EN = "Pending Signature"
+# En ejecución = 10, Completado = 20 (secuencias nativas de industry_fsm).
+SIGN_STAGE_SEQUENCE = 15
+
+
+def _fsm_projects(env):
+    return env['project.project'].sudo().search([('is_fsm', '=', True)])
+
+
+def seed_signature_stage(env):
+    """Deja lista la etapa **Pendiente de firma**: activa, entre *En ejecución* y
+    *Completado*, ligada a los proyectos FSM y con xmlid propio. Idempotente.
+
+    La app la usa al guardar la hoja de trabajo (`_visar_set_stage_pending_signature`).
+    Búsqueda en 3 pasos para no duplicar la que ya existe en producción:
+      1. por **xmlid** (si un seed anterior ya la adoptó),
+      2. por **nombre es_MX** entre las etapas de proyectos FSM — incluye
+         **archivadas** (`active_test=False`): así estaba en `visar_prod`,
+      3. si no existe, se **crea**.
+    """
+    Stage = env['project.task.type'].sudo().with_context(active_test=False)
+    projects = _fsm_projects(env)
+
+    stage = env.ref('visar_field_app.%s' % SIGN_STAGE_XMLID, raise_if_not_found=False)
+    if not stage:
+        stage = Stage.with_context(lang='es_MX').search([
+            ('name', '=', SIGN_STAGE_NAME_ES),
+            ('project_ids', 'in', projects.ids),
+        ], limit=1)
+    if not stage:
+        stage = Stage.create({
+            'name': SIGN_STAGE_NAME_EN,
+            'sequence': SIGN_STAGE_SEQUENCE,
+            'project_ids': [(6, 0, projects.ids)],
+        })
+        _logger.info("Etapa '%s' creada (id %s)", SIGN_STAGE_NAME_ES, stage.id)
+
+    # Estado canónico. El nombre en_US venía mal ("In Progress": se duplicó la
+    # etapa En ejecución al crearla a mano) → se corrige en ambos idiomas.
+    stage.write({
+        'active': True,
+        'sequence': SIGN_STAGE_SEQUENCE,
+        'fold': False,
+        'project_ids': [(4, p.id) for p in projects],
+    })
+    stage.with_context(lang='en_US').name = SIGN_STAGE_NAME_EN
+    stage.with_context(lang='es_MX').name = SIGN_STAGE_NAME_ES
+
+    # xmlid → env.ref estable. noupdate: es un dato vivo, no se pisa en upgrades.
+    env['ir.model.data'].sudo()._update_xmlids([{
+        'xml_id': 'visar_field_app.%s' % SIGN_STAGE_XMLID,
+        'record': stage,
+        'noupdate': True,
+    }])
+    _logger.info("Etapa '%s' lista (id %s, seq %s, %s proyectos)",
+                 SIGN_STAGE_NAME_ES, stage.id, stage.sequence, len(stage.project_ids))
+    return stage
+
+
 def post_init_hook(env):
     seed_worksheet_templates(env)
+    seed_signature_stage(env)

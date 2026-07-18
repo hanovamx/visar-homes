@@ -395,10 +395,15 @@ class VisarFieldApp(http.Controller):
         s2 = task._visar_fsm_stage(2)  # En ejecución
         s3 = task._visar_fsm_stage(3)  # Completado
         s4 = task._visar_fsm_stage(4)  # Incidencia—Reprogramar
+        sign = task._visar_stage_pending_signature()  # Pendiente de firma
         if s3 and stage == s3:
             return 'cerrado'
         if s4 and stage == s4:
             return 'reagenda'
+        # 'Pendiente de firma' (la pone el guardado de la hoja) sigue siendo servicio
+        # en curso para la app: el técnico sigue en el domicilio, ahora firmando.
+        if sign and stage == sign:
+            return 'en_ejecucion'
         if s2 and stage == s2:
             # 'Confirmar llegada' ya movió la etapa a En ejecución Y arrancó la espera
             # automáticamente; las sub-fases (espera → servicio) se distinguen por los
@@ -414,6 +419,31 @@ class VisarFieldApp(http.Controller):
         if s1 and stage == s1:
             return 'en_camino'
         return 'programado'  # Programado o cualquier otra etapa
+
+    # Fases en las que la hoja de trabajo se muestra y se puede guardar: desde que
+    # el técnico pulsa "Comenzar servicio" (Req 5). Se gatea por la FASE y no por el
+    # sello `visar_service_start` porque la fase es la que manda (si gestión pone la
+    # etapa a mano sin sellos, la app igual debe dejar capturar). 'cerrado' sigue
+    # mostrándola: el técnico consulta lo que capturó.
+    WORKSHEET_STATES = ('en_ejecucion', 'cerrado')
+
+    def _worksheet_available(self, flow_state):
+        """¿Se muestra/guarda la hoja de trabajo en esta fase? (Req 5)"""
+        return flow_state in self.WORKSHEET_STATES
+
+    def _signature_available(self, task, flow_state):
+        """¿Se muestra la sección de firma + "Cerrar servicio"? (Req 6)
+
+        Solo con el servicio en ejecución **y** la hoja de trabajo guardada al menos
+        una vez. Si el servicio **no tiene plantilla** de hoja de trabajo no hay nada
+        que guardar: se muestra en cuanto arranca el servicio (si no, el técnico no
+        podría cerrar nunca).
+        """
+        if flow_state != 'en_ejecucion':
+            return False
+        if not task.worksheet_template_id:
+            return True
+        return bool(task.visar_worksheet_saved_at)
 
     # ==================================================================
     # Worksheet nativa (modelo dinámico x_...)
@@ -1103,16 +1133,26 @@ class VisarFieldApp(http.Controller):
         # Minutos de espera: el valor elegido por el técnico en la tarea; si no ha
         # elegido (0), el parámetro global.
         waiting_minutes = task.visar_waiting_minutes or self._default_waiting_minutes()
+        flow_state = self._task_flow_state(task)
+        worksheet_available = self._worksheet_available(flow_state)
         return request.render('visar_field_app.field_task_detail', {
             'employee': employee,
             'task': task,
             'has_worksheet_template': bool(task.worksheet_template_id),
-            'worksheet_fields': self._worksheet_descriptors(task, worksheet),
+            # Los descriptores solo se calculan si la hoja se va a pintar: leen la
+            # vista del modelo dinámico y no son gratis.
+            'worksheet_fields': (self._worksheet_descriptors(task, worksheet)
+                                 if worksheet_available else []),
+            'worksheet_available': worksheet_available,
+            'worksheet_saved': bool(task.visar_worksheet_saved_at),
+            'ws_error': kw.get('ws_error'),
+            'signature_available': self._signature_available(task, flow_state),
+            'track_action': '/visar/field/task/%s/track' % task.id,
             'is_signed': bool(task.worksheet_signature),
             'saved': kw.get('saved'),
             'maps_url': self._google_maps_url(task),
             'contact': self._task_contact(task),
-            'flow_state': self._task_flow_state(task),
+            'flow_state': flow_state,
             'waiting_minutes': waiting_minutes,
             # 'Z' marca UTC: Odoo guarda datetimes naive en UTC; sin el marcador el
             # navegador los interpreta como hora LOCAL y desfasa la cuenta regresiva
@@ -1259,15 +1299,59 @@ class VisarFieldApp(http.Controller):
         if not task:
             return request.redirect('/visar/field/tasks')
 
+        # Req 5: no se captura antes de "Comenzar servicio". Defensa en profundidad —
+        # la plantilla ni siquiera pinta el formulario, esto ataja un POST directo.
+        if not self._worksheet_available(self._task_flow_state(task)):
+            return request.redirect('/visar/field/task/%s' % task.id)
+
         record = self._worksheet_record(task, create=True)
         if record is not None:
+            # Req 7: no se guarda una hoja incompleta. El cliente ya valida campo a
+            # campo (misma lógica); aquí es defensa en profundidad. Si algo falta NO
+            # se escribe nada (ni se avanza la etapa) y se vuelve con ?ws_error=1.
+            if self._worksheet_validation_errors(
+                    task, record, post, request.httprequest.files):
+                return request.redirect(
+                    '/visar/field/task/%s?ws_error=1' % task.id)
             vals = self._worksheet_write_values(
                 task, record, post, request.httprequest.files)
             if vals:
                 record.write(vals)
             self._sync_worksheet_lines(
                 task, record, post, request.httprequest.files)
+            # Req 6: guardar la hoja habilita la firma y mueve la etapa a
+            # 'Pendiente de firma'. El sello _saved_at/_by_id es de la PRIMERA vez
+            # (auditoría); _last_saved_at se actualiza en CADA guardado (Req 8: con
+            # la llegada define el tiempo en sitio del PDF).
+            now = fields.Datetime.now()
+            ws_vals = {'visar_worksheet_last_saved_at': now}
+            if not task.visar_worksheet_saved_at:
+                ws_vals['visar_worksheet_saved_at'] = now
+                ws_vals['visar_worksheet_saved_by_id'] = employee.id
+            task.write(ws_vals)
+            task._visar_set_stage_pending_signature()
         return request.redirect('/visar/field/task/%s?saved=1' % task.id)
+
+    # ==================================================================
+    # Traza de acciones del técnico (Llamar / WhatsApp / Google Maps)
+    # ==================================================================
+    @http.route('/visar/field/task/<int:task_id>/track', type='http', auth='public',
+                methods=['POST'], csrf=True)
+    def field_task_track(self, task_id, **post):
+        """Registra en el chatter que el técnico pulsó un botón de contacto/mapa.
+
+        La llama `navigator.sendBeacon` (fire-and-forget): el navegador la manda
+        aunque la página se esté yendo a `tel:` / `wa.me`, y no bloquea el toque.
+        Por eso responde vacío (nadie lee la respuesta) y nunca redirige.
+        """
+        employee = self._current_employee()
+        if not employee:
+            return request.make_response('', status=403)
+        task = self._task_for_employee(task_id, employee)
+        if not task:
+            return request.make_response('', status=404)
+        task._visar_log_field_action(employee, post.get('action'))
+        return request.make_response('', [('Content-Type', 'text/plain')])
 
     # ==================================================================
     # Transiciones en sitio (etapas nativas + sellos de tiempo) — Req 2
@@ -1332,6 +1416,11 @@ class VisarFieldApp(http.Controller):
         task = self._task_for_employee(task_id, employee)
         if not task:
             return request.redirect('/visar/field/tasks')
+
+        # Req 6: no se cierra sin haber guardado la hoja de trabajo (el formulario
+        # de firma ni se pinta antes; esto ataja un POST directo o una pestaña vieja).
+        if not self._signature_available(task, self._task_flow_state(task)):
+            return request.redirect('/visar/field/task/%s' % task.id)
 
         # Validación de cierre: firma Y nombre obligatorios (defensa en profundidad;
         # el JS también bloquea el submit).

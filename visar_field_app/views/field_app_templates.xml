@@ -162,20 +162,27 @@
                     <div t-if="task.partner_id" class="text-muted mb-1">
                         <t t-esc="task.partner_id.name"/>
                     </div>
+                    <!-- Endpoint + csrf de la traza de botones (Llamar / WhatsApp /
+                         Maps). Lo lee field_app.js para el sendBeacon. -->
+                    <div id="visar-track" class="d-none"
+                         t-att-data-action="track_action"
+                         t-att-data-csrf="request.csrf_token()"/>
+
                     <!-- Contacto del cliente: teléfono + Llamar / WhatsApp -->
                     <div t-if="contact" class="mb-1 small d-flex align-items-center gap-2">
                         <span t-esc="contact['phone_display']"/>
-                        <a t-att-href="contact['tel_href']"
+                        <a t-att-href="contact['tel_href']" data-visar-track="call"
                            class="btn btn-outline-secondary btn-sm py-0">📞 Llamar</a>
                         <a t-if="contact['wa_href']" t-att-href="contact['wa_href']"
-                           target="_blank" rel="noopener"
+                           target="_blank" rel="noopener" data-visar-track="whatsapp"
                            class="btn btn-outline-success btn-sm py-0">WhatsApp</a>
                     </div>
                     <div t-if="task.partner_id.contact_address_complete" class="text-muted mb-1 small">
                         <t t-esc="task.partner_id.contact_address_complete"/>
                     </div>
                     <a t-if="maps_url" t-att-href="maps_url" target="_blank"
-                       rel="noopener" class="btn btn-outline-secondary btn-sm mb-3">
+                       rel="noopener" data-visar-track="maps"
+                       class="btn btn-outline-secondary btn-sm mb-3">
                         📍 Abrir en Google Maps
                     </a>
 
@@ -234,9 +241,19 @@
                             </form>
                         </t>
 
-                        <!-- En ejecución → indicación de cierre -->
+                        <!-- En ejecución → qué falta para poder cerrar. La firma no
+                             aparece hasta guardar la hoja de trabajo (Req 6), así que
+                             la leyenda dice el siguiente paso real. -->
                         <div t-if="flow_state == 'en_ejecucion'" class="alert alert-success py-2 mb-0">
-                            Servicio en ejecución. Al terminar, capture la firma y pulse "Cerrar servicio".
+                            <t t-if="signature_available">
+                                Servicio en ejecución. Al terminar, capture la firma y
+                                pulse "Cerrar servicio".
+                            </t>
+                            <t t-else="">
+                                Servicio en ejecución. Llene la hoja de trabajo y pulse
+                                "Guardar hoja de trabajo": la firma del cliente se
+                                habilita después.
+                            </t>
                         </div>
 
                         <!-- Etapas terminales (etapa cambiada en el backend) -->
@@ -259,31 +276,58 @@
                         </ul>
                     </div>
 
-                    <!-- Worksheet nativa (campos dinámicos del template) -->
+                    <!-- Worksheet nativa (campos dinámicos del template).
+                         Req 5: no se muestra ni se puede llenar hasta "Comenzar
+                         servicio" (el servidor también lo rechaza). -->
                     <div t-if="not has_worksheet_template" class="alert alert-warning">
                         Este servicio no tiene plantilla de hoja de trabajo configurada.
                     </div>
-                    <form t-if="has_worksheet_template"
+                    <div t-elif="not worksheet_available" class="card p-3 mb-4 text-muted">
+                        <h6 class="mb-1">Hoja de trabajo</h6>
+                        <span class="small">
+                            Se habilita al pulsar "Comenzar servicio".
+                        </span>
+                    </div>
+                    <form t-if="has_worksheet_template and worksheet_available"
                           t-att-action="'/visar/field/task/%s/worksheet' % task.id" method="post"
                           enctype="multipart/form-data" id="visar-worksheet-form"
                           class="card p-3 mb-4">
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                        <h6 class="mb-3">Hoja de trabajo</h6>
+                        <h6 class="mb-1">Hoja de trabajo</h6>
+                        <!-- Aviso de error del servidor (defensa en profundidad); el
+                             cliente valida campo a campo antes de llegar aquí. -->
+                        <div t-if="ws_error" class="alert alert-danger py-2 o_visar_ws_error_banner">
+                            Faltan campos obligatorios. Revisa los marcados en rojo abajo.
+                        </div>
+                        <p class="small text-muted mb-3">
+                            Los campos con <span class="text-danger fw-bold">*</span> son obligatorios.
+                        </p>
 
                         <div t-foreach="worksheet_fields" t-as="field"
                              t-attf-class="mb-3#{' o_visar_condfield d-none' if field.get('conditional') else ''}"
                              t-att-data-showif="field.get('conditional') and field['conditional']['controller'] or None"
                              t-att-data-showif-kind="field.get('conditional') and field['conditional']['kind'] or None"
-                             t-att-data-showif-val="field.get('conditional') and field['conditional']['trigger'] or None">
+                             t-att-data-showif-val="field.get('conditional') and field['conditional']['trigger'] or None"
+                             t-att-data-req="field.get('required') and '1' or None"
+                             t-att-data-req-if="field.get('required_if') and field['required_if']['controller'] or None"
+                             t-att-data-req-if-kind="field.get('required_if') and field['required_if']['kind'] or None"
+                             t-att-data-req-if-val="field.get('required_if') and field['required_if']['trigger'] or None">
 
                             <!-- Subficha one2many: tarjetas dinámicas (tipo "Fotos") -->
                             <div t-if="field['type'] == 'one2many'" class="o_visar_o2m"
-                                 t-att-data-o2m="field['name']">
+                                 t-att-data-o2m="field['name']"
+                                 t-att-data-min-one="field.get('min_one') and '1' or None">
                                 <div class="mb-1">
                                     <span class="form-label fw-bold mb-0" t-esc="field['string']"/>
+                                    <span t-if="field.get('min_one')" class="text-danger ms-1 o_visar_req"
+                                          aria-hidden="true">*</span>
                                     <t t-call="visar_field_app.field_help">
                                         <t t-set="help_text" t-value="field['help']"/>
                                     </t>
+                                </div>
+                                <div t-if="field.get('min_one')"
+                                     class="o_visar_o2m_err text-danger small mb-2 d-none">
+                                    Agregue al menos uno.
                                 </div>
                                 <!-- Marcador: la subficha se renderizó (permite vaciarla). -->
                                 <input type="hidden" t-att-name="'o2mpresent~' + field['name']"
@@ -420,8 +464,17 @@
                     </form>
 
                     <!-- Firma del cliente (campos nativos) + cierre.
-                         Solo disponible una vez iniciado el servicio (En ejecución). -->
-                    <form t-if="flow_state == 'en_ejecucion'"
+                         Req 6: solo con el servicio en ejecución Y la hoja de trabajo
+                         guardada al menos una vez (entonces la etapa ya es "Pendiente
+                         de firma"). Sin plantilla de hoja, basta con haber comenzado. -->
+                    <div t-if="flow_state == 'en_ejecucion' and not signature_available"
+                         class="card p-3 text-muted">
+                        <h6 class="mb-1">Firma del cliente</h6>
+                        <span class="small">
+                            Se habilita al guardar la hoja de trabajo.
+                        </span>
+                    </div>
+                    <form t-if="signature_available"
                           t-att-action="'/visar/field/task/%s/close' % task.id" method="post"
                           id="visar-close-form" class="card p-3">
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
