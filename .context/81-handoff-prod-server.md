@@ -232,6 +232,58 @@ appointment resource lacks `visar_employee_id`, the task has no technician and w
 appear — assign the technician manually on the task, and set `visar_employee_id` on the
 resource for future bookings.
 
+### 4.6 Verify the "Pendiente de firma" stage adopted correctly  ⚠️ touches a live DB record (Req 6)
+
+The seeder `seed_signature_stage` (migration `19.0.1.7.0` + `post_init_hook`) does **not**
+create a fresh stage in prod — it **adopts** the one that already exists there (created by
+hand, **archived**, wrong `en_US` name, no xmlid): it un-archives it, sets `sequence=15`,
+fixes both names, links it to every FSM project, and gives it the stable xmlid
+`visar_field_app.visar_stage_pending_signature`. This runs automatically on `-u`.
+
+**Verify — there must be exactly ONE active stage with the xmlid, linked to the FSM projects:**
+```sql
+SELECT t.id, t.name, t.active, t.sequence, d.module, d.name AS xmlid
+FROM project_task_type t
+LEFT JOIN ir_model_data d ON d.model='project.task.type' AND d.res_id=t.id
+                          AND d.module='visar_field_app' AND d.name='visar_stage_pending_signature'
+WHERE t.name ILIKE 'Pendiente de firma' OR t.name ILIKE 'Pending Signature';
+```
+- Expect **one** row, `active=true`, `sequence=15`, with the xmlid populated.
+- If you see **two** rows (an adopted one + the old hand-made one), the search didn't match
+  the manual stage (e.g. its name differed) and a duplicate was created. Fix by hand:
+  merge/relabel so only one active "Pendiente de firma" remains, then re-point the xmlid:
+  ```bash
+  >>> from odoo.addons.visar_field_app.hooks import seed_signature_stage
+  >>> seed_signature_stage(env); env.cr.commit()   # idempotent; re-adopts the surviving one
+  ```
+- Sanity from the app: save a worksheet on a test task → the task moves to **Pendiente de
+  firma** and the signature form appears (see 5.2).
+
+### 4.7 Verify the report base URL for the worksheet PDF  ⚠️ `ir.config_parameter` (Req 8)
+
+The Req 8 "Tiempo en sitio" PDF (and worksheet photos) render via wkhtmltopdf, which
+fetches the report's CSS/assets over HTTP from the server's **own** base URL. If that URL
+is unreachable **from the server itself**, each asset fetch hangs to timeout → the PDF
+takes tens of seconds and/or comes out with **blank pages / no styling**.
+
+```sql
+SELECT key, value FROM ir_config_parameter WHERE key IN ('web.base.url','report.url');
+```
+- On **prod**, `web.base.url` should be the **real domain** and must be reachable from the
+  server (loopback/self). Confirm `report.url` is either unset (falls back to `web.base.url`)
+  or also a self-reachable address. **Do NOT set `report.url` to `localhost` on prod** — that
+  was only a fix for the **cloned** DB, whose stale LAN IP no longer matched the machine.
+- Quick check: `curl -sI <web.base.url>` from the server returns 200/redirect, not a hang.
+
+### 4.8 Caveat — re-seeding reverts Studio edits on the two "App v2" templates (affects Req 7)
+
+`seed_worksheet_templates` is **idempotent** and rewrites the arch of "Fumigación interior
+o exterior (App v2)" and "Mantenimiento de áreas verdes (App v2)" to the **canonical** code
+version on every `-u`. That canonical arch is what carries the `required="1"` node attributes
+that **Req 7 validation enforces**. Consequence: **do not hand-edit these two templates in
+Studio on prod** — any Studio change (including toggling a field's required flag) is reverted
+on the next upgrade/seed. To change what's mandatory, edit the arch in `hooks.py` and redeploy.
+
 ---
 
 ## 5. Verification checklist
@@ -241,6 +293,10 @@ resource for future bookings.
 - [ ] `base_geolocalize` installed.
 - [ ] No errors in the Odoo log during `-u`; server restarted; assets rebuilt (load
       `/visar/field` and confirm Leaflet CSS/JS 200, not 404).
+- [ ] **"Pendiente de firma" stage** adopted, not duplicated (§4.6 SQL: one active row,
+      `sequence=15`, xmlid `visar_field_app.visar_stage_pending_signature`).
+- [ ] **Report base URL** (`web.base.url` / `report.url`) is self-reachable from the server,
+      not `localhost` on prod (§4.7) — else the Req 8 PDF hangs or loses styling/photos.
 
 ### 5.2 Field app — technician flow (`/visar/field`)
 - [ ] Login with a **unique** PIN → shift opens (`visar.field.session`).
