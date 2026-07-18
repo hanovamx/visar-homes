@@ -65,7 +65,7 @@ VISAR/repo/                ← Git: github.com/luisgarza-g/visar-luisg (rama mai
 ├── visar_fsm/             ← FSM: tareas agrupadas por proyecto (v19.0.1.0.1)
 ├── visar_appointment/     ← wizard web + citas (v19.0.2.0.15)
 │   └── migrations/        ← post-migrate catálogo legacy (¡solo en upgrade!)
-└── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.4.0) — ver 25-field-app.md
+└── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.10.0) — ver 25-field-app.md
 ```
 
 > **4º módulo (jul-2026):** `visar_field_app` se añadió después de la última revisión general

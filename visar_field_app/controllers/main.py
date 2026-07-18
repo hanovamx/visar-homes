@@ -2,8 +2,10 @@
 import base64
 import json
 import logging
+from datetime import datetime, time, timedelta
 from urllib.parse import urlencode
 
+import pytz
 import requests
 from lxml import etree
 
@@ -17,8 +19,17 @@ _logger = logging.getLogger(__name__)
 SESSION_EMPLOYEE = 'visar_field_employee_id'
 SESSION_SHIFT = 'visar_field_session_id'
 
-# Estados de tarea considerados "cerrados" (no se muestran como pendientes).
+# Estados de tarea considerados "cerrados" (servicio terminado o cancelado).
 CLOSED_STATES = ('1_done', '1_canceled')
+
+# Alcances de la lista de servicios (`?scope=`):
+#   today = solo los agendados para HOY (por defecto), en cualquier estado —
+#           los ya cerrados se muestran al final con su etiqueta.
+#   all   = todos los asignados al técnico, de cualquier fecha y estado.
+# El MAPA siempre usa `today` sin importar el alcance de la lista.
+SCOPE_TODAY = 'today'
+SCOPE_ALL = 'all'
+SCOPES = (SCOPE_TODAY, SCOPE_ALL)
 
 # Campo de enlace de la worksheet dinámica hacia la tarea (res_model = project.task).
 WORKSHEET_LINK = 'x_project_task_id'
@@ -65,12 +76,141 @@ class VisarFieldApp(http.Controller):
             return request.env['hr.employee'].sudo().browse()
         return request.env['hr.employee'].sudo().browse(emp_id).exists()
 
-    def _employee_tasks(self, employee, include_closed=False):
+    # ==================================================================
+    # Huso horario / día del técnico
+    # ==================================================================
+    @staticmethod
+    def _employee_tz(employee):
+        """Huso del técnico. "Hoy" es el día del TÉCNICO, no el del servidor
+        (que corre en UTC): sin esto, entre las 18:00 y la medianoche local el
+        servidor ya estaría en el día siguiente y la lista se vaciaría.
+        """
+        tzname = (
+            employee.tz
+            or employee.resource_calendar_id.tz
+            or request.env.company.resource_calendar_id.tz
+            or 'UTC'
+        )
+        try:
+            return pytz.timezone(tzname)
+        except pytz.UnknownTimeZoneError:
+            return pytz.utc
+
+    def _local_day(self, employee, dt):
+        """Fecha LOCAL del técnico de un datetime naive-UTC de Odoo (o None)."""
+        if not dt:
+            return None
+        return pytz.utc.localize(dt).astimezone(self._employee_tz(employee)).date()
+
+    def _today_bounds(self, employee):
+        """`(inicio, fin)` naive-UTC del día de hoy del técnico, para el dominio.
+
+        Se localiza la medianoche con `tz.localize` (no `replace(tzinfo=...)`)
+        para que el offset sea el correcto en cambios de horario de verano.
+        """
+        tz = self._employee_tz(employee)
+        today = pytz.utc.localize(fields.Datetime.now()).astimezone(tz).date()
+        start_local = tz.localize(datetime.combine(today, time.min))
+        end_local = start_local + timedelta(days=1)
+        return (
+            start_local.astimezone(pytz.utc).replace(tzinfo=None),
+            end_local.astimezone(pytz.utc).replace(tzinfo=None),
+        )
+
+    # ==================================================================
+    # Servicios del técnico
+    # ==================================================================
+    def _employee_tasks(self, employee, scope=SCOPE_TODAY):
+        """Servicios del técnico en el alcance pedido, en el orden de la app.
+
+        `scope=today` (por defecto) limita a los agendados para hoy — en el huso
+        del técnico — en CUALQUIER estado: los ya cerrados siguen visibles al
+        final para que el técnico vea el avance de su día. `scope=all` devuelve
+        todo lo asignado, de cualquier fecha.
+
+        Orden (ver `_task_sort_key`): día, pendientes antes que cerrados y,
+        dentro de eso, el orden manual que el técnico dejó arrastrando las
+        tarjetas (`visar.field.route.order`), con la hora agendada de desempate.
+        """
         domain = [('visar_technician_ids', 'in', employee.ids)]
-        if not include_closed:
-            domain.append(('state', 'not in', list(CLOSED_STATES)))
-        return request.env['project.task'].sudo().search(
-            domain, order='planned_date_begin asc, priority desc, id desc')
+        if scope == SCOPE_TODAY:
+            start, end = self._today_bounds(employee)
+            domain += [
+                ('planned_date_begin', '>=', start),
+                ('planned_date_begin', '<', end),
+            ]
+        tasks = request.env['project.task'].sudo().search(domain)
+        return self._sort_tasks(employee, tasks, scope)
+
+    def _sort_tasks(self, employee, tasks, scope=SCOPE_TODAY):
+        """Aplica el orden de la app (incluido el manual) a un recordset."""
+        if not tasks:
+            return tasks
+        order_map = request.env['visar.field.route.order']._visar_order_map(
+            employee, tasks)
+        return tasks.sorted(
+            key=lambda task: self._task_sort_key(employee, task, order_map, scope))
+
+    def _task_sort_key(self, employee, task, order_map, scope):
+        """Clave de orden de una tarjeta.
+
+        1. **Día** — en `all`, los días más recientes primero (la lista completa
+           se usa para consultar lo hecho); en `today` todos comparten día.
+        2. **Cerrado al final** — dentro del día, primero lo que falta por hacer.
+        3. **Orden manual** — el número de parada que el técnico arrastró; los
+           que no ha ordenado (`UNORDERED_SEQUENCE`) caen después.
+        4. **Hora agendada / id** — desempate estable.
+        """
+        Order = request.env['visar.field.route.order']
+        day = self._local_day(employee, task.planned_date_begin)
+        # Sin fecha agendada = lo más antiguo (no compite con el día en curso).
+        day_key = day.toordinal() if day else 0
+        if scope == SCOPE_ALL:
+            day_key = -day_key  # más reciente primero
+        return (
+            day_key,
+            1 if task.state in CLOSED_STATES else 0,
+            order_map.get(task.id, Order.UNORDERED_SEQUENCE),
+            task.planned_date_begin or fields.Datetime.now(),
+            task.id,
+        )
+
+    @staticmethod
+    def _scope(value):
+        """Normaliza el `?scope=` recibido (cualquier basura → `today`)."""
+        return value if value in SCOPES else SCOPE_TODAY
+
+    # Etiqueta de la tarjeta para los servicios ya cerrados (los pendientes no
+    # llevan etiqueta: su estado se ve al abrirlos).
+    STATE_LABELS = {
+        '1_done': ('Completado', 'text-bg-success'),
+        '1_canceled': ('Reprogramar', 'text-bg-danger'),
+    }
+
+    def _task_state_label(self, task):
+        """`{'text': ..., 'css': ...}` para un servicio cerrado, o False."""
+        label = self.STATE_LABELS.get(task.state)
+        if not label:
+            return False
+        return {'text': label[0], 'css': label[1]}
+
+    def _task_times(self, employee, tasks, scope):
+        """`{task_id: 'HH:MM'}` en el huso del TÉCNICO para pintar la tarjeta.
+
+        Los datetimes de Odoo son naive-UTC: pintarlos con `t-esc`/`t-field` en
+        una página pública los muestra en UTC (el usuario público no tiene huso),
+        p. ej. 14:00 local se veía como "20:00". Se formatean aquí. En `all` se
+        antepone el día, porque la lista mezcla fechas.
+        """
+        tz = self._employee_tz(employee)
+        times = {}
+        for task in tasks:
+            if not task.planned_date_begin:
+                continue
+            local = pytz.utc.localize(task.planned_date_begin).astimezone(tz)
+            times[task.id] = (local.strftime('%H:%M') if scope == SCOPE_TODAY
+                              else local.strftime('%d/%m/%Y %H:%M'))
+        return times
 
     def _task_for_employee(self, task_id, employee):
         task = request.env['project.task'].sudo().browse(int(task_id)).exists()
@@ -108,15 +248,20 @@ class VisarFieldApp(http.Controller):
         campos base poblados por base_geolocalize). Se consideran "sin ubicación"
         las coordenadas nulas o 0.0/0.0 (valor por defecto sin geocodificar).
 
-        `tasks` llega ya en orden de agenda (`planned_date_begin asc`, ver
-        `_employee_tasks`); ese es el orden de la RUTA. A cada servicio geolocalizado
-        se le asigna un número de parada consecutivo (`order`) en ese mismo orden,
-        que el mapa dibuja sobre el pin (como los waypoints numerados del mapa nativo
-        de Servicio externo). Los servicios sin ubicación no reciben número.
+        `tasks` llega ya en el orden de la app (ver `_employee_tasks`): el orden
+        manual que el técnico arrastró, u hora agendada si no ha arrastrado. Ese
+        es el orden de la RUTA. A cada servicio **pendiente** se le asigna un
+        número de parada consecutivo (`order`) en ese mismo orden, que el mapa
+        dibuja sobre el pin (como los waypoints numerados del mapa nativo de
+        Servicio externo) y la lista repite en la tarjeta.
 
-        > **Nota (futuro):** hoy el orden = hora agendada. Se puede sustituir por una
-        > optimización de ruta (vecino más cercano) para minimizar traslados; ver
-        > `_task_route_geometry` y la decisión documentada en 25-field-app.md.
+        **Los servicios ya cerrados no se numeran ni entran a la ruta** (`done`):
+        el número es "lo que falta por recorrer", no un historial — se plotean con
+        un pin apagado de "✓" para ubicar lo ya atendido.
+
+        El número se asigna aunque el servicio **no** esté geolocalizado, para que
+        la tarjeta y el pin muestren SIEMPRE el mismo número (un servicio sin
+        coordenadas simplemente no se plotea: el mapa salta ese número).
         """
         payload = []
         stop_number = 0
@@ -125,8 +270,9 @@ class VisarFieldApp(http.Controller):
             lat = partner.partner_latitude if partner else 0.0
             lng = partner.partner_longitude if partner else 0.0
             has_coords = bool(partner) and bool(lat) and bool(lng)
+            done = task.state in CLOSED_STATES
             order = None
-            if has_coords:
+            if not done:
                 stop_number += 1
                 order = stop_number
             payload.append({
@@ -138,6 +284,7 @@ class VisarFieldApp(http.Controller):
                 'lat': lat,
                 'lng': lng,
                 'has_coords': has_coords,
+                'done': done,
                 'order': order,
             })
         return payload
@@ -159,7 +306,9 @@ class VisarFieldApp(http.Controller):
         para dibujar como polilínea, o `None` si no hay token, hay <2 paradas, o la
         API falla (el JS cae a líneas rectas entre paradas como respaldo visual).
         """
-        located = [p for p in payload if p.get('has_coords')]
+        # Solo las paradas que el técnico tiene por delante (las cerradas no se
+        # rutean, igual que no se numeran en `_task_map_payload`).
+        located = [p for p in payload if p.get('has_coords') and not p.get('done')]
         if len(located) < 2:
             return None
         token = request.env['ir.config_parameter'].sudo().get_param(
@@ -859,15 +1008,80 @@ class VisarFieldApp(http.Controller):
         employee = self._current_employee()
         if not employee:
             return request.redirect('/visar/field')
-        tasks = self._employee_tasks(employee)
-        payload = self._task_map_payload(tasks)
+        scope = self._scope(kw.get('scope'))
+        tasks = self._employee_tasks(employee, scope=scope)
+        # El MAPA siempre es el día de hoy, sea cual sea el alcance de la lista.
+        # Con `scope=today` es el mismo recordset (no se vuelve a buscar).
+        today_tasks = (tasks if scope == SCOPE_TODAY
+                       else self._employee_tasks(employee, scope=SCOPE_TODAY))
+        payload = self._task_map_payload(today_tasks)
         route = self._task_route_geometry(payload)
         return request.render('visar_field_app.field_tasks', {
             'employee': employee,
             'tasks': tasks,
+            'scope': scope,
+            # Número de parada por tarjeta: sale del MISMO cálculo que el mapa,
+            # así la tarjeta "3" es el pin "3". Solo en `today`: el número es la
+            # posición en la ruta del día, y en `all` (historial, sin arrastre)
+            # numerar unas tarjetas sí y otras no solo confunde.
+            'stop_numbers': ({p['id']: p['order'] for p in payload if p['order']}
+                             if scope == SCOPE_TODAY else {}),
+            'task_times': self._task_times(employee, tasks, scope),
+            'task_labels': {
+                task.id: self._task_state_label(task) for task in tasks},
+            # Solo se arrastra la ruta de HOY: en `all` las tarjetas mezclan días
+            # (y el mapa no refleja días pasados), así que el orden manual no
+            # tendría a qué aplicarse.
+            'can_reorder': scope == SCOPE_TODAY,
+            'closed_states': CLOSED_STATES,
+            'reorder_action': '/visar/field/tasks/reorder',
             'map_tasks_json': json.dumps(payload),
             'map_route_json': json.dumps(route) if route else '',
+            'today_count': len(today_tasks),
             'geocoded_count': sum(1 for t in payload if t['has_coords']),
+        })
+
+    @http.route('/visar/field/tasks/reorder', type='http', auth='public',
+                website=True, methods=['POST'], csrf=True)
+    def field_tasks_reorder(self, **post):
+        """Guarda el orden de la ruta de hoy tras arrastrar y soltar (fetch).
+
+        Recibe `task_ids` = ids separados por coma, en el orden nuevo, y responde
+        JSON con el mapa recalculado (numeración de paradas + ruta Mapbox en el
+        orden nuevo) para que el JS repinte el mapa sin recargar la página.
+
+        Solo se aceptan servicios PENDIENTES de HOY del propio técnico: los ids
+        que no estén en ese conjunto se ignoran (no se ordena lo ajeno).
+        """
+        employee = self._current_employee()
+        if not employee:
+            return request.make_json_response({'error': 'no_session'}, status=403)
+
+        today_tasks = self._employee_tasks(employee, scope=SCOPE_TODAY)
+        # Las cerradas no se arrastran (van al final de la lista por su cuenta).
+        draggable = {
+            task.id for task in today_tasks if task.state not in CLOSED_STATES
+        }
+        submitted = []
+        for raw in (post.get('task_ids') or '').split(','):
+            raw = raw.strip()
+            if not raw.isdigit():
+                continue
+            task_id = int(raw)
+            if task_id in draggable and task_id not in submitted:
+                submitted.append(task_id)
+        if not submitted:
+            return request.make_json_response({'error': 'empty'}, status=400)
+
+        request.env['visar.field.route.order']._visar_set_order(employee, submitted)
+
+        # Se relee para que el mapa salga del MISMO orden que verá la lista al
+        # recargar (y no del orden que asumió el navegador).
+        tasks = self._employee_tasks(employee, scope=SCOPE_TODAY)
+        payload = self._task_map_payload(tasks)
+        return request.make_json_response({
+            'tasks': payload,
+            'route': self._task_route_geometry(payload) or [],
         })
 
     # ==================================================================

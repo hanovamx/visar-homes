@@ -43,12 +43,8 @@
                         </form>
                     </div>
 
-                    <div t-if="not tasks" class="alert alert-info">
-                        No tienes servicios pendientes asignados.
-                    </div>
-
                     <!-- Alternador Lista / Mapa (por defecto: Lista) -->
-                    <div t-if="tasks" class="btn-group w-100 mb-3 o_visar_view_toggle" role="group">
+                    <div class="btn-group w-100 mb-3 o_visar_view_toggle" role="group">
                         <button type="button"
                                 class="btn btn-outline-primary active o_visar_view_btn"
                                 data-view="list">Lista</button>
@@ -58,28 +54,87 @@
                     </div>
 
                     <!-- Panel Lista -->
-                    <div class="list-group o_visar_view_panel" data-view="list">
-                        <a t-foreach="tasks" t-as="task"
-                           t-att-href="'/visar/field/task/%s' % task.id"
-                           class="list-group-item list-group-item-action">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <strong t-esc="task.name"/>
-                                <span t-if="task.planned_date_begin"
-                                      class="badge text-bg-light flex-shrink-0 text-nowrap ms-2 align-self-start"
-                                      t-esc="task.planned_date_begin"/>
-                            </div>
-                            <div t-if="task.partner_id" class="small text-muted">
-                                <t t-esc="task.partner_id.name"/>
-                            </div>
-                            <div t-if="task.partner_id.contact_address_complete" class="small text-muted">
-                                <t t-esc="task.partner_id.contact_address_complete"/>
-                            </div>
-                        </a>
+                    <div class="o_visar_view_panel" data-view="list">
+                        <!-- Alcance de la lista: Hoy (por defecto) / Todos. Son
+                             enlaces (?scope=) y no botones JS: el servidor arma
+                             la lista y así se puede compartir/recargar la URL. -->
+                        <div class="btn-group w-100 mb-3 o_visar_scope_toggle" role="group">
+                            <a href="/visar/field/tasks?scope=today"
+                               t-attf-class="btn btn-outline-secondary #{'active' if scope == 'today' else ''}">
+                                Hoy</a>
+                            <a href="/visar/field/tasks?scope=all"
+                               t-attf-class="btn btn-outline-secondary #{'active' if scope == 'all' else ''}">
+                                Todos</a>
+                        </div>
+
+                        <div t-if="not tasks" class="alert alert-info">
+                            <t t-if="scope == 'today'">
+                                No tienes servicios agendados para hoy.
+                            </t>
+                            <t t-else="">
+                                No tienes servicios asignados.
+                            </t>
+                        </div>
+
+                        <div t-if="can_reorder and len(tasks) &gt; 1"
+                             class="small text-muted mb-2 o_visar_reorder_hint">
+                            Arrastra <span class="o_visar_drag_handle_hint">⠿</span> para
+                            cambiar el orden de tu ruta. El mapa se actualiza solo.
+                        </div>
+
+                        <div class="list-group o_visar_task_list"
+                             t-att-data-reorder-action="reorder_action if can_reorder else None"
+                             t-att-data-csrf="request.csrf_token() if can_reorder else None">
+                            <t t-foreach="tasks" t-as="task">
+                                <t t-set="is_closed" t-value="task.state in closed_states"/>
+                                <t t-set="label" t-value="task_labels[task.id]"/>
+                                <a t-att-href="'/visar/field/task/%s' % task.id"
+                                   t-att-data-task-id="task.id"
+                                   draggable="false"
+                                   t-attf-class="list-group-item list-group-item-action o_visar_task_item #{'o_visar_task_done' if is_closed else ''}">
+                                    <div class="d-flex align-items-start gap-2">
+                                        <!-- Asa de arrastre: solo en los pendientes de
+                                             hoy (los cerrados se quedan al final). -->
+                                        <span t-if="can_reorder and not is_closed"
+                                              class="o_visar_drag_handle flex-shrink-0"
+                                              aria-label="Reordenar">⠿</span>
+                                        <!-- Número de parada = el mismo del pin del mapa. -->
+                                        <span t-if="stop_numbers.get(task.id)"
+                                              class="badge rounded-pill text-bg-primary flex-shrink-0 o_visar_stop_num"
+                                              t-esc="stop_numbers[task.id]"/>
+                                        <span t-if="is_closed"
+                                              class="flex-shrink-0 o_visar_stop_num text-muted">✓</span>
+                                        <div class="flex-grow-1 min-w-0">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <strong t-esc="task.name"/>
+                                                <span t-if="task_times.get(task.id)"
+                                                      class="badge text-bg-light flex-shrink-0 text-nowrap ms-2 align-self-start"
+                                                      t-esc="task_times[task.id]"/>
+                                            </div>
+                                            <div t-if="task.partner_id" class="small text-muted">
+                                                <t t-esc="task.partner_id.name"/>
+                                            </div>
+                                            <div t-if="task.partner_id.contact_address_complete"
+                                                 class="small text-muted">
+                                                <t t-esc="task.partner_id.contact_address_complete"/>
+                                            </div>
+                                            <span t-if="label"
+                                                  t-attf-class="badge #{label['css']} mt-1"
+                                                  t-esc="label['text']"/>
+                                        </div>
+                                    </div>
+                                </a>
+                            </t>
+                        </div>
                     </div>
 
-                    <!-- Panel Mapa (oculto por defecto) -->
-                    <div t-if="tasks" class="o_visar_view_panel d-none" data-view="map">
-                        <div t-if="not geocoded_count" class="alert alert-warning py-2 small">
+                    <!-- Panel Mapa (oculto por defecto). Siempre son los servicios
+                         de HOY, aunque la lista esté en "Todos". -->
+                    <div class="o_visar_view_panel d-none" data-view="map">
+                        <div t-if="not today_count" class="alert alert-info py-2 small">
+                            No tienes servicios agendados para hoy.
+                        </div>
+                        <div t-elif="not geocoded_count" class="alert alert-warning py-2 small">
                             Sin ubicaciones geolocalizadas todavía. Las direcciones se
                             muestran en la lista y en cada servicio con "Abrir en Google Maps".
                         </div>

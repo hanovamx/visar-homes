@@ -120,3 +120,89 @@
         filter: brightness(1.5);
     }
 }
+
+/* Parada ya cerrada: pin apagado (fuera de la ruta del día). */
+.o-visar-route-marker-done .o-visar-route-marker-pin {
+    background: #adb5bd;
+    opacity: 0.85;
+}
+
+/* ================= Reordenar la ruta (arrastrar y soltar) ================= */
+
+/* Asa de arrastre. `touch-action: none` es obligatorio: sin esto el navegador
+   se queda el gesto vertical para hacer scroll y no llegan los pointermove. */
+.o_visar_field .o_visar_drag_handle {
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    color: #adb5bd;
+    font-size: 1.35rem;
+    line-height: 1.2;
+    padding: 0 .15rem;
+}
+
+.o_visar_field .o_visar_drag_handle_hint {
+    color: #adb5bd;
+}
+
+/* Tarjeta en movimiento: sigue al dedo por encima del resto de la lista. */
+.o_visar_field .o_visar_task_dragging {
+    position: fixed;
+    z-index: 1080;
+    cursor: grabbing;
+    box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .25);
+    opacity: .95;
+    pointer-events: none;
+}
+
+/* Hueco que deja la tarjeta arrastrada (marca dónde va a caer). */
+.o_visar_task_placeholder {
+    border: 1px dashed #0d6efd;
+    border-radius: .375rem;
+    background: rgba(13, 110, 253, .06);
+}
+
+/* Mientras se guarda el orden nuevo. */
+.o_visar_field .o_visar_task_list.o_visar_saving {
+    opacity: .6;
+}
+
+/* Número de parada de la tarjeta (mismo número que el pin del mapa). */
+.o_visar_field .o_visar_stop_num {
+    min-width: 1.6rem;
+    text-align: center;
+    font-weight: 700;
+}
+
+/* Servicio ya cerrado: se ve, pero apagado y sin asa. */
+.o_visar_field .o_visar_task_done {
+    opacity: .65;
+}
+
+/* ===== Validación de obligatoriedad de la hoja de trabajo (Req 7) ===== */
+
+/* Campo obligatorio sin llenar: control con borde rojo, etiqueta roja y un tinte
+   de fondo (sin desplazar el layout al aparecer/desaparecer). */
+.o_visar_field .o_visar_invalid {
+    background: rgba(220, 53, 69, .06);
+    border-radius: .375rem;
+}
+.o_visar_field .o_visar_invalid .form-control,
+.o_visar_field .o_visar_invalid .form-select {
+    border-color: #dc3545;
+}
+.o_visar_field .o_visar_invalid .form-control:focus,
+.o_visar_field .o_visar_invalid .form-select:focus {
+    border-color: #dc3545;
+    box-shadow: 0 0 0 .2rem rgba(220, 53, 69, .25);
+}
+.o_visar_field .o_visar_invalid > label,
+.o_visar_field .o_visar_invalid > .form-check-label,
+.o_visar_field .o_visar_invalid .form-label {
+    color: #dc3545;
+}
+
+/* Asterisco de obligatorio: un poco más marcado. */
+.o_visar_field .o_visar_req {
+    font-weight: 700;
+}
