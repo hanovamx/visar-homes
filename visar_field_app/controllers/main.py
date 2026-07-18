@@ -57,6 +57,28 @@ O2M_SEP = '~'
 # Reporte nativo de la worksheet FSM.
 FSM_REPORT = 'industry_fsm.worksheet_custom'
 
+# ------------------------------------------------------------------
+# Obligatoriedad de la hoja de trabajo (Req 7)
+# ------------------------------------------------------------------
+# Los campos SIEMPRE obligatorios se declaran con `required="1"` en el arch de
+# cada plantilla (fuente de verdad; el reporte nativo también los honra) y la app
+# los lee del nodo de la vista. Aquí van solo las reglas que el arch no expresa:
+#
+# 1. Obligatoriedad CONDICIONAL por un campo disparador (`{campo: (controlador,
+#    kind, valor)}`). `kind='truthy'` = el controlador (casilla booleana) marcado.
+#    Los companion "Especifique cuál otro" NO van aquí: son obligatorios cuando se
+#    muestran, y eso se deriva de su propia condición de visibilidad (`conditional`).
+WORKSHEET_REQUIRED_IF = {
+    # Fumigación (línea): foto de evidencia si el área tiene infestación activa.
+    'x_foto_evidencia': ('x_infestacion_activa', 'truthy', ''),
+    # Áreas verdes: foto y número de bolsas si se embolsaron residuos.
+    'x_foto_bolsas': ('x_residuos_embolsados', 'truthy', ''),
+    'x_num_bolsas': ('x_residuos_embolsados', 'truthy', ''),
+}
+# 2. Subfichas one2many que exigen AL MENOS UNA línea (el arch no tiene forma de
+#    declarar "min 1" en un o2m). Nombres únicos entre las tres plantillas.
+WORKSHEET_MIN_ONE = {'x_areas_tratadas', 'x_labores', 'x_zonas_evidencia'}
+
 
 class VisarFieldApp(http.Controller):
     """App de campo para técnicos (patrón POS): un dispositivo, identificación por PIN,
@@ -574,11 +596,13 @@ class VisarFieldApp(http.Controller):
         return nodes
 
     @staticmethod
-    def _scalar_descriptor(info, name, value, help_text=''):
+    def _scalar_descriptor(info, name, value, help_text='', required=False):
         """Descriptor de un campo escalar (o de línea) para renderizar un control.
 
         `help_text` proviene del nodo de la vista (donde Studio guarda el "Help
-        Tooltip"); el help a nivel de modelo casi siempre está vacío.
+        Tooltip"); el help a nivel de modelo casi siempre está vacío. `required`
+        (obligatorio SIEMPRE) viene del nodo de la vista (`required="1"`), no del
+        modelo (los campos `x_` son manual y casi nunca traen required de modelo).
         """
         ftype = info['type']
         desc = {
@@ -587,7 +611,10 @@ class VisarFieldApp(http.Controller):
             'string': info.get('string') or name,
             'help': help_text or info.get('help') or '',
             'selection': info.get('selection') or [],
-            'required': bool(info.get('required')),
+            'required': bool(required),
+            # Obligatoriedad condicional: None, o {'controller','kind','value'}.
+            # El campo es obligatorio solo cuando la condición se cumple.
+            'required_if': None,
             'value': value,
             'options': [],
             'value_id': False,
@@ -639,6 +666,22 @@ class VisarFieldApp(http.Controller):
                     return {'controller': base, 'kind': 'many2many', 'trigger': str(rec.id)}
         return None
 
+    @staticmethod
+    def _required_if(name, conditional):
+        """Condición de obligatoriedad de un campo, o None (obligatorio siempre/nunca
+        lo resuelve `required`). Dos fuentes:
+          - companion "…_otro": obligatorio cuando se MUESTRA (misma condición de
+            visibilidad que ya trae `conditional`);
+          - `WORKSHEET_REQUIRED_IF`: obligatorio cuando el disparador está puesto.
+        """
+        if name.endswith('_otro') and conditional:
+            return dict(conditional)
+        rule = WORKSHEET_REQUIRED_IF.get(name)
+        if rule:
+            controller, kind, value = rule
+            return {'controller': controller, 'kind': kind, 'trigger': value}
+        return None
+
     def _o2m_fk_name(self, LineModel, Model):
         """Nombre del many2one de la línea que apunta de vuelta a la worksheet."""
         for name, info in LineModel.fields_get().items():
@@ -649,9 +692,10 @@ class VisarFieldApp(http.Controller):
     def _o2m_line_rows(self, Model, o2m_name, LineModel, fk_name):
         """Filas de campos de línea, respetando los `<group>` anidados de la subficha.
 
-        Devuelve una lista de filas; cada fila es una lista de (nombre, help):
+        Devuelve una lista de filas; cada fila es una lista de (nombre, help, required):
           - un `<field>` suelto → fila de 1 (ancho completo);
           - un `<group>` anidado con 2 campos → fila de 2 (se renderiza en 2 columnas).
+        `required` sale del nodo (`required="1"`), igual que en los campos principales.
         """
         try:
             arch = etree.fromstring(Model.get_view(view_type='form')['arch'])
@@ -682,7 +726,8 @@ class VisarFieldApp(http.Controller):
             if name in WORKSHEET_OMIT or name == fk_name or name.endswith('_sequence'):
                 return None
             seen.add(name)
-            return (name, fnode.get('help') or '')
+            node_req = fnode.get('required') in ('1', 'True', 'true')
+            return (name, fnode.get('help') or '', node_req)
 
         container = sub.find('group') or sub
         rows = []
@@ -710,16 +755,18 @@ class VisarFieldApp(http.Controller):
         line_rows = self._o2m_line_rows(Model, name, LineModel, fk)
         if not line_rows:
             return None
-        flat = [it for row in line_rows for it in row]  # [(name, help), ...]
-        line_names = [n for n, _h in flat]
+        flat = [it for row in line_rows for it in row]  # [(name, help, req), ...]
+        line_names = [n for n, _h, _r in flat]
         seq_field = next(
             (n for n in line_meta if n.endswith('_sequence')
              and line_meta[n]['type'] == 'integer'), None)
 
-        def mk(n, h, rec_line):
+        def mk(n, h, req, rec_line):
             d = self._scalar_descriptor(
-                line_meta[n], n, (rec_line[n] if rec_line else False), h)
+                line_meta[n], n, (rec_line[n] if rec_line else False), h,
+                required=req)
             d['conditional'] = self._otro_conditional(n, line_meta)
+            d['required_if'] = self._required_if(n, d['conditional'])
             if d['type'] == 'binary':
                 d['photos'] = (self._field_photo_ids(relation, rec_line.id, n)
                                if rec_line else [])
@@ -727,7 +774,8 @@ class VisarFieldApp(http.Controller):
 
         def build_rows(rec_line):
             """Filas de descriptores (con valores de `rec_line` o en blanco)."""
-            return [[mk(n, h, rec_line) for (n, h) in row] for row in line_rows]
+            return [[mk(n, h, req, rec_line) for (n, h, req) in row]
+                    for row in line_rows]
 
         lines = []
         if record:
@@ -748,6 +796,10 @@ class VisarFieldApp(http.Controller):
             'blank_rows': build_rows(None),
             'lines': lines,
             'conditional': None,
+            'required': False,
+            'required_if': None,
+            # Exige al menos una línea (Req 7). El arch no puede declararlo.
+            'min_one': name in WORKSHEET_MIN_ONE,
         }
 
     def _worksheet_descriptors(self, task, record):
@@ -772,14 +824,17 @@ class VisarFieldApp(http.Controller):
             ftype = info['type']
             seen.add(name)
             help_text = node.get('help') or ''
+            node_req = node.get('required') in ('1', 'True', 'true')
             if ftype == 'one2many':
                 desc = self._o2m_descriptor(Model, info, name, record, help_text)
                 if desc:
                     descriptors.append(desc)
             else:
                 sdesc = self._scalar_descriptor(
-                    info, name, record[name] if record else False, help_text)
+                    info, name, record[name] if record else False, help_text,
+                    required=node_req)
                 sdesc['conditional'] = self._otro_conditional(name, meta)
+                sdesc['required_if'] = self._required_if(name, sdesc['conditional'])
                 if sdesc['type'] == 'binary':
                     # Galería viva sobre la tarea (existe siempre), etiquetada por campo.
                     sdesc['photos'] = self._field_photo_ids(
@@ -810,6 +865,122 @@ class VisarFieldApp(http.Controller):
             return plaintext2html(raw) if raw else False
         return raw or False  # char, text, selection, date, datetime
 
+    # ==================================================================
+    # Validación de obligatoriedad (Req 7) — misma lógica que el cliente
+    # ==================================================================
+    @staticmethod
+    def _cond_met(cond, get_value, get_list):
+        """¿Se cumple la condición de un `required_if`/`conditional`?
+
+        `get_value(field)` devuelve el valor escalar enviado del controlador;
+        `get_list(field)` la lista de valores (checkboxes). Sirve tanto para el
+        ámbito principal como para una línea (cambian solo esas dos funciones).
+        """
+        ctrl = cond['controller']
+        trigger = str(cond.get('trigger', ''))
+        if cond['kind'] == 'truthy':
+            return bool(get_value(ctrl))
+        if cond['kind'] == 'many2many':
+            return trigger in [str(v) for v in get_list(ctrl)]
+        return str(get_value(ctrl) or '') == trigger  # selection
+
+    def _field_is_required_now(self, desc, get_value, get_list):
+        """¿El campo es obligatorio en el estado ACTUAL del formulario?"""
+        if desc.get('required'):
+            return True
+        cond = desc.get('required_if')
+        return bool(cond) and self._cond_met(cond, get_value, get_list)
+
+    def _main_field_empty(self, task, desc, post, form, files):
+        """¿Un campo principal obligatorio quedó vacío?"""
+        name, ftype = desc['name'], desc['type']
+        if ftype == 'boolean':
+            return not post.get(name)              # casilla de confirmación: marcada
+        if ftype == 'many2many':
+            return not [i for i in form.getlist(name) if str(i).isdigit()]
+        if ftype == 'binary':
+            # Foto: cuenta si hay ya una en la galería de la tarjeta o llega archivo.
+            if files and files.get(name) and files.get(name).filename:
+                return False
+            return not self._field_photo_ids('project.task', task.id, name)
+        return not str(post.get(name) or '').strip()
+
+    def _line_field_empty(self, relation, desc, row, o2m, row_key, form, files):
+        """¿Un campo de línea obligatorio quedó vacío en esa tarjeta?"""
+        name, ftype = desc['name'], desc['type']
+        key = O2M_SEP.join((O2M_LINE_PREFIX, o2m, row_key, name))
+        if ftype == 'binary':
+            if files and any(u and u.filename for u in files.getlist(key)):
+                return False
+            raw_id = row.get('id')
+            if raw_id and raw_id.isdigit():
+                return not self._field_photo_ids(relation, int(raw_id), name)
+            return True
+        if ftype == 'many2many':
+            return not [i for i in form.getlist(key) if str(i).isdigit()]
+        if ftype == 'boolean':
+            return not row.get(name)
+        return not str(row.get(name) or '').strip()
+
+    def _row_has_content(self, d, row, o2m, row_key, files):
+        """¿La tarjeta tiene algo (para exigirle sus obligatorios)?
+
+        Una tarjeta EXISTENTE (con id) siempre cuenta. Una tarjeta nueva cuenta si
+        el técnico escribió algo o adjuntó una foto; una completamente vacía se
+        ignora (al guardar se descarta, ver `_line_vals_has_content`)."""
+        raw_id = row.get('id')
+        if raw_id and raw_id.isdigit():
+            return True
+        for name, ftype in d['line_specs']:
+            key = O2M_SEP.join((O2M_LINE_PREFIX, o2m, row_key, name))
+            if ftype == 'binary':
+                if files and any(u and u.filename for u in files.getlist(key)):
+                    return True
+            elif ftype == 'many2many':
+                if [i for i in request.httprequest.form.getlist(key) if str(i).isdigit()]:
+                    return True
+            elif row.get(name):
+                return True
+        return False
+
+    def _worksheet_validation_errors(self, task, record, post, files):
+        """Lista de etiquetas de campos obligatorios que faltan. Vacía = OK.
+
+        Es la MISMA lógica que valida el cliente (misma fuente: los descriptores);
+        aquí es defensa en profundidad ante un POST que se salta el JS.
+        """
+        form = request.httprequest.form
+        rows_by_o2m = self._parse_o2m_rows(post)
+        present = self._o2m_present(post)
+        errors = []
+        for d in self._worksheet_descriptors(task, record):
+            if d['type'] == 'one2many':
+                if d['name'] not in present:
+                    continue
+                rows = rows_by_o2m.get(d['name'], {})
+                real = {rk: r for rk, r in rows.items()
+                        if self._row_has_content(d, r, d['name'], rk, files)}
+                if d.get('min_one') and not real:
+                    errors.append("%s: agregue al menos uno" % d['string'])
+                    continue
+                line_descs = [desc for brow in d['blank_rows'] for desc in brow]
+                for rk, row in real.items():
+                    getv = lambda f, _r=row: _r.get(f)
+                    getl = lambda f, _rk=rk: form.getlist(
+                        O2M_SEP.join((O2M_LINE_PREFIX, d['name'], _rk, f)))
+                    for desc in line_descs:
+                        if (self._field_is_required_now(desc, getv, getl)
+                                and self._line_field_empty(
+                                    d['relation'], desc, row, d['name'], rk, form, files)):
+                            errors.append("%s — %s" % (d['string'], desc['string']))
+            else:
+                getv = post.get
+                getl = form.getlist
+                if (self._field_is_required_now(d, getv, getl)
+                        and self._main_field_empty(task, d, post, form, files)):
+                    errors.append(d['string'])
+        return errors
+
     def _worksheet_write_values(self, task, record, post, files):
         """Coacciona los valores ESCALARES a escribir en la worksheet."""
         vals = {}
@@ -836,6 +1007,27 @@ class VisarFieldApp(http.Controller):
             vals.pop(protected, None)
         return vals
 
+    @staticmethod
+    def _o2m_present(post):
+        """Subfichas que SÍ se renderizaron en este formulario (marcador
+        `o2mpresent~{campo}`) — distingue "vaciada" de "no incluida"."""
+        return {k.split(O2M_SEP, 1)[1] for k in post
+                if k.startswith(O2M_PRESENT_PREFIX + O2M_SEP)}
+
+    @staticmethod
+    def _parse_o2m_rows(post):
+        """Agrupa los inputs de tarjeta: `o2m -> fila -> {campo: valor}`."""
+        rows_by_o2m = {}
+        for key, value in post.items():
+            if not key.startswith(O2M_LINE_PREFIX + O2M_SEP):
+                continue
+            parts = key.split(O2M_SEP)
+            if len(parts) != 4:
+                continue
+            _prefix, o2m, row, field = parts
+            rows_by_o2m.setdefault(o2m, {}).setdefault(row, {})[field] = value
+        return rows_by_o2m
+
     def _sync_worksheet_lines(self, task, record, post, files=None):
         """Sincroniza las subfichas one2many desde los inputs de tarjetas.
 
@@ -848,21 +1040,10 @@ class VisarFieldApp(http.Controller):
         Model = self._worksheet_model(task)
         if Model is None or record is None:
             return
-        present = {k.split(O2M_SEP, 1)[1] for k in post
-                   if k.startswith(O2M_PRESENT_PREFIX + O2M_SEP)}
+        present = self._o2m_present(post)
         if not present:
             return
-        # Agrupa inputs de línea: o2m -> fila -> {campo: valor}
-        rows_by_o2m = {}
-        for key, value in post.items():
-            if not key.startswith(O2M_LINE_PREFIX + O2M_SEP):
-                continue
-            parts = key.split(O2M_SEP)
-            if len(parts) != 4:
-                continue
-            _prefix, o2m, row, field = parts
-            rows_by_o2m.setdefault(o2m, {}).setdefault(row, {})[field] = value
-
+        rows_by_o2m = self._parse_o2m_rows(post)
         for d in self._worksheet_descriptors(task, record):
             if d['type'] != 'one2many' or d['name'] not in present:
                 continue

@@ -38,16 +38,16 @@
 - **Recomendación:** ver `80-deploy-prod.md` Parte 1.
 - **Prioridad:** Alta (bloqueante go-live).
 
-## I-05 — App de campo: aplicar `required` / condicional-OBLIGATORIO en la captura
-- **Qué:** la app **ya hace visibilidad condicional** (campos companion "Otro", 08-jul bis) pero
-  **no bloquea** el cierre por `required="1"` ni por reglas condicionales-obligatorias (dosis si hay
-  plaguicida; foto si el área se marcó tratada).
-- **Por qué:** los `required`/condicionales se codifican en la vista para Studio/reporte nativo, pero la
-  app es server-rendered y hoy no valida al enviar. Riesgo: worksheets incompletas cerradas en campo.
-- **Recomendación:** reutilizar la lectura de dominio simple ya usada para la visibilidad "Otro"
-  (`_otro_conditional` / `evalCondFields`), marcar requeridos y **validar en el submit** del form de
-  worksheet/cierre. Encaja con la deuda "Cierre sin validación" de `25-field-app.md`.
-- **Prioridad:** Media (según exigencia del negocio).
+## I-05 — [RESUELTO 17-jul-2026] App de campo: aplicar `required` / condicional-OBLIGATORIO en la captura
+- **Qué:** la hoja de trabajo ahora **valida obligatoriedad** (cliente + servidor) antes de guardar:
+  `required="1"` del arch, companion "Otro" (obligatorio al mostrarse), reglas condicionales por
+  disparador (`WORKSHEET_REQUIRED_IF`: foto de evidencia si infestación activa; foto+núm. bolsas si
+  residuos embolsados) y **mínimo una** línea en las subfichas (`WORKSHEET_MIN_ONE`).
+- **Cómo:** el descriptor lee `node.get('required')` (antes solo miraba el `required` de modelo, siempre
+  falso en campos `x_`); `initWorksheetValidation` marca en rojo/bloquea/hace scroll; el servidor
+  revalida en `POST …/worksheet` (`_worksheet_validation_errors`) y no escribe si falta algo.
+- **Ver:** `25-field-app.md` → "🆕 Actualización — 17-jul-2026". No cambió campos de plantilla (el
+  reparto ya estaba en el arch; solo se **aplica**). Cierra la deuda "Cierre sin validación".
 
 ## I-06 — [RESUELTO 08-jul-2026] App de campo: sembrar las plantillas en código + bump de versión
 - **Qué era:** las plantillas "App v2" se construyeron por **scripts Python fuera del módulo**; vivían

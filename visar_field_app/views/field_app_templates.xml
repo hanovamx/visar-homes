@@ -369,16 +369,28 @@
                                        t-att-checked="field['value'] and 'checked' or None"/>
                                 <label class="form-check-label" t-att-for="field['name']"
                                        t-esc="field['string']"/>
+                                <t t-call="visar_field_app.req_star">
+                                    <t t-set="reqf" t-value="field"/>
+                                </t>
                                 <t t-call="visar_field_app.field_help">
                                     <t t-set="help_text" t-value="field['help']"/>
+                                </t>
+                                <t t-call="visar_field_app.req_error">
+                                    <t t-set="reqf" t-value="field"/>
                                 </t>
                             </div>
 
                             <!-- Selección múltiple (many2many) → grupo de casillas -->
                             <div t-elif="field['type'] == 'many2many'">
                                 <label class="form-label mb-1" t-esc="field['string']"/>
+                                <t t-call="visar_field_app.req_star">
+                                    <t t-set="reqf" t-value="field"/>
+                                </t>
                                 <t t-call="visar_field_app.field_help">
                                     <t t-set="help_text" t-value="field['help']"/>
+                                </t>
+                                <t t-call="visar_field_app.req_error">
+                                    <t t-set="reqf" t-value="field"/>
                                 </t>
                                 <div t-foreach="field['options']" t-as="opt" class="form-check">
                                     <input type="checkbox" class="form-check-input"
@@ -395,6 +407,9 @@
                             <t t-else="">
                                 <label class="form-label mb-0" t-att-for="field['name']"
                                        t-esc="field['string']"/>
+                                <t t-call="visar_field_app.req_star">
+                                    <t t-set="reqf" t-value="field"/>
+                                </t>
                                 <t t-call="visar_field_app.field_help">
                                     <t t-set="help_text" t-value="field['help']"/>
                                 </t>
@@ -457,6 +472,10 @@
                                 <input t-else="" type="text" class="form-control"
                                        t-att-name="field['name']" t-att-id="field['name']"
                                        t-att-value="field['value']"/>
+
+                                <t t-call="visar_field_app.req_error">
+                                    <t t-set="reqf" t-value="field"/>
+                                </t>
                             </t>
                         </div>
 
@@ -512,6 +531,30 @@
     </template>
 
     <!-- ============================================================ -->
+    <!-- Marca de obligatorio (*) y mensaje de error por campo (Req 7) -->
+    <!-- El asterisco de un campo SIEMPRE obligatorio se ve fijo; el   -->
+    <!-- de uno condicional arranca oculto y lo revela el JS cuando su -->
+    <!-- disparador se cumple. Espera la variable `reqf` (descriptor).  -->
+    <!-- ============================================================ -->
+    <template id="req_star" name="Visar Campo - Asterisco obligatorio">
+        <span t-if="reqf.get('required')" class="text-danger ms-1 o_visar_req"
+              aria-hidden="true">*</span>
+        <span t-elif="reqf.get('required_if')"
+              class="text-danger ms-1 o_visar_req o_visar_req_cond d-none"
+              aria-hidden="true">*</span>
+    </template>
+
+    <template id="req_error" name="Visar Campo - Mensaje de campo obligatorio">
+        <div t-if="reqf.get('required') or reqf.get('required_if')"
+             class="o_visar_field_err text-danger small mt-1 d-none">
+            <t t-if="reqf['type'] == 'binary'">Agregue al menos una foto.</t>
+            <t t-elif="reqf['type'] in ('selection', 'many2one', 'many2many')">Seleccione una opción.</t>
+            <t t-elif="reqf['type'] == 'boolean'">Debe marcar esta casilla.</t>
+            <t t-else="">Este campo es obligatorio.</t>
+        </div>
+    </template>
+
+    <!-- ============================================================ -->
     <!-- Botón de ayuda por campo (toca "ⓘ" para ver el tooltip)       -->
     <!-- ============================================================ -->
     <template id="field_help" name="Visar Campo - Ayuda de campo">
@@ -543,7 +586,11 @@
                    t-attf-class="#{'col ' if len(crow) &gt; 1 else ''}#{'o_visar_condfield d-none' if f.get('conditional') else ''}"
                    t-att-data-showif="f.get('conditional') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['conditional']['controller'])) or None"
                    t-att-data-showif-kind="f.get('conditional') and f['conditional']['kind'] or None"
-                   t-att-data-showif-val="f.get('conditional') and f['conditional']['trigger'] or None">
+                   t-att-data-showif-val="f.get('conditional') and f['conditional']['trigger'] or None"
+                   t-att-data-req="f.get('required') and '1' or None"
+                   t-att-data-req-if="f.get('required_if') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['required_if']['controller'])) or None"
+                   t-att-data-req-if-kind="f.get('required_if') and f['required_if']['kind'] or None"
+                   t-att-data-req-if-val="f.get('required_if') and f['required_if']['trigger'] or None">
                 <t t-set="fname" t-value="'o2mline~%s~%s~%s' % (o2m, rowidx, f['name'])"/>
 
                 <!-- Booleano -->
@@ -552,13 +599,22 @@
                            t-att-checked="f['value'] and 'checked' or None"
                            t-att-disabled="card_disabled and 'disabled' or None"/>
                     <label class="form-check-label" t-esc="f['string']"/>
+                    <t t-call="visar_field_app.req_star">
+                        <t t-set="reqf" t-value="f"/>
+                    </t>
                     <t t-call="visar_field_app.field_help">
                         <t t-set="help_text" t-value="f['help']"/>
+                    </t>
+                    <t t-call="visar_field_app.req_error">
+                        <t t-set="reqf" t-value="f"/>
                     </t>
                 </div>
 
                 <t t-else="">
                     <label class="form-label mb-1" t-esc="f['string']"/>
+                    <t t-call="visar_field_app.req_star">
+                        <t t-set="reqf" t-value="f"/>
+                    </t>
                     <t t-call="visar_field_app.field_help">
                         <t t-set="help_text" t-value="f['help']"/>
                     </t>
@@ -631,6 +687,10 @@
                     <input t-else="" type="text" class="form-control" t-att-name="fname"
                            t-att-value="f['value']"
                            t-att-disabled="card_disabled and 'disabled' or None"/>
+
+                    <t t-call="visar_field_app.req_error">
+                        <t t-set="reqf" t-value="f"/>
+                    </t>
                 </t>
               </div>
              </div>

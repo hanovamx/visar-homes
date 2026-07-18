@@ -428,6 +428,184 @@
         });
     }
 
+    /* ================= Validación de obligatoriedad (Req 7) =================
+       Marca con rojo y bloquea el guardado de la hoja de trabajo si faltan campos
+       obligatorios. Misma lógica que el servidor (que revalida): un campo es
+       obligatorio SIEMPRE (data-req) o SEGÚN un disparador (data-req-if). Los
+       asteriscos condicionales se muestran/ocultan al vuelo según su disparador. */
+    function initWorksheetValidation() {
+        var form = document.getElementById("visar-worksheet-form");
+        if (!form) {
+            return;
+        }
+        var validated = false;  // tras el primer intento, se valida en vivo
+
+        function esc(name) {
+            return name.replace(/(["\\])/g, "\\$1");
+        }
+
+        /* ¿Se cumple el disparador de un campo condicional? Mismos kinds que
+           evalCondFields: truthy (casilla marcada), many2many (casilla de esa
+           etiqueta marcada), selección (valor === disparador). El nombre del
+           controlador ya viene calificado por fila en las tarjetas. */
+        function condMet(ctrl, kind, val) {
+            if (kind === "truthy") {
+                var cb = form.querySelector('[name="' + esc(ctrl) + '"]');
+                return !!(cb && cb.checked);
+            }
+            if (kind === "many2many") {
+                var box = form.querySelector(
+                    '[name="' + esc(ctrl) + '"][value="' + esc(val) + '"]');
+                return !!(box && box.checked);
+            }
+            var sel = form.querySelector('[name="' + esc(ctrl) + '"]');
+            return !!(sel && sel.value === val);
+        }
+
+        /* ¿El campo (su wrapper) es obligatorio AHORA y visible/activo? */
+        function isActive(w) {
+            if (w.closest(".o_visar_o2m_template")) {
+                return false;  // tarjeta plantilla inerte
+            }
+            if (w.classList.contains("d-none")) {
+                return false;  // companion oculto → no obligatorio
+            }
+            if (w.hasAttribute("data-req")) {
+                return true;
+            }
+            var ctrl = w.getAttribute("data-req-if");
+            if (!ctrl) {
+                return false;
+            }
+            return condMet(ctrl, w.getAttribute("data-req-if-kind"),
+                w.getAttribute("data-req-if-val"));
+        }
+
+        /* ¿El campo obligatorio quedó vacío? Detecta el tipo por el control. */
+        function isEmpty(w) {
+            if (w.querySelector(".o_visar_ws_photos, .o_visar_line_photos")) {
+                if (w.querySelector(".o_visar_photo")) {
+                    return false;  // ya hay foto guardada
+                }
+                var fi = w.querySelector('input[type="file"]');
+                return !(fi && fi.files && fi.files.length);
+            }
+            var checks = w.querySelectorAll('input[type="checkbox"]:not([disabled])');
+            if (checks.length) {  // booleano requerido o grupo m2m: alguna marcada
+                return !Array.prototype.some.call(checks, function (c) {
+                    return c.checked;
+                });
+            }
+            var sel = w.querySelector("select:not([disabled])");
+            if (sel) {
+                return sel.value === "";
+            }
+            var inp = w.querySelector(
+                'input:not([type="hidden"]):not([disabled]), textarea:not([disabled])');
+            return inp ? !inp.value.trim() : false;
+        }
+
+        /* ¿La tarjeta o2m tiene algún contenido? (para el mínimo-uno y para exigir
+           sus obligatorios solo si el técnico la empezó a llenar). */
+        function cardHasContent(card) {
+            var id = card.querySelector('input[type="hidden"][name$="~id"]');
+            if (id && id.value) {
+                return true;  // línea existente
+            }
+            if (card.querySelector(".o_visar_photo")) {
+                return true;  // foto ya guardada
+            }
+            var ctrls = card.querySelectorAll(
+                'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])');
+            return Array.prototype.some.call(ctrls, function (c) {
+                if (c.type === "checkbox" || c.type === "radio") {
+                    return c.checked;
+                }
+                if (c.type === "file") {
+                    return c.files && c.files.length;
+                }
+                return c.value && c.value.trim();
+            });
+        }
+
+        function markField(w, bad) {
+            w.classList.toggle("o_visar_invalid", bad);
+            var err = w.querySelector(":scope > .o_visar_field_err");
+            if (err) {
+                err.classList.toggle("d-none", !bad);
+            }
+        }
+
+        /* Muestra u oculta los asteriscos de los campos condicionales según su
+           disparador (para que el técnico vea qué se volvió obligatorio). */
+        function refreshStars() {
+            form.querySelectorAll("[data-req-if]").forEach(function (w) {
+                var star = w.querySelector(":scope > .o_visar_req_cond");
+                if (star) {
+                    star.classList.toggle("d-none", !isActive(w));
+                }
+            });
+        }
+
+        /* Valida todo. Devuelve el primer elemento con error (o null). Si
+           `mark` es true, pinta/limpia los errores. */
+        function validate(mark) {
+            var first = null;
+            // Subfichas con mínimo-uno.
+            form.querySelectorAll(".o_visar_o2m[data-min-one]").forEach(function (o2m) {
+                var cards = o2m.querySelectorAll(
+                    ".o_visar_o2m_cards > .o_visar_o2m_card");
+                var withContent = Array.prototype.filter.call(cards, cardHasContent);
+                var bad = withContent.length === 0;
+                if (mark) {
+                    var errEl = o2m.querySelector(":scope > .o_visar_o2m_err");
+                    if (errEl) {
+                        errEl.classList.toggle("d-none", !bad);
+                    }
+                }
+                if (bad && !first) {
+                    first = o2m;
+                }
+            });
+            // Campos obligatorios (activos).
+            form.querySelectorAll("[data-req], [data-req-if]").forEach(function (w) {
+                var bad = isActive(w) && isEmpty(w);
+                if (mark) {
+                    markField(w, bad);
+                }
+                if (bad && !first) {
+                    first = w;
+                }
+            });
+            return first;
+        }
+
+        form.addEventListener("submit", function (ev) {
+            validated = true;
+            var first = validate(true);
+            if (first) {
+                ev.preventDefault();
+                first.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        });
+
+        // Los asteriscos condicionales reaccionan siempre; los errores solo se
+        // repintan en vivo DESPUÉS del primer intento fallido (no antes: no se
+        // regaña al técnico mientras aún llena el formulario).
+        form.addEventListener("change", function () {
+            refreshStars();
+            if (validated) {
+                validate(true);
+            }
+        });
+        form.addEventListener("input", function () {
+            if (validated) {
+                validate(true);
+            }
+        });
+        refreshStars();
+    }
+
     /* "Voy en camino": intenta adjuntar la ubicación del técnico (lat/lng) para que
        el servidor calcule la ETA con Mapbox. Si el navegador no la da (permiso
        denegado, timeout o contexto no seguro), envía SIN coords → el servidor cae a
@@ -534,6 +712,8 @@
         initPhotoActions();
         initWaiting();
         initEnroute();
+        initTracking();
+        initWorksheetValidation();
         evalCondFields();
         document.addEventListener("change", evalCondFields);
     }

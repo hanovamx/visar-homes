@@ -167,8 +167,10 @@ que diseña Studio.
 - **Por qué así:** mantiene el principio D-03/D-05 (QWeb + POST/redirect, sin OWL) y sigue escribiendo
   en modelos/campos **nativos** para que los reportes nativos funcionen. Alternativas descartadas:
   many2many como booleanos (contradice "selección múltiple", data sucia); PWA/SPA (contradice `40`).
-- **Límite conscientemente NO resuelto:** la app **no evalúa `required`/condicional** — se codifica en
-  los nodos de la vista para Studio/reporte nativo, pero la app no bloquea el cierre. Feature aparte.
+- ~~**Límite conscientemente NO resuelto:** la app **no evalúa `required`/condicional** — se codifica en
+  los nodos de la vista para Studio/reporte nativo, pero la app no bloquea el cierre. Feature aparte.~~
+  **[RESUELTO 17-jul-2026]** — la hoja valida requerido/condicional/min-uno (cliente + servidor);
+  lee el `required="1"` del nodo de la vista. Ver `25-field-app.md` (Req 7).
 - **Plantillas:** se configuran en Studio (`worksheet.template`), se **asignan por proyecto**
   (`project.project.worksheet_template_id`, heredado a la tarea). Sembrado por código = Python
   (`ir.model.fields state=manual` + arch), porque el modelo dinámico lleva el id del template en su nombre.
