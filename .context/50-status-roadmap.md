@@ -85,8 +85,12 @@
       (plaguicida nombre+dosis), campo condicional "Otro" (selección y m2m), polish de espaciado/etiquetas;
       2ª plantilla "Mantenimiento de áreas verdes (App v2)"; **sembrador versionado** `hooks.py`
       (`post_init_hook` + migración 19.0.1.2.0). Ver `25-field-app.md`.
-      Pendiente: **#2 fotos múltiples por campo** (galerías + quitar sección Fotos externa) y bloqueo
-      por `required`/condicional (la visibilidad condicional ya está; el bloqueo no — I-05).
+      **16-17-jul-2026 (v19.0.1.5.0→1.10.0):** flujo ordenado (hoja tras "Comenzar", firma tras guardar
+      la hoja → etapa **"Pendiente de firma"**); **validación de obligatoriedad** requerido/condicional/
+      min-uno (cliente rojo+bloqueo y servidor) — **cierra I-05**; traza de botones (Llamar/WhatsApp/
+      Maps) al chatter; lista **Hoy/Todos** + **ruta arrastrable**; icono de la app; PDF con **"Tiempo
+      en sitio"** y **fotos** (fix de encoding + JPEG). Ver `25-field-app.md`.
+      Pendiente: **#2 fotos múltiples por campo** (galerías + quitar sección Fotos externa).
 - [ ] Reporte dual interno vs cliente.
 - [ ] Cross-link explícito cita ↔ tarea en agenda (hoy vía SO compartida + `visar_sale_order_id` en tarea).
 - [ ] E2E: confirmar pago → verificar N tareas FSM correctas en UI técnico.

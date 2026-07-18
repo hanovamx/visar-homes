@@ -34,7 +34,7 @@ Four custom modules (technical names) with these versions **in the repo now**:
 | `visar_base` | `19.0.1.1.0` | `sale`, `product`, `appointment` | — | none (setup via `data/`) |
 | `visar_fsm` | `19.0.1.0.4` | `visar_base`, `appointment`, `hr`, `industry_fsm`, `industry_fsm_sale` | `post_init_hook` | none |
 | `visar_appointment` | `19.0.2.0.20` | `visar_base`, `visar_fsm`, `website_appointment`, `website_appointment_sale`, `website_sale`, `hr`, `worksheet` | **none** ⚠️ | `19.0.2.0.0`…`19.0.2.0.20` |
-| `visar_field_app` | `19.0.1.4.0` | `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize` | `post_init_hook` | `19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0` |
+| `visar_field_app` | `19.0.1.10.0` | `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize` | `post_init_hook` | `19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`, `19.0.1.7.0` |
 
 **Dependency / upgrade order:** `visar_base` → `visar_fsm` → `visar_appointment` → `visar_field_app`.
 
@@ -58,6 +58,26 @@ Mostly `visar_field_app` (the field-technician web app), 07–08 Jul 2026:
   (`visar_client_wait_minutes`).
 - **Worksheet template seeder** (`hooks.py`): builds three `worksheet.template`
   records in code (see §3).
+
+#### Newer batch — `visar_field_app` 16–17 Jul 2026 (v19.0.1.5.0 → 19.0.1.10.0)
+
+Later work, all in `visar_field_app`; full detail in `25-field-app.md` "🆕 Actualización" sections:
+
+- **App icon** (green brand leaf) on the "App de Campo Visar" menu (`web_icon_data` is stored →
+  refreshes on `-u`).
+- **List scope Hoy/Todos** (`?scope=`) in the technician's timezone; the map is always today's route.
+- **Drag-and-drop route ordering** — new model `visar.field.route.order` (per technician), reflected
+  on the map and persisted across sessions.
+- **Button tracing:** tapping Llamar / WhatsApp / Google Maps posts an internal chatter note.
+- **Ordered flow:** the **worksheet** is hidden until "Comenzar servicio"; the **signature** is
+  hidden until the worksheet is saved once, which moves the task to a new **"Pendiente de firma"**
+  stage (seeded active, between En ejecución and Completado — `hooks.py::seed_signature_stage`,
+  migration `19.0.1.7.0`).
+- **Required-field validation** on the worksheet (client red-mark/block + server), incl. conditional
+  and min-one rules (closes I-05).
+- **PDF "Tiempo en sitio"** block (arrival → last worksheet save), above "Registro de horas".
+- **PDF photo fix:** worksheet photos now actually embed (base64 round-trip) as **JPEG** (avoids a
+  wkhtmltopdf blank-first-page bug with large PNG data-URIs).
 
 `visar_base` / `visar_fsm` / `visar_appointment` may also carry version bumps vs. what
 is currently installed in prod — the `-u` in §3 upgrades all four regardless, so you do
@@ -114,19 +134,21 @@ git pull origin main
 - **`visar_appointment`** — runs any pending `migrations/19.0.2.0.*` (legacy catalog
   linking, entry types `visar_flow`, master type "Servicios Visar", question
   detachment, etc.).
-- **`visar_field_app`** — runs `migrations/19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`,
-  **each of which calls `seed_worksheet_templates(env)`** (idempotent). This creates/updates
-  the three worksheet templates and their dynamic models/fields:
+- **`visar_field_app`** — runs `migrations/19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`
+  (**each calls `seed_worksheet_templates(env)`**, idempotent) plus **`19.0.1.7.0`**
+  (**`seed_signature_stage(env)`** — unarchives/orders the "Pendiente de firma" stage and
+  gives it a stable xmlid). The seeders create/update the three worksheet templates and
+  their dynamic models/fields:
   - **"Fumigación interior o exterior (App v2)"**
   - **"Mantenimiento de áreas verdes (App v2)"**
   - **"Visita de valoración técnica (App v2)"**
 
-  If the module in prod is already at `19.0.1.4.0` (no migration to run) but the
-  templates need re-seeding, run the seeder manually:
+  If the module in prod is already at the latest version (no migration to run) but the
+  templates / stage need re-seeding, run the seeders manually:
   ```bash
   <odoo-bin> shell -c <odoo.conf> -d visar_prod
-  >>> from odoo.addons.visar_field_app.hooks import seed_worksheet_templates
-  >>> seed_worksheet_templates(env)
+  >>> from odoo.addons.visar_field_app.hooks import seed_worksheet_templates, seed_signature_stage
+  >>> seed_worksheet_templates(env); seed_signature_stage(env)
   >>> env.cr.commit()
   ```
 
@@ -222,14 +244,30 @@ resource for future bookings.
 
 ### 5.2 Field app — technician flow (`/visar/field`)
 - [ ] Login with a **unique** PIN → shift opens (`visar.field.session`).
-- [ ] Task list shows only that technician's open tasks. (Label says "hoy" but there is
-      **no date filter** yet — expected, see §7.)
+- [ ] Task list shows only that technician's tasks, **scoped to today** by default
+      (technician's timezone); "Todos" shows every date/state. Services closed today stay
+      at the bottom, dimmed, with a *Completado* / *Reprogramar* badge.
+- [ ] **Drag the `⠿` handle** to reorder today's route: cards renumber, the map repaints
+      without reloading, and the order survives a reload and a logout/login.
 - [ ] **List ⇄ Map** toggle: markers appear for geocoded services; popup links to detail;
       "Abrir en Google Maps" opens the service address.
-- [ ] Task detail: client **contact** block (phone / Llamar / WhatsApp) present.
+- [ ] Task detail: client **contact** block (phone / Llamar / WhatsApp) present. Tapping
+      **Llamar / WhatsApp / Abrir en Google Maps** leaves an internal note in the task chatter
+      (technician + button + destination).
+- [ ] **Worksheet is hidden** until "Comenzar servicio"; **signature is hidden** until the worksheet
+      is saved once — saving it moves the task to the **Pendiente de firma** stage (seeded active,
+      between En ejecución and Completado).
 - [ ] **Worksheet** renders per its template: o2m cards ("+ Agregar"), m2m checkboxes,
       per-field help (ⓘ), conditional "Otro" fields show/hide, per-card image capture +
       thumbnail. **Save** persists (re-open to confirm).
+- [ ] **Required validation (Req 7):** required labels show a red `*`; saving with a
+      missing required/conditional/min-one field is **blocked** (red field + inline error,
+      scrolls to first); conditional `*` (e.g. evidence photo when "infestación activa")
+      appears/disappears with its trigger; a complete worksheet saves.
+- [ ] **PDF report (Req 8):** the worksheet PDF shows a **"Tiempo en sitio"** block
+      (Confirmó llegada → Última guarda de la hoja → **Duración**), just above the native
+      "Registro de horas"/Timesheets section. (The two are different metrics: on-site
+      documentation time vs. worked time.)
 - [ ] **Photos:** upload, thumbnail, tap-to-delete (× only on technician photos — the
       signature must NOT be deletable here).
 - [ ] **Stage flow:** "Voy en camino" → "Confirmar llegada" (**backend stage jumps to
@@ -246,7 +284,14 @@ resource for future bookings.
 - [ ] **Backend↔app stage sync:** manually move the task's stage back to *Programado* in
       the backend → app reflects it and sub-phase stamps are cleared (no phantom
       timer/reschedule).
-- [ ] `GET …/task/<id>/report` renders the native `industry_fsm.worksheet_custom` PDF.
+- [ ] `GET …/task/<id>/report` renders the native `industry_fsm.worksheet_custom` PDF,
+      **with the worksheet photos visible** (they embed as resized JPEGs) and every page's
+      text intact.
+      - If the PDF is **very slow** (tens of seconds) or pages come out **blank**, it's
+        almost always wkhtmltopdf failing to fetch report assets from a wrong base URL:
+        check `ir.config_parameter` **`report.url`** / **`web.base.url`** point at an address
+        the server can reach itself. (On prod that's the real domain; this bit the local
+        clone when its stale LAN IP no longer matched.)
 
 ### 5.3 Booking + FSM (regression — only if `visar_appointment` changed)
 - [ ] `/appointment` shows exactly **Valoración Técnica** and **Cita de Servicios**.
@@ -289,10 +334,10 @@ Ordered roughly by operational impact. IDs reference `.context/90-improvements-l
 | # | Item | Notes |
 |---|---|---|
 | **I-01** | `visar_appointment` idempotent **install hook** for legacy catalog + entry types | Mirror `visar_fsm`'s pattern; make migrations call the same function (DRY). Unblocks clean `-i`. |
-| **I-05** | **Required / conditional-mandatory enforcement on close** | App does conditional *visibility* ("Otro" companions) but does **not block** close on `required="1"` or conditional rules (dose-if-pesticide, photo-if-treated). Close only checks signature + name. |
+| — | ~~**I-05 — Required / conditional-mandatory enforcement**~~ | **DONE (17-jul-2026)** — the worksheet now validates `required="1"`, "Otro" companions, trigger-conditional fields, and ≥1 line per sub-section, on client (red + block) and server. |
 | **#2** | **Multiple photos per field** (galleries) + remove the separate external "Fotos" section | Photo fields were relabeled to plural but full gallery capture is not implemented. |
 | **I-08** | **Travel timer** ("en camino") | Deferred; only the client-wait timer exists. |
-| — | **"Mis servicios de hoy" date filter** | `_employee_tasks` has no date filter; it shows all open tasks. Either add the filter or fix the label. |
+| — | ~~**"Mis servicios de hoy" date filter**~~ | **DONE (16-jul-2026)** — Hoy/Todos scope (`?scope=`) in the technician's timezone; the map is always today. |
 | — | **Worksheet + close are separate forms** | Closing without pressing "Guardar hoja de trabajo" loses worksheet input. Consider merging or warning. |
 | — | **Harden identity** | Hash PINs, add throttling, cap `/report`. |
 | — | **Dual report (internal vs client)** | D-07 still open; app serves one native PDF. |

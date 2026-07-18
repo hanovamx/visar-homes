@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
+import base64
 import logging
 import math
 
+import pytz
 import requests
 from lxml import etree
 from markupsafe import Markup
@@ -35,6 +37,10 @@ _ENROUTE_ETA_DEFAULT = 30
 _WS_OMIT_NAMES = {'x_project_task_id', 'x_name'}
 _WS_SKIP_WIDGETS = ('statusbar', 'signature')
 _WS_SKIP_NAME_HINTS = ('nombre_de_quien_firma',)
+# Fotos embebidas en el PDF: JPEG re-escalado. Tamaño/calidad contenidos para que un
+# data-URI grande no corrompa el render de wkhtmltopdf (primera página en blanco).
+_WS_REPORT_IMG_PX = 640
+_WS_REPORT_IMG_QUALITY = 70
 
 
 class ProjectTask(models.Model):
@@ -94,6 +100,24 @@ class ProjectTask(models.Model):
         help="Minutos que transcurrieron desde 'Esperar al cliente' hasta "
              "'Comenzar servicio' (cuánto se esperó a que el cliente abriera). "
              "0 si el técnico no inició el temporizador de espera.")
+    visar_worksheet_saved_at = fields.Datetime(
+        string="Hoja de trabajo guardada en", readonly=True,
+        help="Primera vez que el técnico guardó la hoja de trabajo desde la app. "
+             "Hasta entonces la app NO muestra la sección de firma; al guardarla, "
+             "el servicio pasa a la etapa 'Pendiente de firma'.")
+    visar_worksheet_saved_by_id = fields.Many2one(
+        'hr.employee', string="Hoja de trabajo guardada por", readonly=True,
+        help="Técnico que guardó la hoja de trabajo por primera vez.")
+    visar_worksheet_last_saved_at = fields.Datetime(
+        string="Hoja de trabajo — última guarda", readonly=True,
+        help="ÚLTIMA vez que se guardó la hoja de trabajo (se actualiza en cada "
+             "guardado). Con 'Llegada del técnico' define el tiempo en sitio.")
+    visar_onsite_minutes = fields.Float(
+        string="Tiempo en sitio (min)", readonly=True,
+        compute='_compute_visar_onsite_minutes', store=True,
+        help="Minutos desde 'Confirmar llegada' hasta la ÚLTIMA guarda de la hoja "
+             "de trabajo. Es el tiempo que el técnico dedicó en el domicilio a "
+             "ejecutar y documentar el servicio. Aparece en el PDF del reporte.")
     visar_reschedule_requested_by_id = fields.Many2one(
         'hr.employee', string="Reagenda solicitada por", readonly=True,
         help="Técnico que marcó 'Cliente no llegó' (solicitud de reagenda).")
@@ -113,6 +137,64 @@ class ProjectTask(models.Model):
                 task.visar_travel_minutes = max(delta.total_seconds() / 60.0, 0.0)
             else:
                 task.visar_travel_minutes = 0.0
+
+    @api.depends('visar_arrived_at', 'visar_worksheet_last_saved_at')
+    def _compute_visar_onsite_minutes(self):
+        """Tiempo en sitio = 'Confirmar llegada' → última guarda de la hoja de
+        trabajo. 0 mientras falte alguno de los dos sellos."""
+        for task in self:
+            start, end = task.visar_arrived_at, task.visar_worksheet_last_saved_at
+            if start and end and end > start:
+                task.visar_onsite_minutes = (end - start).total_seconds() / 60.0
+            else:
+                task.visar_onsite_minutes = 0.0
+
+    @staticmethod
+    def _visar_format_duration(minutes):
+        """'1 h 23 min' / '45 min' / '—' (0 o None). Para el PDF y la app."""
+        if not minutes or minutes <= 0:
+            return "—"
+        total = int(round(minutes))
+        hours, mins = divmod(total, 60)
+        if hours and mins:
+            return "%d h %d min" % (hours, mins)
+        if hours:
+            return "%d h" % hours
+        return "%d min" % mins
+
+    def _visar_report_tz(self):
+        """Huso para los sellos del reporte: el del técnico que documentó (guardó
+        o cerró), luego el primer técnico, luego la compañía. Naive-UTC → local."""
+        self.ensure_one()
+        emp = (self.visar_worksheet_saved_by_id or self.visar_field_closed_by_id
+               or self.visar_technician_ids[:1])
+        tzname = (emp.tz or self.company_id.resource_calendar_id.tz
+                  or self.env.company.resource_calendar_id.tz or 'UTC')
+        try:
+            return pytz.timezone(tzname)
+        except pytz.UnknownTimeZoneError:
+            return pytz.utc
+
+    def _visar_onsite_report(self):
+        """Datos del bloque 'Tiempo en sitio' del PDF, o None si no aplica.
+
+        `duration` = llegada → última guarda de la hoja (el dato pedido). Se
+        incluyen los dos extremos (en huso del técnico) para que sea auditable.
+        """
+        self.ensure_one()
+        start, end = self.visar_arrived_at, self.visar_worksheet_last_saved_at
+        if not (start and end):
+            return None
+        tz = self._visar_report_tz()
+
+        def fmt(dt):
+            return pytz.utc.localize(dt).astimezone(tz).strftime('%d/%m/%Y %H:%M')
+
+        return {
+            'arrived': fmt(start),
+            'saved': fmt(end),
+            'duration': self._visar_format_duration(self.visar_onsite_minutes),
+        }
 
     def _visar_fsm_stage(self, n):
         """Etapa nativa de Field Service por su xmlid estable (portable, sin ids
@@ -565,11 +647,30 @@ class ProjectTask(models.Model):
         desaparece — el síntoma "a veces no hay texto"). Se reescalan a un máximo
         de 900px y se recomprime, reduciendo el peso ~10-50× y estabilizando el
         render. Si el procesado falla (dato corrupto), se omite la imagen antes que
-        arriesgar un PDF roto."""
+        arriesgar un PDF roto.
+
+        ⚠️ **Encoding (la causa del "reporte sin fotos"):** `image_process` trabaja
+        con bytes **CRUDOS** en ambos extremos, pero el campo binary de Odoo
+        (`record[name]`) llega en **base64** y la plantilla usa `image_data_uri`, que
+        espera **base64**. Hay que **decodificar** antes y **re-codificar** después:
+          base64 (campo) → b64decode → image_process (crudo→crudo) → b64encode → base64.
+        Si se salta cualquiera de las dos, PIL o `image_data_uri` fallan y la imagen se
+        descartaba en silencio (PIL) o rompía el render (`image_data_uri`).
+
+        ⚠️ **Formato JPEG, no PNG.** Las fotos van EMBEBIDAS como data-URI en el HTML;
+        un PNG grande (una captura/mapa comprime malísimo en PNG: ~270 KB aun a 900 px)
+        **corrompe el render de wkhtmltopdf** — el síntoma real observado fue la PRIMERA
+        página **en blanco** (el texto desaparece) aunque las fotos salieran en las
+        siguientes. Recomprimir a **JPEG** baja ese caso a ~70-120 KB y estabiliza el
+        documento. `WORKSHEET_REPORT_IMG_*` acota tamaño/calidad."""
         if not value:
             return False
         try:
-            return image_process(value, size=(900, 900), quality=80)
+            processed = image_process(
+                base64.b64decode(value),
+                size=(_WS_REPORT_IMG_PX, _WS_REPORT_IMG_PX),
+                quality=_WS_REPORT_IMG_QUALITY, output_format='JPEG')
+            return base64.b64encode(processed) if processed else False
         except Exception:  # noqa: BLE001 - imagen ilegible: mejor omitir que romper
             return False
 

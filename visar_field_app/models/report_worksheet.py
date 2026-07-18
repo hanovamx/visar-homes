@@ -14,9 +14,15 @@ class ReportFsmWorksheetCustom(models.AbstractModel):
     def _get_report_values(self, docids, data=None):
         values = super()._get_report_values(docids, data)
         visar_map = {}
+        time_map = {}
         for task in values.get('docs', []):
             sections = task._visar_worksheet_report_sections()
             if sections:
                 visar_map[task.id] = sections
+            # Req 8: bloque "Tiempo en sitio" (llegada → última guarda de la hoja).
+            onsite = task._visar_onsite_report()
+            if onsite:
+                time_map[task.id] = onsite
         values['visar_worksheet_map'] = visar_map
+        values['visar_time_map'] = time_map
         return values

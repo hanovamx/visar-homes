@@ -12,6 +12,304 @@
 
 ---
 
+## 🆕 Actualización — 17-jul-2026 (ter) — PDF: fotos que no salían + render lento
+
+> Dos problemas del reporte PDF, **ambos ajenos a las tandas Req 7/8** (uno de datos/entorno, otro un
+> bug latente del renderizador de fotos). Manifest **v19.0.1.10.0** (cambio de método Python → basta
+> **reiniciar** el server; no hay campos ni XML nuevos).
+
+### A. "Ver reporte (PDF)" tardaba ~2 min (entorno, no código)
+
+- **Causa:** `ir.config_parameter web.base.url = http://192.168.1.87:8069` (IP vieja de otra red) y
+  `report.url` sin definir. wkhtmltopdf pide los **assets CSS del reporte** a esa URL; como la IP ya
+  no es la de la máquina (ahora `192.168.6.181`), **cada fetch se cuelga hasta el timeout** (~5 s × N).
+- **Medición:** QWeb HTML = **0.2 s**; wkhtmltopdf = **122 s** (todo el tiempo). El contenido no tiene
+  la culpa.
+- **Fix:** `report.url = http://localhost:8069` (alcanzable siempre). Render **122 s → 3.5 s**.
+- ⚠️ **Es de la BD clonada**, no de prod (en prod `web.base.url` es el dominio real, alcanzable desde
+  sí mismo). Si se re-restaura el dump vuelve el valor viejo → re-aplicar. NO poner localhost en prod.
+
+### B. El reporte salía SIN fotos (bug latente en `_visar_ws_report_image`)
+
+- **Causa (encoding):** `image_process` de Odoo trabaja con bytes **crudos** en ambos extremos, pero
+  el campo binary llega en **base64** y `image_data_uri` (plantilla) también espera **base64**. El
+  código pasaba base64 crudo a `image_process` → `UnidentifiedImageError` → la foto se **descartaba en
+  silencio**. **Toda** foto real se caía (los tests con PNG 1×1 no lo delataban por invisibles). Fix:
+  `b64decode` **antes** y `b64encode` **después**.
+- **Causa 2 (render):** al embeber las fotos ya arregladas, un **PNG grande** (una captura/mapa pesa
+  ~270 KB aun a 900 px) como data-URI **corrompe wkhtmltopdf**: la **primera página salía en blanco**
+  (el texto desaparecía) aunque las fotos aparecieran en las siguientes. Fix: recomprimir a **JPEG**
+  y bajar tamaño (`_WS_REPORT_IMG_PX=640`, `_WS_REPORT_IMG_QUALITY=70`) → data-URI de ~50-100 KB;
+  documento estable. Verificado: página 1 completa (cabecera + horas + hoja) y páginas 2-3 con las
+  dos fotos. PDF de 518 KB (PNG, pág. 1 rota) → **154 KB** (JPEG, todo OK).
+- **Nota histórica:** el bug de encoding entró en la tanda "captura enriquecida" (07-jul) al añadir el
+  reescalado; nunca se ejercitó con fotos reales, así que quedó latente hasta ahora.
+
+---
+
+## 🆕 Actualización — 17-jul-2026 (bis) — "Tiempo en sitio" en el PDF (Req 8)
+
+> El reporte PDF muestra ahora el **tiempo que el técnico pasó documentando en el domicilio**:
+> de **'Confirmar llegada'** a la **última** vez que pulsó **'Guardar hoja de trabajo'**. Manifest
+> **v19.0.1.9.0** (campos nuevos → `-u`).
+
+### El problema
+
+El PDF ya traía **"Registro de horas"** (sección nativa *Timesheets*), pero eso muestra el
+**tiempo trabajado** (la línea de timesheet que la app escribe al cerrar: `visar_service_start` →
+cierre). No es lo que se quería. El dato pedido es **llegada → última guarda de la hoja**.
+
+### Campos nuevos en `project.task`
+
+- `visar_worksheet_last_saved_at` (Datetime) — se actualiza en **cada** guardado de la hoja (el
+  `visar_worksheet_saved_at` existente sigue siendo el de la **primera** vez, para la etapa/auditoría).
+- `visar_onsite_minutes` (Float, **compute stored**, `_compute_visar_onsite_minutes`) — minutos de
+  `visar_arrived_at` → `visar_worksheet_last_saved_at` (0 si falta alguno). Stored para verlo/agrupar
+  en el backend (pestaña "Visar - Campo").
+- Al **resetear el flujo** (`_visar_reconcile_flow_markers`, etapa vuelta antes de la llegada) se
+  limpia también `visar_worksheet_last_saved_at`.
+
+### Reporte
+
+- `report_worksheet.py::_get_report_values` agrega `visar_time_map = {task.id: {arrived, saved, duration}}`
+  (de `task._visar_onsite_report()`), solo si hay **ambos** sellos. Los timestamps se formatean en el
+  **huso del técnico** que documentó (`_visar_report_tz`: guardó → cerró → primer técnico → compañía);
+  la duración con `_visar_format_duration` ("1 h 23 min" / "42 min" / "—").
+- `report/worksheet_report_templates.xml`: plantilla nueva `visar_worksheet_report_onsite` que
+  inyecta el bloque **"Tiempo en sitio"** (llegada, última guarda, **Duración** resaltada con el color
+  de marca) **justo antes** de la sección nativa "Registro de horas", para que la diferencia entre
+  ambos quede clara. Solo aparece si hay `visar_time_map` para la tarea.
+
+### Verificado (17-jul, contra `visar_prod`, tarea desechable)
+
+- **E2E 10/10:** el 2º guardado avanza `last_saved_at` y **no** toca `saved_at` (primera); con la
+  llegada retrasada 42 min, `visar_onsite_minutes == 42`; el HTML del reporte incluye "Tiempo en
+  sitio" con "42 min", "Confirmó llegada" y "Última guarda", y aparece **antes** de "Registro de horas".
+- **PDF renderizado** (`_render_qweb_pdf`): el bloque se ve con el acento de marca, sobre la sección
+  de horas nativa. (Nota: en la prueba el timesheet nativo salió 00:00 porque el cierre fue inmediato;
+  en uso real muestra service_start → cierre — el dato *distinto* que ya existía.)
+
+---
+
+## 🆕 Actualización — 17-jul-2026 — obligatoriedad de la hoja de trabajo (Req 7, cierra I-05)
+
+> La hoja de trabajo dejó de guardarse a medias: valida campos obligatorios en cliente (rojo +
+> bloqueo) **y** servidor (defensa en profundidad). Manifest **v19.0.1.8.0** (`-u`; no hay campos
+> nuevos, pero el arch de las plantillas se re-lee). **Resuelve I-05** ("bloqueo por requerido/
+> condicional"). **No** cambia los campos de las plantillas: el reparto obligatorio/opcional YA
+> estaba declarado en el arch (`required="1"`); lo que faltaba era **aplicarlo**.
+
+### El hallazgo
+
+Los `required="1"` de las tres plantillas son atributos de **nodo de la vista**, pero el renderer
+solo miraba el `required` de **modelo** (siempre `False` en campos `x_` manual) → no exigía ni
+mostraba nada. La obligatoriedad ya estaba pensada; solo estaba **muerta**.
+
+### Fuentes de obligatoriedad (una sola verdad, cliente = servidor)
+
+Cada descriptor de campo trae ahora `required` (bool) y `required_if` (dict o None):
+
+| Regla | De dónde sale | Ejemplos |
+|---|---|---|
+| **Siempre obligatorio** | `node.get('required')` del arch (fuente de verdad; el reporte nativo también lo honra) | Fumigación: recorrido, nivel, fotos inicial/ejecución; línea: área, plaga, plaguicida |
+| **Companion "Otro" obligatorio al mostrarse** | se deriva de su `conditional` (visible ⇔ obligatorio) | "Especifique cuál otro" cuando el select/casilla = Otro |
+| **Condicional por disparador** | `WORKSHEET_REQUIRED_IF` (Python; el arch no lo expresa) | foto evidencia si `x_infestacion_activa`; foto+núm. bolsas si `x_residuos_embolsados` |
+| **Subficha ≥ 1 línea** | `WORKSHEET_MIN_ONE` (Python) | `x_areas_tratadas`, `x_labores`, `x_zonas_evidencia` |
+
+> **Decisión de negocio (16-jul, confirmada por el cliente):** min-uno en las **tres** subfichas;
+> las tres reglas condicionales activas; el resto del reparto declarado se respeta sin promover más
+> campos. La interpretación del help "obligatoria si 'Aplicado'" de la foto de evidencia se ató a
+> `x_infestacion_activa` (no existe un campo 'Aplicado').
+
+### UI (buenas prácticas de formularios)
+
+- Asterisco rojo `*` en cada etiqueta obligatoria; en los **condicionales** el asterisco arranca
+  oculto y el JS lo **revela cuando su disparador se cumple** (`refreshStars`, misma pista visual
+  que ya usan los companion "Otro").
+- Al intentar guardar con faltantes: **borde rojo + tinte + etiqueta roja** en el campo, mensaje
+  inline debajo (`o_visar_field_err`), **scroll al primer error** y el submit se **bloquea**.
+- No se regaña antes de tiempo: los errores se pintan al **primer intento** y de ahí en vivo.
+- Snippets QWeb reutilizables `visar_field_app.req_star` / `req_error` (main y tarjetas o2m).
+
+### Validación (misma lógica en ambos lados)
+
+- **Cliente** (`initWorksheetValidation` en `field_app.js`): lee atributos `data-req` / `data-req-if[-kind|-val]`
+  del wrapper (en tarjetas el controlador va calificado por fila, como `data-showif`); `data-min-one`
+  en el o2m. Emptiness por tipo de control (foto = miniatura o archivo; m2m/booleano = alguna casilla;
+  select = valor; texto = trim).
+- **Servidor** (`_worksheet_validation_errors`, llamado en `POST …/worksheet` **antes** de escribir):
+  reconstruye los descriptores y revalida. Si falta algo, **no escribe nada** (ni avanza la etapa) y
+  redirige con `?ws_error=1` (banner). Es el mismo criterio; el cliente es la UX, el servidor la red.
+- **Foto de línea condicional/obligatoria:** cuenta un archivo nuevo en el POST **o** una foto ya
+  guardada en esa línea (adjunto). **Min-uno** cuenta solo tarjetas con contenido (una vacía se
+  ignora, como en el guardado); una tarjeta empezada exige sus obligatorios.
+
+### Verificado (17-jul, contra `visar_prod`, tarea desechable creada y borrada)
+
+- **E2E HTTP 16/16** (Fumigación): rechazo de vacío, sin confirmación, sin fotos, sin áreas
+  (min-uno), área sin plaga (obligatorio de línea), "Otro" sin texto, "infestación activa" sin foto
+  de evidencia; y guardado OK con la hoja completa (→ etapa Pendiente de firma + 1 área).
+- **Navegador real** (Chrome, iPhone 13 táctil): submit bloqueado, marcas rojas, mensaje de mínimo-uno,
+  scroll al primer error, y el **asterisco condicional** de la foto de evidencia aparece/desaparece al
+  marcar/desmarcar "infestación activa". Sin errores JS.
+
+---
+
+## 🆕 Actualización — 16-jul-2026 (bis) — traza de botones, hoja tras "Comenzar" y firma tras la hoja
+
+> Segunda tanda del 16-jul. Manifest **v19.0.1.7.0** (campos nuevos + etapa sembrada → `-u`).
+> Cambia el **orden obligatorio** del trabajo en sitio: *Comenzar → hoja de trabajo → firma → cerrar*.
+
+### 4. Traza de "Llamar" / "WhatsApp" / "Abrir en Google Maps"
+
+- `POST …/task/<id>/track` con `action ∈ {call, whatsapp, maps}` → `_visar_log_field_action`
+  deja una **nota interna** (`mail.mt_note`) en el chatter de la tarea: quién pulsó, qué botón y
+  **a qué destino** (el teléfono o la dirección los resuelve el SERVIDOR, no el cliente).
+- **`navigator.sendBeacon`, NO `fetch`** (`initTracking` en `field_app.js`): "Llamar"/"WhatsApp"
+  **abandonan la página** (`tel:`, `wa.me`) y un fetch en vuelo se cancelaría al descargarse el
+  documento; el beacon lo entrega el navegador igual. Tampoco retrasa el toque (la traza no debe
+  estorbar al técnico: si falla se pierde la nota, no la llamada). El csrf y la URL viajan en un
+  div `#visar-track`; los enlaces solo llevan `data-visar-track`.
+- **Doble-toque accidental = una nota** (guarda de 3 s en JS, por acción). Un toque repetido más
+  tarde **sí** se registra: reintentar una llamada es información real para gestión.
+- El **autor** de la nota es el usuario público (la app es pública, sin login); el cuerpo dice el
+  nombre del técnico. Consistente con el resto de avisos del módulo.
+
+### 5. La hoja de trabajo no existe hasta "Comenzar servicio"
+
+- Se pinta y se acepta **solo** en las fases `en_ejecucion` / `cerrado` (`WORKSHEET_STATES`); antes
+  se ve una tarjeta apagada *"Se habilita al pulsar «Comenzar servicio»"*.
+- Se gatea por **fase**, no por el sello `visar_service_start`: la fase la manda `stage_id` (si
+  gestión pone la etapa a mano sin sellos, la app igual deja capturar; ver `_task_flow_state`).
+- **Servidor también**: `POST …/worksheet` rechaza el guardado fuera de esas fases (un POST directo
+  o una pestaña vieja no escriben). En `cerrado` sigue visible: el técnico consulta lo capturado.
+
+### 6. Firma tras guardar la hoja + etapa "Pendiente de firma"
+
+- **Etapa nueva en el flujo:** Programado → En camino → **En ejecución** → **Pendiente de firma** →
+  Completado. Existía en `visar_prod` creada a mano: **archivada**, `sequence=10` (empatada con En
+  ejecución) y con el nombre en_US mal ("In Progress", copiado al duplicarla). `seed_signature_stage`
+  la **adopta** (no duplica): la activa, la pone en `sequence=15`, corrige ambos nombres, la liga a
+  los 12 proyectos FSM y le da **xmlid propio** (`visar_field_app.visar_stage_pending_signature`) →
+  `_visar_stage_pending_signature()` la resuelve con `env.ref`, sin ids cableados.
+- **Cableado triple** como el sembrador de plantillas: `post_init_hook` + `migrations/19.0.1.7.0/`
+  + a mano por shell. `noupdate=True`: es dato vivo, no se pisa en upgrades.
+- **Guardar la hoja** (`POST …/worksheet`) sella `visar_worksheet_saved_at` / `_by_id` (la PRIMERA
+  vez; auditoría) y mueve la etapa con `_visar_set_stage_pending_signature()`, que **solo avanza
+  desde En ejecución** (si gestión ya la pasó a Completado/Incidencia, re-guardar no la retrocede).
+- **La firma + "Cerrar servicio" solo aparecen** con `signature_available`: fase `en_ejecucion` **y**
+  hoja guardada. **Sin plantilla de hoja** no hay nada que guardar → basta con haber comenzado (si
+  no, esos servicios no se podrían cerrar nunca). El cierre lo revalida en el servidor.
+- ⚠️ **Trampa mortal evitada:** `_visar_reconcile_flow_markers` borra los sellos cuando la etapa no es
+  "de servicio". Como guardar la hoja **cambia de etapa**, si *Pendiente de firma* no se agregaba a
+  `in_service`, ese mismo `write` borraba `visar_service_start` → la app retrocedía a *esperando* y
+  volvía a ocultar la hoja recién guardada. Hay un check E2E dedicado a esto.
+- `_task_flow_state` mapea *Pendiente de firma* → `en_ejecucion` (el técnico sigue en el domicilio,
+  ahora firmando). Al volver la etapa atrás (antes de la llegada), el reconcile **también** limpia
+  `visar_worksheet_saved_at` → la firma vuelve a exigir guardar la hoja (el dato capturado NO se toca).
+
+### Campos nuevos en `project.task`
+
+`visar_worksheet_saved_at`, `visar_worksheet_saved_by_id` (readonly, en la pestaña "Visar - Campo").
+
+### Verificado (16-jul, contra `visar_prod`)
+
+- **E2E HTTP 24/24** sobre una tarea desechable (creada y borrada; **nada tocado de los datos
+  reales**): hoja oculta antes de comenzar y POST rechazado; hoja visible tras comenzar y firma aún
+  oculta; cierre rechazado sin hoja; guardar → etapa *Pendiente de firma* + sellos + **`service_start`
+  sobrevive**; firma visible; cierre → Completado + `1_done`; 3 notas de traza correctas e internas.
+- **Navegador real** (Chrome, iPhone 13 táctil): beacon en los 3 botones — incluido "Llamar", que
+  navega a `tel:` —, doble-toque → 1 sola nota, reintento >3 s → 2.
+- ⚠️ **Trampa de pruebas:** un `nohup odoo-bin` que choca con un servidor ya levantado falla con
+  *"Address already in use"* y **el puerto sigue respondiendo** (el proceso viejo). Comprobar que
+  responde el puerto **no** prueba que corra tu código. Para probar sin tocar el servidor de nadie:
+  `--http-port=8070`.
+
+---
+
+## 🆕 Actualización — 16-jul-2026 (icono, filtro Hoy/Todos y ruta arrastrable)
+
+> Tanda de 3 arreglos sobre la lista de servicios. Manifest **v19.0.1.6.0** (modelo nuevo → hace
+> falta `-u visar_field_app`). Cierra la deuda histórica **"Mis servicios de hoy" sin filtro de
+> fecha** y la ⚠️ de `_employee_tasks`.
+
+### 1. Icono de la app (menú raíz)
+
+`static/description/icon.png` era un **PNG transparente de 111 bytes** (placeholder), así que
+"App de Campo Visar" salía sin icono aunque `menus.xml` ya apuntaba bien con `web_icon`. Se
+reemplazó por la **hoja verde** de la marca, sacada del **favicon del sitio** (`website.favicon`,
+ICO multi-tamaño → se extrajo el 256×256; el logo de la compañía es la misma imagen).
+`ir.ui.menu.web_icon_data` es **computed/stored**: solo se refresca con `-u` del módulo.
+
+### 2. Lista: alcance Hoy / Todos (`?scope=`)
+
+- **`Hoy` (por defecto):** los agendados para hoy **en el huso del TÉCNICO**, en **cualquier
+  estado** — decisión de negocio: los ya cerrados siguen visibles **al final**, apagados y con
+  etiqueta (*Completado* / *Reprogramar*), para que el técnico vea el avance de su día. Antes un
+  servicio **desaparecía** al cerrarlo (`state ∉ CLOSED_STATES`).
+- **`Todos`:** todo lo asignado, cualquier fecha/estado, **días más recientes primero** (sirve para
+  consultar lo hecho). Sin arrastre (mezcla días) y con **fecha completa** en la tarjeta.
+- Son **enlaces** (`?scope=`), no botones JS: la lista la arma el servidor y la URL se puede
+  recargar/compartir. Alcance inválido → `today` (`_scope`).
+- ⚠️ **Huso:** "hoy" se calcula con `employee.tz` (`_today_bounds`, `tz.localize` para que el DST no
+  desfase). Con el día del **servidor** (UTC) la lista se vaciaría cada tarde en Monterrey (UTC-6).
+  Por lo mismo la **hora de la tarjeta se formatea en Python** (`_task_times`): `t-esc`/`t-field` en
+  una página **pública** pinta UTC (el usuario público no tiene huso) — 14:00 se veía "20:00".
+- **El MAPA es SIEMPRE de hoy**, aunque la lista esté en "Todos" (`today_tasks` aparte).
+
+### 3. Ruta arrastrable (drag & drop) que el mapa refleja y persiste
+
+- **Modelo nuevo `visar.field.route.order`** (`employee_id`, `task_id`, `sequence`; UNIQUE por par).
+  **Por qué modelo y no un entero en `project.task`:** un servicio puede tener **varios técnicos**
+  (citas multi-técnico del maestro; hoy 4 de 7 tareas en `visar_prod` lo son) → un entero compartido
+  haría que el orden de un técnico reordenara la lista del otro, y los números 1..N asignados sobre
+  **su** lista chocarían con los servicios que solo ve el otro. Cada técnico ordena **su** ruta.
+- **Orden efectivo** (`_task_sort_key`): día → **pendientes antes que cerrados** → orden manual
+  (`UNORDERED_SEQUENCE = 9999` para los no arrastrados, que caen al final del día) → hora agendada
+  → id. Un servicio agendado **después** del último arrastre entra al final por hora, sin romper nada.
+- **El número de parada es UNO solo** para lista y mapa (`_task_map_payload` lo calcula; la lista lo
+  pinta desde `stop_numbers`). Se numera **aunque no haya coordenadas** (el mapa salta ese número:
+  gaps honestos) y **los cerrados NO se numeran ni entran a la ruta** (pin apagado "✓"): el número es
+  *lo que falta por recorrer*, no un historial.
+- **`POST /visar/field/tasks/reorder`** (http + csrf, ids por coma) → valida contra los
+  **pendientes de HOY del propio técnico** (descarta ajenos/basura/duplicados; `[]` → 400) →
+  `_visar_set_order` → responde **JSON con el mapa recalculado** (numeración + ruta Mapbox en el
+  orden nuevo) y `field_app_reorder.js` **repinta el mapa sin recargar**
+  (`window.visarFieldMap.refresh`, API nueva de `field_app_map.js`).
+- **JS con Pointer Events, NO drag&drop HTML5** (este último **no dispara en táctil** = el 100% del
+  uso real). Asa `⠿` (`touch-action: none` **obligatorio**: sin eso el navegador se queda el gesto
+  vertical para hacer scroll y no llegan los `pointermove`), umbral de 6 px para distinguir
+  **toque** (abre el servicio) de **arrastre**, y el click posterior al arrastre se traga.
+- **Auto-scroll en los bordes** (`EDGE_ZONE`/`EDGE_SPEED` + rAF): la lista del día **no cabe** en un
+  teléfono; sin esto el gesto se topa con el borde de la pantalla y no se puede llevar una tarjeta
+  de la última posición a la primera (verificado: con auto-scroll el scroll va 508 → 0 y la tarjeta
+  llega a la parada 1). La tarjeta arrastrada es `position: fixed` → se queda bajo el dedo mientras
+  la lista rueda por debajo.
+- **Sin red** (pasa en campo): el `fetch` falla → se **recarga** la página para volver al orden real
+  en vez de mostrar un orden que no se guardó.
+
+### Verificado (16-jul)
+
+- **E2E HTTP contra `visar_prod`** (20/20): alcance Hoy/Todos, cerrados al final con etiqueta, mapa
+  siempre de hoy, hora en huso del técnico, numeración lista=mapa, reorder persistente **entre
+  sesiones/dispositivos** (logout→login) y rechazo de ids ajenos.
+- **Navegador real** (Chrome, perfil iPhone 13 táctil): el gesto completo — despegue de la tarjeta,
+  hueco de destino, auto-scroll, renumeración, mapa repintado sin recargar, persistencia al recargar
+  y "tocar abre el servicio". Sin errores JS.
+- ⚠️ **Assets:** `visar_prod.conf` **no tiene dev mode** → el bundle queda cacheado en el proceso;
+  tras editar JS/CSS hay que **reiniciar el servidor** (si no, se sirve el JS viejo y las pruebas de
+  navegador mienten).
+
+### Pendiente de esta tanda
+
+- El arrastre **no reordena la agenda real** (`planned_date_begin` no se toca): es la ruta del
+  técnico, no una reprogramación. Si el negocio quiere que mover una tarjeta **reagende**, es otro
+  trabajo (y toca al calendario/gestión).
+- **Orden manual vs. ruta óptima:** sigue sin optimización (vecino más cercano); ahora el técnico la
+  hace a mano. Ver la nota de `_task_map_payload`.
+
+---
+
 ## 🆕 Actualización — 07-jul-2026 (captura enriquecida)
 
 > Trabajo posterior al documento original. **Varias ⚠️ de abajo ya NO aplican.** El renderizador
@@ -102,11 +400,12 @@ por tarjeta). El antiguo `x_comments` se relabeló a **"Observaciones finales de
   condicionales (dosis si hay plaguicida; foto si el área se marcó tratada) se codifican en los nodos
   de la vista (Studio/reporte nativo los honran), pero la app **no bloquea** el cierre por ellos.
   **[Actualización 08-jul (bis)]** — la **visibilidad** condicional SÍ se implementó (campos
-  companion "Otro"); lo que falta es el **bloqueo** por requerido/condicional (I-05).
+  companion "Otro"). ~~lo que falta es el **bloqueo** por requerido/condicional (I-05).~~ **[RESUELTO 17-jul-2026]**
 - **Binary dentro de subficha o2m anidada** no soportado (raro). ~~m2m dentro de tarjetas o2m~~
   **[RESUELTO 08-jul (bis)]** — m2m sí se soporta en tarjetas (grupo de casillas).
 - Sigue en pie lo de "Deuda técnica conocida" que no marcamos como resuelto abajo (forms separados,
-  sin validación de cierre, sin offline, PIN texto plano, "servicios de hoy" sin filtro de fecha).
+  sin validación de cierre, sin offline, PIN texto plano). ["servicios de hoy" sin filtro de
+  fecha se resolvió el 16-jul-2026.]
 
 ---
 
@@ -283,7 +582,7 @@ la calidad del dato: **Mapbox** (token compartido con el mapa nativo) o Google
   Plan acordado: galerías "vivas" (adjuntos etiquetados por campo lógico, vía un campo nuevo en
   `ir.attachment`) para campos-foto principales, y multi-file-al-guardar para la foto de tarjeta.
 - **Requerido/condicional-obligatorio:** la app ya hace **visibilidad** condicional (companions
-  "Otro"), pero sigue **sin bloquear** el cierre por `required` ni por reglas condicionales (I-05).
+  "Otro"). ~~pero sigue **sin bloquear** el cierre por `required` ni por reglas condicionales (I-05).~~ **[RESUELTO 17-jul-2026]** — la hoja de trabajo valida requerido/condicional/min-uno (cliente + servidor).
 
 ---
 
@@ -299,8 +598,10 @@ la calidad del dato: **Mapbox** (token compartido con el mapa nativo) o Google
 - **Estado = etapas nativas `project.task.stage_id`** (las de `industry_fsm`, relabeladas es_MX por
   Visar), resueltas por **xmlid estable** `env.ref('industry_fsm.planning_project_stage_N')`
   (1=En camino, 2=En ejecución, 3=Completado, 4=Incidencia—Reprogramar; 0=Programado). **No** hay
-  `visar_field_status`. Así el kanban/Gantt del backend queda sincronizado. (Hay una 6ª etapa de BD
-  "Pendiente de firma" sin xmlid → **NO se usa** por decisión del negocio.)
+  `visar_field_status`. Así el kanban/Gantt del backend queda sincronizado. (~~Hay una 6ª etapa de BD
+  "Pendiente de firma" sin xmlid → **NO se usa** por decisión del negocio.~~ **[CAMBIO 16-jul-2026]**
+  — el negocio SÍ la quiere: ahora se usa al guardar la hoja de trabajo. La siembra
+  `hooks.py::seed_signature_stage` y se referencia por xmlid propio. Ver la actualización de 16-jul.)
 - **Cronómetro de trabajo = timesheet NATIVO oculto.** No se usa el widget de cronómetro nativo
   (`timer.timer`) porque está **ligado a usuario** y su *Stop* abre un wizard — inservible en la app
   pública sin login. En su lugar, al cerrar se escribe una línea `account.analytic.line`
@@ -317,7 +618,8 @@ la calidad del dato: **Mapbox** (token compartido con el mapa nativo) o Google
 | Confirmar llegada | **En ejecución (`stage_2`)** ⬅ salta directo | sella `visar_arrived_at`; muestra leyenda + opción de espera |
 | Esperar al cliente | *(sigue En ejecución)* | sella `visar_waiting_start` + `visar_waiting_minutes`; cuenta regresiva |
 | Comenzar servicio | *(sigue En ejecución)* | sella `visar_service_start` (cronómetro oculto arranca) + **registra `visar_client_wait_minutes`** |
-| Cerrar servicio | Completado (`stage_3`) + `state='1_done'` | **exige firma + nombre**; escribe timesheet; atribución |
+| Guardar hoja de trabajo | **Pendiente de firma** ⬅ **[16-jul-2026]** | sella `visar_worksheet_saved_at/_by_id`; **habilita la sección de firma** |
+| Cerrar servicio | Completado (`stage_3`) + `state='1_done'` | **exige firma + nombre** (y, desde 16-jul, hoja guardada); escribe timesheet; atribución |
 | Cliente no llegó | Incidencia—Reprogramar (`stage_4`) + `state='1_canceled'` | actividad + nota chatter; vuelve a la lista |
 
 > **Cambio 08-jul (bis):** "Confirmar llegada" **salta la etapa FSM directo a *En ejecución*** (antes se
@@ -416,8 +718,10 @@ bloquea sin firma/nombre; temporizador editable persiste (`visar_waiting_minutes
 ### Pendiente
 
 - **Tiempo de trayecto "en camino"** diferido → **I-08**.
-- Etiqueta de lista "Mis servicios de hoy" sigue sin filtro de fecha; cierre sin validar
-  worksheet/fotos (solo firma+nombre).
+- ~~Etiqueta de lista "Mis servicios de hoy" sigue sin filtro de fecha~~ **[RESUELTO 16-jul-2026]**.
+- ~~Cierre sin validar worksheet/fotos (solo firma+nombre).~~ **[RESUELTO 17-jul-2026]** — la hoja se
+  valida (requerido/condicional/min-uno) antes de habilitar la firma; el cierre sigue exigiendo
+  firma+nombre, pero ya no se puede cerrar con la hoja incompleta.
 
 ---
 
@@ -439,8 +743,9 @@ App web tipo **POS / `pos_hr`** para técnicos de campo:
 `40-decisions.md` — este módulo la respeta.
 
 **Ubicación / manifest:** `visar_field_app/__manifest__.py` — nombre técnico `visar_field_app`,
-display "Visar - App de Campo (Técnicos)", **v19.0.1.4.0**, `application=True`.
-(El trabajo Req 2 de 08-jul añadió campos nuevos sobre esta línea de versión; no forzó un bump propio.)
+display "Visar - App de Campo (Técnicos)", **v19.0.1.10.0**, `application=True`.
+(Historial de bumps en las secciones "🆕 Actualización" de arriba; el más reciente, 17-jul, por los
+arreglos del PDF.)
 
 **Dependencias:** `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize`.
 
@@ -452,6 +757,7 @@ display "Visar - App de Campo (Técnicos)", **v19.0.1.4.0**, `application=True`.
 
 | Modelo | Archivo | Para qué |
 |---|---|---|
+| `visar.field.route.order` | `models/field_route_order.py` | **[16-jul-2026]** Orden manual de la ruta del técnico (arrastrar y soltar): `employee_id`, `task_id`, `sequence` (UNIQUE por par). Helpers `_visar_order_map` / `_visar_set_order`. Es **por técnico** a propósito (hay tareas multi-técnico). |
 | `visar.field.session` | `models/field_session.py` | Turno del técnico. Campos: `name` (computed), `employee_id`, `date_start`, `date_end`, `state` (`open`/`closed`), `note` (user-agent del dispositivo). Método `action_close()`. Se crea al login por PIN y se cierra al logout. |
 
 ### Extensiones
@@ -482,13 +788,15 @@ corren en **sudo**, pero acotadas al empleado de la sesión del dispositivo. Cla
 | `GET /visar/field` | http | Pantalla login por PIN (redirige a `/tasks` si ya hay sesión). |
 | `POST /visar/field/login` | http (csrf) | Valida PIN → crea `visar.field.session` → guarda empleado/turno en sesión. |
 | `POST /visar/field/logout` | http (csrf) | Cierra el turno abierto y limpia la sesión. |
-| `GET /visar/field/tasks` | http | Lista de tareas del técnico (`_employee_tasks`). |
+| `GET /visar/field/tasks` | http | Lista de tareas del técnico (`_employee_tasks`). **[16-jul-2026]** `?scope=today` (por defecto) / `all`; el mapa siempre es de hoy. |
+| `POST /visar/field/tasks/reorder` | http (csrf) | **[16-jul-2026]** Guarda el orden de la ruta de hoy (`task_ids` por coma) y responde JSON con el mapa recalculado (para repintar sin recargar). |
 | `GET /visar/field/task/<id>` | http | Detalle del servicio: fotos, worksheet dinámica, firma. |
 | `POST …/task/<id>/photo` | http (csrf) | Sube fotos como `ir.attachment` sobre `project.task`. |
 | `GET …/task/<id>/image/<att_id>` | http | Sirve una foto de la tarea (acotada al técnico). |
-| `POST …/task/<id>/worksheet` | http (csrf) | Guarda campos de la worksheet **nativa** (modelo dinámico `x_...`). |
+| `POST …/task/<id>/worksheet` | http (csrf) | Guarda campos de la worksheet **nativa** (modelo dinámico `x_...`). **[16-jul-2026]** Solo en fase `en_ejecucion`/`cerrado`; al guardar pasa la etapa a *Pendiente de firma*. **[17-jul-2026]** Valida obligatoriedad (`_worksheet_validation_errors`); si falta algo no escribe y vuelve con `?ws_error=1`. |
+| `POST …/task/<id>/track` | http (csrf) | **[16-jul-2026]** Traza en el chatter de los botones Llamar / WhatsApp / Google Maps (`sendBeacon`). |
 | `POST …/task/<id>/close` | http (csrf) | Cierra: firma nativa + `state='1_done'` + atribución (`visar_field_closed_by_id`). |
-| `GET …/task/<id>/report` | http | Renderiza el PDF **nativo** `industry_fsm.worksheet_custom`. |
+| `GET …/task/<id>/report` | http | Renderiza el PDF **nativo** `industry_fsm.worksheet_custom`. **[17-jul-2026]** incluye el bloque "Tiempo en sitio" (llegada → última guarda de la hoja). |
 
 ### Filtro de tareas (`_employee_tasks`)
 
@@ -498,8 +806,11 @@ if not include_closed:
     domain.append(('state', 'not in', ('1_done', '1_canceled')))
 ```
 
-> ⚠️ **No hay filtro por fecha.** La UI dice "Mis servicios de hoy" pero el dominio muestra
-> **todas** las tareas abiertas asignadas al técnico, no solo las de hoy.
+> ⚠️ ~~**No hay filtro por fecha.** La UI dice "Mis servicios de hoy" pero el dominio muestra
+> **todas** las tareas abiertas asignadas al técnico, no solo las de hoy.~~
+> **[RESUELTO 16-jul-2026]** — `_employee_tasks(employee, scope='today'|'all')`: `today` (por
+> defecto) filtra por el día del técnico y muestra también los cerrados (al final); `all` muestra
+> todo. Ver "🆕 Actualización — 16-jul-2026" arriba.
 
 ### Worksheet dinámica (reflexión sobre el modelo `x_...`)
 
@@ -543,6 +854,7 @@ POST /visar/field/logout  ──►  action_close() del turno
 | Archivo | Contenido |
 |---|---|
 | `views/field_app_templates.xml` | 3 plantillas QWeb (`t-call="website.layout"`): `field_login`, `field_tasks`, `field_task_detail` (Bootstrap; muestra `task.visar_sale_order_id` — campo de `visar_fsm`). |
+| `static/src/js/field_app_reorder.js` | **[16-jul-2026]** Arrastrar y soltar las tarjetas (Pointer Events + auto-scroll en los bordes) → POST del orden → repinta el mapa vía `window.visarFieldMap.refresh`. |
 | `static/src/js/field_app.js` | Pad de firma sobre `<canvas>` en **vanilla JS** (sin OWL). Al enviar el form de cierre, vuelca la firma a un `data-URL` en input oculto. |
 | `static/src/css/field_app.css` | Estilos mínimos del canvas de firma y las fotos. |
 
@@ -551,6 +863,7 @@ POST /visar/field/logout  ──►  action_close() del turno
 | Modelo | `base.group_user` | `hr.group_hr_user` |
 |---|---|---|
 | `visar.field.session` | solo lectura | CRUD completo |
+| `visar.field.route.order` | solo lectura | CRUD completo |
 
 - Rutas públicas + sudo, acotadas por el empleado de la sesión (cada handler revalida que la
   tarea pertenezca al técnico vía `_task_for_employee`).
@@ -576,7 +889,7 @@ Para futuros cambios: qué es base sólida y qué es candidato a rehacer.
 | Identidad PIN + turno (`visar.field.session`) | 🟢 **Reusar** | Patrón POS limpio, sin licencia. Base sólida. |
 | Scoping por `visar_technician_ids` | 🟢 **Reusar** | Es el **contrato** con `visar_fsm`. No romper esta interfaz. |
 | Captura → campos NATIVOS (fotos, firma, cierre, atribución) | 🟢 **Reusar** | El acierto de diseño: los reportes nativos siguen funcionando. Mantener el principio. |
-| Worksheet dinámica (reflexión) | 🟢 **Reusar (ya extendida 07-jul)** | Ya soporta o2m (tarjetas), m2m (casillas), imágenes por línea, widgets, pestañas invisibles y ayuda. Queda pendiente: requerido/condicional. |
+| Worksheet dinámica (reflexión) | 🟢 **Reusar (ya extendida 07-jul)** | Ya soporta o2m (tarjetas), m2m (casillas), imágenes por línea, widgets, pestañas invisibles y ayuda. ~~Queda pendiente: requerido/condicional.~~ **[RESUELTO 17-jul-2026]** requerido/condicional/min-uno aplicados. |
 | Frontend QWeb + POST/redirect (recarga completa) | 🔴 **Candidato a revamp** | Sin offline, sin validación cliente, forms separados. Mayor brecha para un app de *campo*. **Pero:** migrar a PWA/SPA **contradice** la decisión documentada (`40-decisions.md`); tratarlo como desviación consciente, no rewrite silencioso. |
 | Seguridad (público + sudo) | 🟡 **Endurecer antes de prod** | PIN texto plano, sin throttling, `/report` sin límite. |
 | Vistas/menús backend | 🟢 **Reusar** | Superficie admin fina, bajo riesgo. |
@@ -586,12 +899,14 @@ seguiría llamando al mismo contrato de controlador.
 
 ## Deuda técnica conocida (no bloquea hoy)
 
-- **"Mis servicios de hoy" es inexacto** — `_employee_tasks` no filtra por fecha; muestra todas las
-  abiertas. Agregar filtro o corregir la etiqueta.
-- **Worksheet y cierre son forms separados** — cerrar sin guardar la worksheet pierde lo escrito.
+- ~~**"Mis servicios de hoy" es inexacto** — `_employee_tasks` no filtra por fecha; muestra todas las
+  abiertas.~~ **[RESUELTO 16-jul-2026]** — alcance Hoy/Todos (`?scope=`) en el huso del técnico.
+- **Worksheet y cierre son forms separados** — ~~cerrar sin guardar la worksheet pierde lo escrito.~~
+  **[MITIGADO 17-jul-2026]** — la firma/cierre no aparece hasta **guardar** la hoja (Req 6), así que ya
+  no se puede cerrar sin haberla guardado; siguen siendo forms separados, pero el orden está forzado.
 - **Cierre sin validación** — **[PARCIAL 08-jul-2026]** ahora exige **firma + nombre** (JS + servidor,
-  Req 2); sigue **sin** validar worksheet/fotos ni `required`/condicional (I-05).
-- ~~**Sin campos relacionales en worksheet** (o2m/m2m)~~ — **[RESUELTO 07-jul-2026]** o2m (tarjetas) + m2m (casillas) + imágenes por línea. Nuevo pendiente: la app no aplica `required`/condicional.
+  Req 2). ~~sigue **sin** validar worksheet/fotos ni `required`/condicional (I-05).~~ **[RESUELTO 17-jul-2026]** la hoja valida requerido/condicional/min-uno.
+- ~~**Sin campos relacionales en worksheet** (o2m/m2m)~~ — **[RESUELTO 07-jul-2026]** o2m (tarjetas) + m2m (casillas) + imágenes por línea. ~~Nuevo pendiente: la app no aplica `required`/condicional.~~ **[RESUELTO 17-jul-2026]**
 - **PIN en texto plano, sin throttling y SIN unicidad** — en `visar_prod` el PIN `123` está duplicado
   en dos empleados → atribución no determinista (ver I-09). Aceptable en prototipo, no en producción.
 - **Sin captura offline** — un `project.task` en `1_done` desaparece de la lista del técnico

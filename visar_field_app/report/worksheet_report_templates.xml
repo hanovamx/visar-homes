@@ -1,5 +1,56 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
+    <!-- Req 8: bloque "Tiempo en sitio" (llegada → última guarda de la hoja de
+         trabajo). Se coloca JUSTO ANTES de la sección nativa "Registro de horas"
+         (timesheets), que muestra el tiempo trabajado (inicio de servicio →
+         cierre) — un dato distinto. Solo aparece si hay ambos sellos
+         (visar_time_map, calculado en report_worksheet.py). -->
+    <template id="visar_worksheet_report_onsite"
+              inherit_id="industry_fsm.worksheet_custom_page" priority="98">
+        <xpath expr="//div[@name='worksheet_task_timesheet']" position="before">
+            <t t-if="visar_time_map and visar_time_map.get(doc.id)">
+                <t t-set="ts" t-value="visar_time_map.get(doc.id)"/>
+                <t t-set="visar_accent_ts" t-value="doc.company_id.primary_color or '#5faf33'"/>
+                <div class="o_visar_onsite">
+                    <style>
+                        .o_visar_onsite { margin-top: 12px; font-size: 12px; color: #202020; }
+                        .o_visar_onsite h2.o_visar_onsite_h {
+                            font-size: 17px; font-weight: 700; margin: 0 0 10px 0;
+                            padding-bottom: 4px;
+                            border-bottom: 2px solid <t t-esc="visar_accent_ts"/>;
+                            color: <t t-esc="visar_accent_ts"/>;
+                        }
+                        .o_visar_onsite_row {
+                            display: flex; align-items: baseline; gap: 10px;
+                            padding: 4px 0; border-bottom: 1px solid #eef1f5;
+                            page-break-inside: avoid;
+                        }
+                        .o_visar_onsite_label { flex: 0 0 40%; font-weight: 600; color: #555; }
+                        .o_visar_onsite_value { flex: 1 1 auto; }
+                        .o_visar_onsite_row.is-total .o_visar_onsite_label,
+                        .o_visar_onsite_row.is-total .o_visar_onsite_value {
+                            font-size: 14px; font-weight: 700; color: <t t-esc="visar_accent_ts"/>;
+                            border-top: 1px solid #e6e9ef;
+                        }
+                    </style>
+                    <h2 class="o_visar_onsite_h">Tiempo en sitio</h2>
+                    <div class="o_visar_onsite_row">
+                        <span class="o_visar_onsite_label">Confirmó llegada</span>
+                        <span class="o_visar_onsite_value" t-out="ts['arrived']"/>
+                    </div>
+                    <div class="o_visar_onsite_row">
+                        <span class="o_visar_onsite_label">Última guarda de la hoja de trabajo</span>
+                        <span class="o_visar_onsite_value" t-out="ts['saved']"/>
+                    </div>
+                    <div class="o_visar_onsite_row is-total">
+                        <span class="o_visar_onsite_label">Duración (llegada → hoja de trabajo)</span>
+                        <span class="o_visar_onsite_value" t-out="ts['duration']"/>
+                    </div>
+                </div>
+            </t>
+        </xpath>
+    </template>
+
     <!-- Reemplaza el render AUTOGENERADO de la worksheet (report_view_id) por una
          maqueta Visar limpia: secciones = pestañas del notebook, filas etiqueta/
          valor, subfichas o2m como tabla, fotos dimensionadas. Si la tarea no
