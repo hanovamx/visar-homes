@@ -108,8 +108,7 @@ class ProjectTask(models.Model):
     visar_worksheet_saved_at = fields.Datetime(
         string="Hoja de trabajo guardada en", readonly=True,
         help="Primera vez que el técnico guardó la hoja de trabajo desde la app. "
-             "Hasta entonces la app NO muestra la sección de firma; al guardarla, "
-             "el servicio pasa a la etapa 'Pendiente de firma'.")
+             "Hasta entonces la app NO muestra la sección de firma ni el cierre.")
     visar_worksheet_saved_by_id = fields.Many2one(
         'hr.employee', string="Hoja de trabajo guardada por", readonly=True,
         help="Técnico que guardó la hoja de trabajo por primera vez.")
@@ -216,24 +215,18 @@ class ProjectTask(models.Model):
             self.stage_id = stage.id
 
     def _visar_stage_pending_signature(self):
-        """Etapa **Pendiente de firma** (entre En ejecución y Completado).
+        """Etapa **Pendiente de firma** (archivada; ya no se usa en el flujo).
 
-        NO es nativa de industry_fsm: existía a mano en `visar_prod` (archivada,
-        sin xmlid) y el sembrador `hooks.py::seed_signature_stage` la adopta —
-        la activa, la ordena (seq 15) y le pone este xmlid. Si el seed no corrió,
-        devuelve vacío y quien llama simplemente no cambia de etapa."""
+        Se conserva el lookup por xmlid solo para reconciliar tareas viejas que
+        aún la tengan: la app las trata como 'en_ejecucion' y no borra sellos.
+        El gate de firma usa `visar_worksheet_saved_at`, no esta etapa."""
         return self.env.ref(
             'visar_field_app.visar_stage_pending_signature', raise_if_not_found=False)
 
     def _visar_set_stage_pending_signature(self):
-        """Pasa a 'Pendiente de firma' al guardar la hoja de trabajo.
-
-        Solo avanza desde **En ejecución**: si gestión ya la movió a Completado o
-        Incidencia, re-guardar la hoja NO debe devolverla hacia atrás."""
+        """No-op. La etapa se retiró del flujo; la firma se habilita por sello."""
         self.ensure_one()
-        stage = self._visar_stage_pending_signature()
-        if stage and self.stage_id == self._visar_fsm_stage(2):
-            self.stage_id = stage.id
+        return
 
     def write(self, vals):
         """Al cambiar de etapa (desde la app O desde el backend "Servicio externo"),
@@ -264,10 +257,9 @@ class ProjectTask(models.Model):
         s3 = self._visar_fsm_stage(3)  # Completado
         sign = self._visar_stage_pending_signature()
         stage = self.stage_id
-        # ⚠️ 'Pendiente de firma' ES etapa de servicio: guardar la hoja de trabajo
-        # mueve la tarea ahí, y si no estuviera en esta lista este mismo método
-        # borraría `visar_service_start` → la app volvería a "esperando" y volvería
-        # a ocultar la hoja recién guardada.
+        # 'Pendiente de firma' está archivada, pero si queda alguna tarea vieja
+        # ahí hay que tratarla como servicio (si no, se borra `visar_service_start`
+        # y la app oculta la hoja / firma).
         in_service = ((s2 and stage == s2) or (s3 and stage == s3)
                       or (sign and stage == sign))
         # "En ruta" abarca En camino + En ejecución + Completado: mientras la tarea

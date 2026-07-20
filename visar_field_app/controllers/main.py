@@ -422,8 +422,8 @@ class VisarFieldApp(http.Controller):
             return 'cerrado'
         if s4 and stage == s4:
             return 'reagenda'
-        # 'Pendiente de firma' (la pone el guardado de la hoja) sigue siendo servicio
-        # en curso para la app: el técnico sigue en el domicilio, ahora firmando.
+        # Etapa archivada (retirada del flujo). Si queda alguna tarea vieja ahí,
+        # se trata como servicio en curso (firma gated por visar_worksheet_saved_at).
         if sign and stage == sign:
             return 'en_ejecucion'
         if s2 and stage == s2:
@@ -1500,17 +1500,18 @@ class VisarFieldApp(http.Controller):
                 record.write(vals)
             self._sync_worksheet_lines(
                 task, record, post, request.httprequest.files)
-            # Req 6: guardar la hoja habilita la firma y mueve la etapa a
-            # 'Pendiente de firma'. El sello _saved_at/_by_id es de la PRIMERA vez
-            # (auditoría); _last_saved_at se actualiza en CADA guardado (Req 8: con
-            # la llegada define el tiempo en sitio del PDF).
+            # Req 6: guardar la hoja habilita la firma (sello _saved_at). La etapa
+            # FSM se queda en En ejecución — "Pendiente de firma" se retiró del
+            # flujo (el tramo hoja→firma es de segundos/minutos y no aporta a
+            # gestión). El sello _saved_at/_by_id es de la PRIMERA vez (auditoría);
+            # _last_saved_at se actualiza en CADA guardado (Req 8: con la llegada
+            # define el tiempo en sitio del PDF).
             now = fields.Datetime.now()
             ws_vals = {'visar_worksheet_last_saved_at': now}
             if not task.visar_worksheet_saved_at:
                 ws_vals['visar_worksheet_saved_at'] = now
                 ws_vals['visar_worksheet_saved_by_id'] = employee.id
             task.write(ws_vals)
-            task._visar_set_stage_pending_signature()
         return request.redirect('/visar/field/task/%s?saved=1' % task.id)
 
     # ==================================================================
