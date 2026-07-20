@@ -1065,7 +1065,15 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.redirect('/appointment/visar/booking/wizard/valoracion-aviso')
 
         if request.httprequest.method == 'GET':
-            return self._visar_render_address(selections, values=post)
+            # Prefill from session so the user can revisit and edit the address.
+            values = dict(booking.get('delivery_address') or {})
+            values.update({k: v for k, v in (post or {}).items() if v})
+            if values.get('zip') and not values.get('city'):
+                cp_record = request.env['visar.zone.cp'].sudo()._get_cp_record(values['zip'])
+                if cp_record:
+                    values['city'] = cp_record.municipality or ''
+                    values['state'] = 'Nuevo León'
+            return self._visar_render_address(selections, values=values)
 
         zone, address, error = self._visar_resolve_address_zone(post)
         if error:
@@ -1168,6 +1176,14 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             valuation_tmpl.currency_id if valuation_tmpl
             else request.env.company.currency_id
         )
+        booking = self._visar_get_booking_session()
+        values = dict(booking.get('delivery_address') or {})
+        values.update({k: v for k, v in kwargs.items() if v})
+        if values.get('zip') and not values.get('city'):
+            cp_record = request.env['visar.zone.cp'].sudo()._get_cp_record(values['zip'])
+            if cp_record:
+                values['city'] = cp_record.municipality or ''
+                values['state'] = 'Nuevo León'
         return request.render('visar_appointment.visar_valoracion_page', {
             'appointment_type': appointment_type,
             'valuation_product': valuation_tmpl,
@@ -1175,7 +1191,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'valuation_currency': currency,
             'from_wizard': self._visar_parse_bool(kwargs.get('from_wizard')),
             'error': kwargs.get('error'),
-            'values': kwargs,
+            'values': values,
         })
 
     # Procesa la dirección en valoración, deriva la zona del CP y redirige a la agenda.
@@ -1502,7 +1518,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return response
 
     # Crea (o reutiliza) un contacto de entrega tipo 'delivery' con la dirección
-    # capturada y lo asigna como dirección de envío (partner_shipping_id) del pedido.
+    # capturada y la fija como dirección de servicio Visar (no la pisa el checkout).
     def _visar_apply_delivery_address(self, order_sudo, booking, partner_name=None):
         address = (booking or {}).get('delivery_address') or {}
         if not address or not order_sudo.partner_id:
@@ -1541,7 +1557,13 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             ('zip', '=', vals['zip']),
         ], limit=1)
         delivery_partner = existing or Partner.create(vals)
-        order_sudo.partner_shipping_id = delivery_partner.id
+        if existing:
+            # Keep name/details fresh when reusing (e.g. new booking contact name).
+            existing.write({
+                k: vals[k] for k in ('name', 'street2', 'city', 'state_id', 'country_id')
+                if vals.get(k)
+            })
+        order_sudo._visar_set_service_shipping(delivery_partner)
 
     # Elimina del carrito las líneas de reservas Visar anteriores, para que rehacer
     # el wizard REEMPLACE la cita en lugar de acumular líneas duplicadas. Solo toca
