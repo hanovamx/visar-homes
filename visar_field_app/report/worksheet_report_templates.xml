@@ -1,85 +1,82 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <!-- Req 8: bloque "Tiempo en sitio" (llegada → última guarda de la hoja de
-         trabajo). Se coloca JUSTO ANTES de la sección nativa "Registro de horas"
-         (timesheets), que muestra el tiempo trabajado (inicio de servicio →
-         cierre) — un dato distinto. Solo aparece si hay ambos sellos
-         (visar_time_map, calculado en report_worksheet.py). -->
-    <template id="visar_worksheet_report_onsite"
+    <!-- ================================================================
+         Cascarón compartido del reporte para el CLIENTE.
+         El logo y los datos de Visar los pone `web.external_layout` (compañía).
+         Aquí se ajusta la fila superior (Cliente + Técnico) y se retiran los
+         bloques de tiempo/costo INTERNOS que el cliente no debe ver.
+         ================================================================ -->
+
+    <!-- (1) Cliente y (2) Técnico. Reemplaza la fila nativa, que ponía el Técnico
+         desde `user_ids` (VACÍO en técnicos de campo, sin usuario interno) y dejaba
+         el bloque en blanco. Orden pedido por el cliente: primero Cliente, luego
+         Técnico (nombre + teléfono, desde `visar_tech_map`). -->
+    <template id="visar_worksheet_report_parties"
               inherit_id="industry_fsm.worksheet_custom_page" priority="98">
-        <xpath expr="//div[@name='worksheet_task_timesheet']" position="before">
-            <t t-if="visar_time_map and visar_time_map.get(doc.id)">
-                <t t-set="ts" t-value="visar_time_map.get(doc.id)"/>
-                <t t-set="visar_accent_ts" t-value="doc.company_id.primary_color or '#5faf33'"/>
-                <div class="o_visar_onsite">
-                    <style>
-                        .o_visar_onsite { margin-top: 12px; font-size: 12px; color: #202020; }
-                        .o_visar_onsite h2.o_visar_onsite_h {
-                            font-size: 17px; font-weight: 700; margin: 0 0 10px 0;
-                            padding-bottom: 4px;
-                            border-bottom: 2px solid <t t-esc="visar_accent_ts"/>;
-                            color: <t t-esc="visar_accent_ts"/>;
-                        }
-                        .o_visar_onsite_row {
-                            display: flex; align-items: baseline; gap: 10px;
-                            padding: 4px 0; border-bottom: 1px solid #eef1f5;
-                            page-break-inside: avoid;
-                        }
-                        .o_visar_onsite_label { flex: 0 0 40%; font-weight: 600; color: #555; }
-                        .o_visar_onsite_value { flex: 1 1 auto; }
-                        .o_visar_onsite_row.is-total .o_visar_onsite_label,
-                        .o_visar_onsite_row.is-total .o_visar_onsite_value {
-                            font-size: 14px; font-weight: 700; color: <t t-esc="visar_accent_ts"/>;
-                            border-top: 1px solid #e6e9ef;
-                        }
-                    </style>
-                    <h2 class="o_visar_onsite_h">Tiempo en sitio</h2>
-                    <div class="o_visar_onsite_row">
-                        <span class="o_visar_onsite_label">Confirmó llegada</span>
-                        <span class="o_visar_onsite_value" t-out="ts['arrived']"/>
-                    </div>
-                    <div class="o_visar_onsite_row">
-                        <span class="o_visar_onsite_label">Última guarda de la hoja de trabajo</span>
-                        <span class="o_visar_onsite_value" t-out="ts['saved']"/>
-                    </div>
-                    <div class="o_visar_onsite_row is-total">
-                        <span class="o_visar_onsite_label">Duración (llegada → hoja de trabajo)</span>
-                        <span class="o_visar_onsite_value" t-out="ts['duration']"/>
-                    </div>
+        <xpath expr="//div[@class='page']/div[@class='oe_structure']/following-sibling::div[1]"
+               position="replace">
+            <!-- margin-bottom amplio: separa la ficha Cliente/Técnico del título del
+                 servicio (antes quedaban pegados). -->
+            <div class="row" style="margin-bottom: 28px;">
+                <div t-if="doc.partner_id"
+                     t-att-class="'col-6' if report_type == 'pdf' else 'col-md-6 col-12'">
+                    <div><strong>Cliente:</strong></div>
+                    <div t-out="doc.partner_id" t-options='{
+                        "widget": "contact",
+                        "fields": ["name", "address", "phone", "email"]}'/>
                 </div>
-            </t>
+                <div t-att-class="'col-6' if report_type == 'pdf' else 'col-md-6 col-12'">
+                    <div><strong>Técnico que realizó el servicio:</strong></div>
+                    <t t-if="visar_tech_map and visar_tech_map.get(doc.id)">
+                        <div t-foreach="visar_tech_map.get(doc.id)" t-as="tech"
+                             t-key="tech_index" class="mb-1">
+                            <div t-out="tech['name']"/>
+                            <div t-if="tech['phone']">Tel.: <span t-out="tech['phone']"/></div>
+                        </div>
+                    </t>
+                    <div t-else="">—</div>
+                </div>
+            </div>
         </xpath>
     </template>
 
-    <!-- Reemplaza el render AUTOGENERADO de la worksheet (report_view_id) por una
-         maqueta Visar limpia: secciones = pestañas del notebook, filas etiqueta/
-         valor, subfichas o2m como tabla, fotos dimensionadas. Si la tarea no
-         produjo secciones legibles (`visar_worksheet_map` sin su id), se conserva
-         el render nativo como respaldo. -->
+    <!-- (4, parte interna) Se retiran del reporte del cliente los registros de
+         tiempo/costo INTERNOS: "Registro de horas" (timesheets nativo) y "Tiempo y
+         material" (industry_fsm_sale). La llegada y la finalización del servicio se
+         muestran en su lugar dentro del cuerpo (sección "Horario del servicio"). -->
+    <template id="visar_worksheet_report_hide_internal"
+              inherit_id="industry_fsm.worksheet_custom_page" priority="98">
+        <xpath expr="//div[@name='worksheet_task_timesheet']" position="replace"/>
+    </template>
+    <template id="visar_worksheet_report_hide_billing"
+              inherit_id="industry_fsm_sale.worksheet_custom_page" priority="98">
+        <xpath expr="//t[@t-call='industry_fsm_sale.worksheet_time_and_material']/.."
+               position="replace"/>
+    </template>
+
+    <!-- Cuerpo del reporte: reemplaza el render AUTOGENERADO de la worksheet por la
+         maqueta Visar (secciones etiqueta/valor, subfichas como tabla, galerías de
+         fotos). Para Fumigación las secciones vienen ya ordenadas para el cliente
+         (Servicios → Horario → Áreas → Evidencia); para el resto de plantillas son
+         las pestañas del notebook. Si la tarea no produjo secciones legibles se
+         conserva el render nativo como respaldo. -->
     <template id="visar_worksheet_report_page"
               inherit_id="industry_fsm.worksheet_custom_page" priority="99">
         <xpath expr="//t[div[@name='worksheet_map']]" position="replace">
             <t t-if="visar_worksheet_map and visar_worksheet_map.get(doc.id)">
-                <!-- Acento = color de marca de la empresa (mismo que usa la cabecera
-                     del reporte, external_layout), para que TODO el documento sea
-                     coherente en vez de meter azul suelto. Se interpola aquí porque
-                     el WebKit de wkhtmltopdf no soporta variables CSS (var()). -->
+                <!-- Acento = color de marca de la empresa (mismo que la cabecera del
+                     external_layout), para que TODO el documento sea coherente. Se
+                     interpola aquí porque el WebKit de wkhtmltopdf no soporta var(). -->
                 <t t-set="visar_accent" t-value="doc.company_id.primary_color or '#5faf33'"/>
                 <div class="o_visar_ws">
                     <style>
                         .o_visar_ws { margin-top: 12px; font-size: 12px; color: #202020; }
-                        .o_visar_ws h2.o_visar_ws_heading {
-                            font-size: 17px; font-weight: 700; margin: 0 0 10px 0;
-                            padding-bottom: 4px;
-                            border-bottom: 2px solid <t t-esc="visar_accent"/>;
-                            color: <t t-esc="visar_accent"/>;
-                        }
                         .o_visar_ws_section { margin-bottom: 14px; }
                         .o_visar_ws_title {
-                            font-size: 13px; font-weight: 700; text-transform: uppercase;
+                            font-size: 14px; font-weight: 700; text-transform: uppercase;
                             letter-spacing: .03em; color: <t t-esc="visar_accent"/>;
-                            margin: 12px 0 6px 0; padding-bottom: 3px;
-                            border-bottom: 1px solid <t t-esc="visar_accent"/>;
+                            margin: 14px 0 6px 0; padding-bottom: 3px;
+                            border-bottom: 2px solid <t t-esc="visar_accent"/>;
                         }
                         .o_visar_ws_row {
                             display: flex; align-items: baseline; gap: 10px;
@@ -124,8 +121,15 @@
                             max-height: 54px; max-width: 90px;
                             border: 1px solid #e0e0e0; border-radius: 3px;
                         }
+                        .o_visar_ws_gallery {
+                            display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;
+                        }
+                        .o_visar_ws_gimg {
+                            max-height: 175px; max-width: 48%;
+                            border: 1px solid #e0e0e0; border-radius: 4px;
+                            page-break-inside: avoid;
+                        }
                     </style>
-                    <h2 class="o_visar_ws_heading">Hoja de trabajo</h2>
                     <t t-foreach="visar_worksheet_map.get(doc.id)" t-as="section"
                        t-key="section_index">
                         <div class="o_visar_ws_section">
@@ -134,7 +138,8 @@
                             <t t-foreach="section['fields']" t-as="f" t-key="f_index">
                                 <!-- Subficha one2many como tabla -->
                                 <div t-if="f['kind'] == 'table'" class="o_visar_ws_block">
-                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <span t-if="f['label']" class="o_visar_ws_label"
+                                          t-out="f['label']"/>
                                     <table class="o_visar_ws_table">
                                         <thead>
                                             <tr>
@@ -158,6 +163,15 @@
                                             </tr>
                                         </tbody>
                                     </table>
+                                </div>
+                                <!-- Galería de fotos (evidencia) -->
+                                <div t-elif="f['kind'] == 'gallery'" class="o_visar_ws_block">
+                                    <span class="o_visar_ws_label" t-out="f['label']"/>
+                                    <div class="o_visar_ws_gallery">
+                                        <img t-foreach="f['images']" t-as="img"
+                                             t-key="img_index" class="o_visar_ws_gimg"
+                                             t-att-src="image_data_uri(img)"/>
+                                    </div>
                                 </div>
                                 <!-- Foto (campo binario principal) -->
                                 <div t-elif="f['kind'] == 'image'" class="o_visar_ws_block">

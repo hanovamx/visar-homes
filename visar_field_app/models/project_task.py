@@ -9,8 +9,10 @@ from lxml import etree
 from markupsafe import Markup
 
 from odoo import api, fields, models
-from odoo.tools import html2plaintext
+from odoo.tools import formatLang, html2plaintext
 from odoo.tools.image import image_process
+
+from ..hooks import FUMIGACION_NAME
 
 _logger = logging.getLogger(__name__)
 
@@ -41,6 +43,9 @@ _WS_SKIP_NAME_HINTS = ('nombre_de_quien_firma',)
 # data-URI grande no corrompa el render de wkhtmltopdf (primera página en blanco).
 _WS_REPORT_IMG_PX = 640
 _WS_REPORT_IMG_QUALITY = 70
+# Tope de fotos por galería en el PDF del cliente (evita documentos gigantes si
+# una galería de evidencia trae decenas de fotos). Se muestran las más antiguas.
+_WS_REPORT_GALLERY_MAX = 12
 
 
 class ProjectTask(models.Model):
@@ -560,6 +565,11 @@ class ProjectTask(models.Model):
             [('x_project_task_id', '=', self.id)], limit=1, order='create_date desc')
         if not record:
             return []
+        # Fumigación: maqueta dedicada, optimizada para la legibilidad del cliente
+        # (Servicios agregados → Horario → Áreas tratadas → Evidencia). El resto de
+        # plantillas siguen el recorrido genérico de la vista (de aquí para abajo).
+        if template.sudo().name == FUMIGACION_NAME:
+            return self._visar_fumigacion_report_sections(record)
         try:
             arch = etree.fromstring(Model.get_view(view_type='form')['arch'])
         except Exception:  # noqa: BLE001 - vista dinámica ilegible → fallback nativo
@@ -764,3 +774,204 @@ class ProjectTask(models.Model):
         if ftype == 'html':
             return {'kind': 'scalar', 'text': html2plaintext(value) if value else ''}
         return {'kind': 'scalar', 'text': self._visar_ws_format_scalar(ftype, info, value)}
+
+    # ==================================================================
+    # Reporte PDF para el CLIENTE — datos compartidos + maqueta Fumigación
+    # ==================================================================
+    # El cascarón del reporte (external_layout con el logo/datos de Visar, la ficha
+    # del Cliente y la Firma) lo pinta la plantilla nativa; aquí se preparan los
+    # bloques que faltaban o que Visar reordena para el cliente.
+
+    def _visar_report_technicians(self):
+        """[{'name', 'phone'}] de los técnicos que realizaron el servicio.
+
+        Usa los técnicos ASIGNADOS como empleados (`visar_technician_ids`): el campo
+        nativo `user_ids` —del que tira el bloque "Técnico" del reporte nativo— va
+        vacío porque los técnicos de campo no tienen usuario interno. Cae a quien
+        cerró en campo si no hubiera asignación."""
+        self.ensure_one()
+        employees = self.visar_technician_ids or self.visar_field_closed_by_id
+        return [{
+            'name': emp.name or '',
+            'phone': emp.work_phone or emp.mobile_phone or '',
+        } for emp in employees]
+
+    def _visar_report_arrival_finish(self):
+        """{'arrived', 'finished'} formateados en el huso del técnico, o None si no
+        hay ninguno de los dos sellos.
+
+        Son los tiempos que le importan al cliente: llegada al domicilio y cierre
+        del servicio. NO se incluyen los registros internos (traslado, tiempo en
+        sitio, timesheets) — esos se retiran del reporte del cliente."""
+        self.ensure_one()
+        start, end = self.visar_arrived_at, self.visar_field_closed_at
+        if not (start or end):
+            return None
+        tz = self._visar_report_tz()
+
+        def fmt(dt):
+            if not dt:
+                return "—"
+            return pytz.utc.localize(dt).astimezone(tz).strftime('%d/%m/%Y %H:%M')
+
+        return {'arrived': fmt(start), 'finished': fmt(end)}
+
+    def _visar_report_services(self):
+        """Datos de la tabla "Servicios agregados" (SOLO las líneas de ESTA tarea),
+        o None si no hay.
+
+        Las líneas de la orden se reparten por tarea (`sale.order.line.task_id`, que
+        `visar_fsm` asigna a la línea de servicio y a sus add-ons), así que se filtra
+        por la tarea para no listar los servicios de otras cuadrillas de la misma
+        cita. Importes formateados en la moneda de la orden."""
+        self.ensure_one()
+        order = self.visar_sale_order_id
+        if not order:
+            return None
+        lines = order.order_line.filtered(
+            lambda sol: sol.task_id.id == self.id and not sol.display_type)
+        if not lines:
+            return None
+        currency = order.currency_id
+        rows, total = [], 0.0
+        for line in lines:
+            rows.append({
+                'name': line.product_id.display_name or line.name or '',
+                'qty': '%g' % line.product_uom_qty,
+                'price': formatLang(self.env, line.price_unit, currency_obj=currency),
+                'subtotal': formatLang(self.env, line.price_subtotal, currency_obj=currency),
+            })
+            total += line.price_subtotal
+        return {'rows': rows, 'total': formatLang(self.env, total, currency_obj=currency)}
+
+    def _visar_report_gallery(self, res_model, res_id, key, fallback=None):
+        """Lista de imágenes (base64 JPEG, listas para embeber) de una galería de
+        fotos — los adjuntos etiquetados con `visar_photo_key` de la App de Campo.
+
+        Cae al binary del campo (`fallback`) si la galería está vacía, para no perder
+        la foto representativa en datos antiguos. Cada foto se reescala/recomprime
+        (mismo tratamiento que el resto del reporte) para no inflar el PDF."""
+        self.ensure_one()
+        atts = self.env['ir.attachment'].sudo().search([
+            ('res_model', '=', res_model),
+            ('res_id', '=', res_id),
+            ('res_field', '=', False),
+            ('visar_photo_key', '=', key),
+            ('mimetype', 'like', 'image/'),
+        ], order='id asc', limit=_WS_REPORT_GALLERY_MAX)
+        images = []
+        for att in atts:
+            img = self._visar_ws_report_image(att.datas)
+            if img:
+                images.append(img)
+        if not images and fallback:
+            img = self._visar_ws_report_image(fallback)
+            if img:
+                images.append(img)
+        return images
+
+    def _visar_report_evidence_section(self, record):
+        """Sección "Evidencia" con subsecciones inicial / durante / final, o None si
+        no hay ninguna foto.
+
+        - Inicial  = galería `x_foto_inicial` (estado antes de iniciar).
+        - Durante  = galería `x_foto_ejecucion` (tratamiento aplicándose).
+        - Final    = fotos de evidencia POR ÁREA tratada (`x_foto_evidencia` de cada
+                     línea): la plantilla de Fumigación no tiene una foto de estado
+                     final propia, así que "evidencia final" se arma con la evidencia
+                     capturada en cada área.
+        Cada subsección se representa como un campo kind='gallery'; las vacías se
+        omiten para no dejar títulos huérfanos en el PDF."""
+        self.ensure_one()
+        fields_out = []
+        inicial = self._visar_report_gallery(
+            record._name, record.id, 'x_foto_inicial', record.x_foto_inicial)
+        if inicial:
+            fields_out.append(
+                {'kind': 'gallery', 'label': "Evidencia inicial", 'images': inicial})
+        durante = self._visar_report_gallery(
+            record._name, record.id, 'x_foto_ejecucion', record.x_foto_ejecucion)
+        if durante:
+            fields_out.append(
+                {'kind': 'gallery', 'label': "Durante el tratamiento", 'images': durante})
+        final = []
+        for line in record.x_areas_tratadas:
+            final += self._visar_report_gallery(
+                line._name, line.id, 'x_foto_evidencia', line.x_foto_evidencia)
+            if len(final) >= _WS_REPORT_GALLERY_MAX:
+                break
+        if final:
+            fields_out.append({
+                'kind': 'gallery', 'label': "Evidencia final (por área tratada)",
+                'images': final[:_WS_REPORT_GALLERY_MAX],
+            })
+        if not fields_out:
+            return None
+        return {'title': "Evidencia", 'fields': fields_out}
+
+    def _visar_report_plaguicidas_section(self, record):
+        """PENDIENTE (Req 7): tabla de plaguicidas utilizados con una breve
+        explicación de qué es cada uno. Requiere un modelo de plaguicidas (ficha
+        con nombre, principio activo y descripción) que hoy no existe: en la hoja
+        solo se captura el nombre por área (`x_plaguicida_nombre`), sin catálogo.
+        Devuelve None hasta que se defina ese modelo."""
+        return None
+
+    def _visar_fumigacion_report_sections(self, record):
+        """Secciones del reporte de Fumigación, en el orden pedido por el cliente:
+        (3) Servicios agregados → (4) Horario del servicio → (5) Áreas tratadas →
+        (6) Evidencia → (7) Plaguicidas [pendiente].
+
+        Cliente (1), Técnico (2) y Firma (8) los pinta el cascarón compartido del
+        reporte (fila superior y bloque de firma), no esta lista."""
+        self.ensure_one()
+        sections = []
+
+        # (3) Servicios agregados — tabla de servicios prestados con importes.
+        services = self._visar_report_services()
+        if services:
+            rows = [[
+                {'kind': 'scalar', 'text': r['name']},
+                {'kind': 'scalar', 'text': r['qty']},
+                {'kind': 'scalar', 'text': r['price']},
+                {'kind': 'scalar', 'text': r['subtotal']},
+            ] for r in services['rows']]
+            rows.append([
+                {'kind': 'scalar', 'text': "Total"},
+                {'kind': 'scalar', 'text': ''},
+                {'kind': 'scalar', 'text': ''},
+                {'kind': 'scalar', 'text': services['total']},
+            ])
+            sections.append({'title': "Servicios agregados", 'fields': [{
+                'kind': 'table', 'label': '',
+                'columns': ["Servicio", "Cantidad", "Precio unitario", "Subtotal"],
+                'rows': rows,
+            }]})
+
+        # (4) Horario del servicio — llegada y finalización (sin tiempos internos).
+        times = self._visar_report_arrival_finish()
+        if times:
+            sections.append({'title': "Horario del servicio", 'fields': [
+                {'kind': 'scalar', 'label': "Hora de llegada", 'text': times['arrived']},
+                {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
+            ]})
+
+        # (5) Áreas tratadas — subficha one2many como tabla (columnas de la vista).
+        info = self.env[record._name].sudo().fields_get(['x_areas_tratadas']).get('x_areas_tratadas')
+        if info:
+            table = self._visar_ws_table_descriptor(
+                'x_areas_tratadas', info, '', '', record)
+            if table:
+                sections.append({'title': "Áreas tratadas", 'fields': [table]})
+
+        # (6) Evidencia — galerías inicial / durante / final.
+        evidence = self._visar_report_evidence_section(record)
+        if evidence:
+            sections.append(evidence)
+
+        # (7) Plaguicidas utilizados — PENDIENTE (ver método stub).
+        plaguicidas = self._visar_report_plaguicidas_section(record)
+        if plaguicidas:
+            sections.append(plaguicidas)
+
+        return sections
