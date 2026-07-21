@@ -1543,11 +1543,32 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         delivery_partner = existing or Partner.create(vals)
         order_sudo.partner_shipping_id = delivery_partner.id
 
+    # Elimina del carrito las líneas de reservas Visar anteriores, para que rehacer
+    # el wizard REEMPLACE la cita en lugar de acumular líneas duplicadas. Solo toca
+    # líneas ligadas a un calendar.booking de un tipo de cita Visar (maestro o
+    # valoración); cualquier otro producto del carrito se conserva.
+    def _visar_clear_previous_booking_lines(self, order, keep_booking=None):
+        if not order:
+            return
+        AptType = request.env['appointment.type'].sudo()
+        visar_types = (AptType._visar_get_master_appointment_type()
+                       | AptType._visar_get_valuation_appointment_type())
+        if not visar_types:
+            return
+        stale = order.order_line.filtered(
+            lambda l: l.calendar_booking_ids
+            and (l.calendar_booking_ids.appointment_type_id & visar_types)
+            and (not keep_booking or keep_booking not in l.calendar_booking_ids)
+        )
+        if stale:
+            stale.sudo().unlink()
+
     # Construye el carrito multi-servicio del wizard y redirige a /shop/cart.
     def _visar_fill_wizard_cart_and_redirect(self, calendar_booking, booking):
         from odoo.addons.base.models.ir_qweb import keep_query
 
         order_sudo = request.cart or request.website._create_cart()
+        self._visar_clear_previous_booking_lines(order_sudo, keep_booking=calendar_booking)
         zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
         order_sudo._visar_apply_zone_pricelist(zone)
 
@@ -1620,6 +1641,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         booking = self._visar_get_booking_session()
         if booking and booking.get('mode') == 'valuation':
             order_sudo = request.cart or request.website._create_cart()
+            self._visar_clear_previous_booking_lines(order_sudo, keep_booking=calendar_booking)
             zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
             order_sudo._visar_apply_zone_pricelist(zone)
             items = booking.get('items') or []
