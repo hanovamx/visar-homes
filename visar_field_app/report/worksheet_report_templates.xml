@@ -54,6 +54,45 @@
                position="replace"/>
     </template>
 
+    <!-- (8) Etiqueta del bloque de firma nativo: "Firma" → "Firma y nombre del
+         cliente" (el nombre de quien firma ya se pinta debajo del trazo). -->
+    <template id="visar_worksheet_report_signature_label"
+              inherit_id="industry_fsm.worksheet_custom_page" priority="98">
+        <xpath expr="//div[@name='worksheet_signature']//h5" position="replace">
+            <h5>Firma y nombre del cliente</h5>
+        </xpath>
+    </template>
+
+    <!-- La cabecera de marca (logo + datos de Visar) sale SOLO en la primera página.
+         Odoo arma el header del PDF con `web.minimal_layout`, cuyo subst() corre por
+         página y toma el número de página REAL de la variable `sitepage` de la URL
+         (la misma que llena el "Page X / Y"); el `page` a secas queda en 1 para el
+         header combinado. Este script —que viaja DENTRO del <div class="header"> y por
+         eso acaba en el documento aislado del header— oculta el header cuando
+         sitepage != 1. Va guardado con `o_visar_first_page_header_only`, que SOLO pone
+         este reporte (report_worksheet.py), así que ningún otro reporte cambia. Se
+         engancha al layout de marca configurado (external_layout_bold). -->
+    <template id="visar_first_page_header" inherit_id="web.external_layout_bold">
+        <xpath expr="//div[@t-att-style='report_header_style']" position="inside">
+            <t t-if="o_visar_first_page_header_only">
+                <script type="text/javascript">
+                    function visarHideHeaderAfterFirst() {
+                        var vars = {};
+                        var q = document.location.search.substring(1).split('&amp;');
+                        for (var i in q) {
+                            var kv = q[i].split('=', 2);
+                            vars[kv[0]] = unescape(kv[1]);
+                        }
+                        if (vars['sitepage'] &amp;&amp; vars['sitepage'] !== '1') {
+                            document.body.style.visibility = 'hidden';
+                        }
+                    }
+                    window.addEventListener('load', visarHideHeaderAfterFirst);
+                </script>
+            </t>
+        </xpath>
+    </template>
+
     <!-- Cuerpo del reporte: reemplaza el render AUTOGENERADO de la worksheet por la
          maqueta Visar (secciones etiqueta/valor, subfichas como tabla, galerías de
          fotos). Para Fumigación las secciones vienen ya ordenadas para el cliente

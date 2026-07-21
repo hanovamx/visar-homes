@@ -942,7 +942,7 @@ class ProjectTask(models.Model):
                 {'kind': 'scalar', 'text': ''},
                 {'kind': 'scalar', 'text': services['total']},
             ])
-            sections.append({'title': "Servicios agregados", 'fields': [{
+            sections.append({'title': "Servicios y productos agregados", 'fields': [{
                 'kind': 'table', 'label': '',
                 'columns': ["Servicio", "Cantidad", "Precio unitario", "Subtotal"],
                 'rows': rows,

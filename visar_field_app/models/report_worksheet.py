@@ -27,4 +27,9 @@ class ReportFsmWorksheetCustom(models.AbstractModel):
                 tech_map[task.id] = techs
         values['visar_worksheet_map'] = visar_map
         values['visar_tech_map'] = tech_map
+        # La cabecera de marca (logo + datos de Visar) debe salir SOLO en la primera
+        # página del reporte del cliente. wkhtmltopdf repite la cabecera en cada
+        # página; el flag activa (solo para ESTE reporte) un script en el layout que
+        # la oculta a partir de la página 2. Ver visar_first_page_header en el XML.
+        values['o_visar_first_page_header_only'] = True
         return values
