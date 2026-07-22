@@ -213,3 +213,67 @@ class ProductTemplate(models.Model):
             if zone.code in cand_attrs and range_name in cand_attrs:
                 return candidate
         return variant
+
+    def _visar_axis_attribute(self, scope):
+        """Atributo (product.attribute) cuyo valor varía entre las variantes de los
+        tramos de este alcance ('interior'/'exterior').
+
+        Un mismo producto puede llevar dos atributos de tamaño (p. ej. tamaño inmueble
+        interior y tamaño jardín exterior). El eje de una medición es el atributo que
+        cambia entre sus propios tramos mientras el otro queda fijo en su valor base.
+        Así se identifica qué atributo corresponde a interior y cuál a exterior sin
+        IDs hardcodeados. Devuelve product.attribute vacío si no es unívoco."""
+        self.ensure_one()
+        tiers = self.visar_tier_ids.filtered(
+            lambda t: t.measure_scope == scope and not t.is_valuation
+            and t.product_id.product_tmpl_id == self)
+        variants = tiers.mapped('product_id')
+        per_attr = {}
+        for variant in variants:
+            for ptav in variant.product_template_attribute_value_ids:
+                per_attr.setdefault(ptav.attribute_id, set()).add(ptav.id)
+        varying = [attr for attr, values in per_attr.items() if len(values) > 1]
+        if len(varying) == 1:
+            return varying[0]
+        return self.env['product.attribute']
+
+    def _visar_combined_variant_for_tiers(self, interior_tier, exterior_tier, zone):
+        """Variante que combina ambos ejes de tamaño (interior + exterior) para una
+        selección de fumigación interior + exterior del mismo producto.
+
+        Resuelve la variante por zona de cada tramo, identifica el eje interior y el
+        exterior (`_visar_axis_attribute`) y busca la variante de la zona que lleva a la
+        vez el valor de tamaño interior elegido y el de tamaño exterior elegido.
+
+        Devuelve product.product vacío si no se puede resolver de forma unívoca; el
+        llamador debe entonces caer al comportamiento anterior de dos líneas."""
+        self.ensure_one()
+        empty = self.env['product.product']
+        if not interior_tier or not exterior_tier:
+            return empty
+        int_var = interior_tier._visar_get_variant_for_zone(zone)
+        ext_var = exterior_tier._visar_get_variant_for_zone(zone)
+        if not int_var or not ext_var:
+            return empty
+        interior_attr = self._visar_axis_attribute('interior')
+        exterior_attr = self._visar_axis_attribute('exterior')
+        if not interior_attr or not exterior_attr or interior_attr == exterior_attr:
+            return empty
+        int_ptav = int_var.product_template_attribute_value_ids.filtered(
+            lambda p: p.attribute_id == interior_attr)[:1]
+        ext_ptav = ext_var.product_template_attribute_value_ids.filtered(
+            lambda p: p.attribute_id == exterior_attr)[:1]
+        if not int_ptav or not ext_ptav:
+            return empty
+        # La zona (y cualquier otro atributo de configuración) se toma de la variante
+        # interior por VALOR de atributo, no por `visar_zone_id` (que solo está poblado en
+        # las variantes "carrier", no en las combinadas). La variante combinada difiere de
+        # la interior solo en el eje exterior, así que fija el resto de valores + int + ext.
+        other_ptavs = int_var.product_template_attribute_value_ids.filtered(
+            lambda p: p.attribute_id != interior_attr and p.attribute_id != exterior_attr)
+        target = int_ptav | ext_ptav | other_ptavs
+        for variant in self.product_variant_ids:
+            values = variant.product_template_attribute_value_ids
+            if all(ptav in values for ptav in target):
+                return variant
+        return empty

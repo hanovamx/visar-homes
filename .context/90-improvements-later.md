@@ -91,3 +91,33 @@
 - **Recomendación:** depurar PINs duplicados en datos; añadir constraint de unicidad (y a futuro,
   hash + throttling, junto con la deuda "PIN en texto plano" de `25-field-app.md`).
 - **Prioridad:** Media (afecta atribución real).
+
+## I-10 — Fumigación interior+exterior = UNA sola línea (variante combinada) + conflicto fila "1-250"
+- **Qué:** el wizard ahora **fusiona** fumigación interior + exterior en **una sola línea de venta** que
+  apunta a la **variante combinada** (ambos ejes de tamaño: "Tamaño inmueble" attr 10 interior + attr 14
+  exterior), en vez de dos líneas. El precio se **lee en vivo** de la regla de pricelist de esa variante
+  (decisión: nada horneado en código/migración; el consultor configura las 27 variantes combinadas
+  3×3×3). Código: `visar_appointment` **v19.0.2.3.0**, `visar_base` **v19.0.1.4.0**,
+  `product.template._visar_combined_variant_for_tiers` / `_visar_axis_attribute`; la fusión ocurre solo
+  en `_visar_build_sale_lines` (los `items` siguen siendo dos → pools, valoración y descuento combo del
+  corte intactos). El label y el Q&A "metros" se colapsan a una entrada (línea única minimal).
+- **Supuesto vigente (por eso este ítem):** asumimos que basta con **configurar los precios de las 27
+  variantes combinadas** (suma interior+exterior por zona; A/C hoy están mal, ver `70-tabulador.md`).
+  Eso es cierto para **21 de 27** variantes.
+- **El cabo suelto — fila interior "1-250":** las 6 variantes `(1-250, {51-100,101-500}, {A,B,C})` hacen
+  **doble función**: son a la vez la línea de **exterior-solo** (precio jardín standalone, p. ej. 800 en B)
+  y la **combinada interior-1-250 + jardín** (suma, p. ej. 1400). Una variante = un precio → no se pueden
+  cumplir ambos. Configurar precios **no lo resuelve** para esas 6. (Las filas 251-500 y 501-1000 no
+  comparten variante y sí se arreglan solo con precio.)
+- **Decisión de negocio que lo destraba:** ¿Visar mantiene la reserva **exterior-solo** (jardín sin
+  interior; hoy el paso "cobertura" ofrece "Solo exterior / jardín")?
+  - **Sí** → **reestructurar**: añadir un valor de interior **"Sin interior"** al attr 10, repuntar los
+    tramos exteriores (`visar.service.tier` scope=exterior de la plantilla 30) a las variantes
+    `(Sin interior, E)` (que llevan el precio jardín standalone), liberando las `(1-250, E)` como
+    combinadas reales. **El código no cambia** (el resolutor arma la combinada por *valores* interior+
+    exterior+zona). Luego configurar las 27.
+  - **No** (se retira exterior-solo) → basta configurar las 27 (sin reestructura).
+- **Estado:** código **hecho y verificado** en `visar_prod` (una línea combinada E2E, descuento corte
+  intacto, regresiones OK) pero **staged en `main`, sin commitear**. Hoy la fila 1-250 cobra de más/menos
+  hasta resolver el punto anterior — **prerequisito de correctitud** igual que los precios A/C.
+- **Prioridad:** Alta si se va a activar la línea única; ligada a la decisión exterior-solo.

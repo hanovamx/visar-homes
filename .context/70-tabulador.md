@@ -83,5 +83,17 @@
 | Visita de Valoración Técnica | — | — | única, $500 plano |
 
 > Precios `list_price` de cada variante = **Zona B (base)**. Zonas A/C vía pricelist con %.
+
+> **Corrección (jul-2026):** en `visar_prod` el `list_price` de las variantes es un placeholder
+> (600); el **precio real vive en reglas fijas de la pricelist por zona** (`product.pricelist.item`,
+> `applied_on='0_product_variant'`, `compute_price='fixed'`). Interior + exterior comparten una sola
+> plantilla (id 30) con **dos** atributos "Tamaño inmueble" (interior + jardín).
+
+> **Línea única de fumigación (interior+exterior) — supuesto vigente + cabo suelto.** Se pasó a **una
+> sola línea** con la **variante combinada** (ambos tamaños), precio leído en vivo. Requiere configurar
+> las **27 variantes combinadas** (suma interior+exterior por zona). Ojo: las 6 variantes de la fila
+> interior **"1-250"** están **compartidas con la reserva exterior-solo**, así que precio-solo no basta
+> para esa fila; depende de si Visar mantiene exterior-solo (→ reestructura "Sin interior") o no.
+> Detalle completo en [`90-improvements-later.md`](./90-improvements-later.md) **I-10**.
 </content>
 </invoke>

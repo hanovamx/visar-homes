@@ -183,6 +183,34 @@ class AppointmentType(models.Model):
         return self._visar_item_label(item)
 
     @api.model
+    def _visar_combined_answer_label(self, interior_item, exterior_item):
+        """Etiqueta única (producto + ambos tamaños) para el par interior+exterior
+        fusionado, en lugar de dos etiquetas por dimensión (línea única = una entrada)."""
+        tmpl = self.env['product.template'].browse(
+            interior_item.get('product_tmpl_id')).exists()
+        name = tmpl.display_name if tmpl else _('Fumigación')
+        sizes = [t for t in (interior_item.get('tier_name'),
+                             exterior_item.get('tier_name')) if t]
+        return '%s: %s' % (name, ' / '.join(sizes)) if sizes else name
+
+    @api.model
+    def _visar_metros_labels(self, items):
+        """Etiquetas de m² para Q&A; colapsa el par interior+exterior en una sola entrada
+        (línea única) en vez de una por dimensión."""
+        interior_item, exterior_item = self._visar_interior_exterior_pair(items)
+        labels = []
+        for item in items:
+            if interior_item is not None and item is exterior_item:
+                continue  # plegado en la etiqueta combinada del item interior
+            if interior_item is not None and item is interior_item:
+                labels.append(self._visar_combined_answer_label(interior_item, exterior_item))
+                continue
+            label = self._visar_item_answer_label(item)
+            if label:
+                labels.append(label)
+        return labels
+
+    @api.model
     def _visar_build_native_answer_inputs(self, appointment_type, zone, items=None,
                                           partner_id=False, selections=None,
                                           delivery_address=None):
@@ -213,11 +241,7 @@ class AppointmentType(models.Model):
 
         metros_q = self._visar_question_metros()
         if items and metros_q:
-            labels = [
-                label for label in (
-                    self._visar_item_answer_label(item) for item in items
-                ) if label
-            ]
+            labels = self._visar_metros_labels(items)
             if labels:
                 inputs.append({
                     **base,
@@ -653,6 +677,49 @@ class AppointmentType(models.Model):
         offers.sort(key=lambda o: o['name'])
         return offers
 
+    @api.model
+    def _visar_interior_exterior_pair(self, items):
+        """Par (item_interior, item_exterior) del MISMO producto, ambos con precio y no
+        valoración, candidato a fusionarse en una variante combinada. (None, None) si no
+        aplica (p. ej. exterior 0-50 incluida, o exterior de otro producto como el corte)."""
+        Dimension = self.env['visar.service.dimension']
+        interior_by_tmpl = {}
+        for item in items:
+            if item.get('is_free') or item.get('is_valuation') or not item.get('product_tmpl_id'):
+                continue
+            dimension = Dimension.browse(item.get('dimension_id')).exists()
+            if dimension and dimension.measure_type == 'interior':
+                interior_by_tmpl[item['product_tmpl_id']] = item
+        for item in items:
+            if item.get('is_free') or item.get('is_valuation') or not item.get('product_tmpl_id'):
+                continue
+            dimension = Dimension.browse(item.get('dimension_id')).exists()
+            if dimension and dimension.measure_type == 'exterior' \
+                    and item['product_tmpl_id'] in interior_by_tmpl:
+                return interior_by_tmpl[item['product_tmpl_id']], item
+        return None, None
+
+    @api.model
+    def _visar_combined_fumigacion_line(self, interior_item, exterior_item, zone):
+        """Línea de venta única para el par interior+exterior: usa la variante combinada
+        (ambos ejes de tamaño) y su precio leído en vivo de la pricelist. Devuelve None si
+        no se puede resolver la variante combinada (el llamador cae a dos líneas)."""
+        tmpl = self.env['product.template'].browse(interior_item.get('product_tmpl_id')).exists()
+        Tier = self.env['visar.service.tier']
+        interior_tier = Tier.browse(interior_item.get('tier_id')).exists()
+        exterior_tier = Tier.browse(exterior_item.get('tier_id')).exists()
+        if not (tmpl and interior_tier and exterior_tier):
+            return None
+        combined = tmpl._visar_combined_variant_for_tiers(interior_tier, exterior_tier, zone)
+        if not combined or self._visar_list_unit_price(combined, zone) <= 0:
+            return None
+        return {
+            'product_id': combined.id,
+            'discount': 0.0,
+            'dimension_id': False,
+            'is_combined_fumigacion': True,
+        }
+
     # Construye las líneas de venta con variante por zona, descuento combo e incluidos al 100%.
     @api.model
     def _visar_build_sale_lines(self, items, zone, include_roedores=False, extra_addons=None):
@@ -668,7 +735,19 @@ class AppointmentType(models.Model):
         dimension_ids = [item['dimension_id'] for item in items if item.get('dimension_id')]
 
         lines = []
+        # Fusiona interior + exterior del mismo producto en UNA línea (variante combinada
+        # con ambos ejes de tamaño). Se resuelve antes del bucle para que dimension_ids
+        # (arriba) conserve interior+exterior y el descuento combo del corte siga aplicando.
+        interior_item, exterior_item = self._visar_interior_exterior_pair(items)
+        combined_line = self._visar_combined_fumigacion_line(
+            interior_item, exterior_item, zone) if (interior_item and exterior_item) else None
+        if combined_line:
+            lines.append(combined_line)
+        else:
+            interior_item = exterior_item = None  # sin fusión: se procesan normalmente
         for item in items:
+            if item is interior_item or item is exterior_item:
+                continue
             tier = self.env['visar.service.tier'].browse(item.get('tier_id')).exists()
             if not tier:
                 continue
@@ -713,12 +792,16 @@ class AppointmentType(models.Model):
                 })
 
         addon_qty = {}
+        seen_addon_tmpls = set()
         for item in items:
             if item.get('is_free') or item.get('is_valuation'):
                 continue
             tmpl_id = item.get('product_tmpl_id')
-            if not tmpl_id:
+            # Un mismo producto (p. ej. fumigación interior + exterior) aparece en dos
+            # items pero es un solo servicio: sus add-ons obligatorios se cuentan una vez.
+            if not tmpl_id or tmpl_id in seen_addon_tmpls:
                 continue
+            seen_addon_tmpls.add(tmpl_id)
             tmpl = ProductTemplate.browse(tmpl_id).exists()
             if not tmpl:
                 continue
