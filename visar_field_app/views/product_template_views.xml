@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Marca de "vendible en campo": va junto a "Puede ser vendido" porque es la
+         misma decisión comercial, un canal más. Sin esto el catálogo de la app se
+         administra solo por código. -->
+    <record id="product_template_form_visar_upsell" model="ir.ui.view">
+        <field name="name">product.template.form.visar.upsell</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='sale_ok']" position="after">
+                <field name="visar_upsell_ok"
+                       invisible="not sale_ok"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Filtro para revisar de un vistazo qué se está ofreciendo en campo. -->
+    <record id="product_template_search_visar_upsell" model="ir.ui.view">
+        <field name="name">product.template.search.visar.upsell</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_search_view"/>
+        <field name="arch" type="xml">
+            <filter name="filter_to_sell" position="after">
+                <filter name="visar_upsell_ok" string="Vendible en campo (upsell)"
+                        domain="[('visar_upsell_ok', '=', True)]"/>
+            </filter>
+        </field>
+    </record>
+
+</odoo>

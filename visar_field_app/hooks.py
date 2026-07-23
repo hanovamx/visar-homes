@@ -535,6 +535,43 @@ def seed_signature_stage(env):
     return archive_signature_stage(env)
 
 
+# ======================================================================
+# Catálogo de venta en campo (upsell)
+# ======================================================================
+# Negocio ya tenía curada una categoría "Upsell" con lo que se ofrece como extra.
+# El sembrador la usa como SEMILLA del flag `visar_upsell_ok` — una sola vez, no
+# como criterio permanente: la categoría es contable, y si mañana quieren dejar de
+# ofrecer un producto no deberían tener que moverle las cuentas.
+UPSELL_CATEG_NAME = "Upsell"
+
+
+def seed_upsell_catalog(env):
+    """Enciende `visar_upsell_ok` en los productos de la categoría "Upsell".
+
+    Idempotente y NO destructivo: solo enciende, nunca apaga. Si alguien quitó a
+    mano un producto del catálogo de campo, re-ejecutar el sembrador no lo revive.
+    """
+    categ = env['product.category'].sudo().search(
+        [('name', '=', UPSELL_CATEG_NAME)], limit=1)
+    if not categ:
+        _logger.info("Sin categoría '%s': catálogo de upsell sin sembrar",
+                     UPSELL_CATEG_NAME)
+        return env['product.template'].sudo().browse()
+
+    products = env['product.template'].sudo().search([
+        ('categ_id', 'child_of', categ.id),
+        ('sale_ok', '=', True),
+        ('recurring_invoice', '=', False),
+        ('visar_upsell_ok', '=', False),
+    ])
+    if products:
+        products.write({'visar_upsell_ok': True})
+    _logger.info("Catálogo de upsell: %s producto(s) marcados vendibles en campo",
+                 len(products))
+    return products
+
+
 def post_init_hook(env):
     seed_worksheet_templates(env)
     archive_signature_stage(env)
+    seed_upsell_catalog(env)

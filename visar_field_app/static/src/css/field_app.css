@@ -206,3 +206,64 @@
 .o_visar_field .o_visar_req {
     font-weight: 700;
 }
+
+/* ===================== Upsell en campo ===================== */
+
+/* Franja verde: distingue de un vistazo la sección de VENTA de las de captura. */
+.o_visar_field .o_visar_upsell_card {
+    border-left: .25rem solid #198754;
+}
+
+.o_visar_field .o_visar_upsell_line {
+    display: flex;
+    align-items: flex-start;
+    gap: .6rem;
+}
+
+/* Los importes se leen en columna: sin ancho tabular bailan al cambiar cantidad. */
+.o_visar_field .o_visar_upsell_total {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+/* Contador de cantidad: botones grandes para el pulgar, campo angosto en medio.
+   Es el control que más se usa del catálogo y se opera de pie, con guantes. */
+.o_visar_field .o_visar_qty {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+}
+
+.o_visar_field .o_visar_qty button {
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    flex: 0 0 auto;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.o_visar_field .o_visar_qty input {
+    width: 3.2rem;
+    text-align: center;
+    padding: .25rem;
+}
+
+/* Producto con cantidad > 0: resaltado, para ver qué se va a agregar sin
+   recorrer toda la lista. */
+.o_visar_field .o_visar_prod_item.o_selected {
+    background: rgba(25, 135, 84, .08);
+    border-color: #198754;
+}
+
+/* QR de cobro: se lo enseña al cliente, así que se dibuja grande y nítido. */
+.o_visar_field .o_visar_qr_img {
+    width: 240px;
+    max-width: 100%;
+    height: auto;
+    image-rendering: pixelated;
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    padding: 6px;
+    background: #fff;
+}

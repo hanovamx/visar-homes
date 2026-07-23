@@ -56,6 +56,9 @@ O2M_PRESENT_PREFIX = 'o2mpresent'
 O2M_SEP = '~'
 # Reporte nativo de la worksheet FSM.
 FSM_REPORT = 'industry_fsm.worksheet_custom'
+# Lado del QR de cobro (px). Suficiente para que una cámara lo lea desde ~30 cm
+# sobre la pantalla del técnico, sin que el PNG pese de más.
+UPSELL_QR_PX = 320
 
 # ------------------------------------------------------------------
 # Obligatoriedad de la hoja de trabajo (Req 7)
@@ -1316,7 +1319,8 @@ class VisarFieldApp(http.Controller):
         waiting_minutes = task.visar_waiting_minutes or self._default_waiting_minutes()
         flow_state = self._task_flow_state(task)
         worksheet_available = self._worksheet_available(flow_state)
-        return request.render('visar_field_app.field_task_detail', {
+        values = self._upsell_render_values(task)
+        values.update({
             'employee': employee,
             'task': task,
             'has_worksheet_template': bool(task.worksheet_template_id),
@@ -1341,7 +1345,9 @@ class VisarFieldApp(http.Controller):
             'waiting_start_iso': (task.visar_waiting_start.isoformat() + 'Z'
                                   if task.visar_waiting_start else ''),
             'close_error': kw.get('close_error'),
+            'upsell_msg': kw.get('upsell'),
         })
+        return request.render('visar_field_app.field_task_detail', values)
 
     # ==================================================================
     # Captura: fotos por campo (galería viva sobre campos-foto principales)
@@ -1604,6 +1610,13 @@ class VisarFieldApp(http.Controller):
         if not self._signature_available(task, self._task_flow_state(task)):
             return request.redirect('/visar/field/task/%s' % task.id)
 
+        # Un carrito de adicionales en BORRADOR es plata en la mesa: productos que
+        # el técnico agregó y nadie cobró. Se bloquea el cierre hasta que genere el
+        # cobro o los quite. Un pedido ya confirmado y pendiente de pago SÍ deja
+        # cerrar: ahí el cobro existe y administración le da seguimiento.
+        if task._visar_upsell_state() == 'borrador':
+            return request.redirect('/visar/field/task/%s?upsell=pending' % task.id)
+
         # Validación de cierre: firma Y nombre obligatorios (defensa en profundidad;
         # el JS también bloquea el submit).
         signature = self._decode_data_url(post.get('signature'))
@@ -1622,6 +1635,209 @@ class VisarFieldApp(http.Controller):
             'worksheet_signed_by': signed_by,
         })
         return request.redirect('/visar/field/task/%s?saved=1' % task.id)
+
+    # ==================================================================
+    # Upsell en campo: catálogo, carrito y cobro
+    # ==================================================================
+    # Las cinco rutas comparten la misma guarda: técnico identificado + servicio
+    # SUYO + servicio EN EJECUCIÓN. La última importa: vender antes de llegar (o
+    # después de cerrar) no es upsell en sitio, y la app pública tiene que
+    # rechazarlo en el servidor, no solo escondiendo el botón.
+    def _upsell_task(self, task_id, employee, require_running=True):
+        task = self._task_for_employee(task_id, employee)
+        if not task:
+            return None
+        if require_running and not self._upsell_available(task):
+            return None
+        return task
+
+    def _upsell_available(self, task):
+        """¿Se puede vender en este momento? Misma fase que la hoja de trabajo,
+        pero sin incluir 'cerrado': un servicio ya firmado no admite venta nueva
+        (el cobro tendría que hacerlo administración)."""
+        return self._task_flow_state(task) == 'en_ejecucion'
+
+    def _upsell_render_values(self, task):
+        """Valores comunes de la tarjeta de adicionales (detalle y pantalla de cobro)."""
+        order = task._visar_upsell_order()
+        zone = task._visar_upsell_zone()
+        return {
+            'upsell_state': task._visar_upsell_state(),
+            'upsell_order': order,
+            'upsell_lines': (order.order_line.filtered(lambda l: not l.display_type)
+                             if order else []),
+            'upsell_zone': zone.name if zone else '',
+            'upsell_available': self._upsell_available(task),
+        }
+
+    @http.route('/visar/field/task/<int:task_id>/upsell', type='http', auth='public',
+                website=True, sitemap=False)
+    def field_upsell_catalog(self, task_id, **kw):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        zone = task._visar_upsell_zone()
+        return request.render('visar_field_app.field_upsell_catalog', {
+            'employee': employee,
+            'task': task,
+            'catalog': task._visar_upsell_catalog(),
+            'upsell_zone': zone.name if zone else '',
+            'currency': task._visar_upsell_order().currency_id or request.env.company.currency_id,
+        })
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/add', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_upsell_add(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        # El formulario manda `qty~<product_id>` por producto; solo cuentan los > 0,
+        # así el técnico puede llenar varios renglones y agregar todo de un tirón.
+        added = 0
+        for key, value in post.items():
+            if not key.startswith('qty~'):
+                continue
+            raw_id = key.split('~', 1)[1]
+            if not raw_id.isdigit():
+                continue
+            try:
+                quantity = int(float(value or 0))
+            except (TypeError, ValueError):
+                continue
+            if quantity <= 0:
+                continue
+            if task._visar_upsell_add(employee, int(raw_id), quantity):
+                added += 1
+        if not added:
+            return request.redirect('/visar/field/task/%s/upsell?empty=1' % task.id)
+        return request.redirect('/visar/field/task/%s?upsell=added' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/remove', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_upsell_remove(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        line_id = (post.get('line_id') or '').strip()
+        if line_id.isdigit():
+            task._visar_upsell_remove(int(line_id))
+        return request.redirect('/visar/field/task/%s' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/charge', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_upsell_charge(self, task_id, **post):
+        """Confirma el carrito (pedido + factura) y lleva a la pantalla de cobro."""
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        if not task._visar_upsell_confirm(employee):
+            return request.redirect('/visar/field/task/%s' % task.id)
+        return request.redirect('/visar/field/task/%s/upsell/pay' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/pay', type='http',
+                auth='public', website=True, sitemap=False)
+    def field_upsell_pay(self, task_id, **kw):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        # `require_running=False`: si el cobro quedó pendiente y gestión movió la
+        # etapa, el técnico todavía debe poder abrir la pantalla para consultarlo.
+        task = self._upsell_task(task_id, employee, require_running=False)
+        if not task or task._visar_upsell_state() == 'vacio':
+            return request.redirect('/visar/field/task/%s' % task_id)
+        link = task._visar_upsell_payment_link()
+        order = task._visar_upsell_order()
+        values = self._upsell_render_values(task)
+        values.update({
+            'employee': employee,
+            'task': task,
+            'payment_link': link,
+            'has_providers': bool(task._visar_upsell_providers()),
+            'invoice': task._visar_upsell_invoice(),
+            'wa_link': self._upsell_whatsapp_url(task, link),
+            'currency': order.currency_id,
+            'status_url': '/visar/field/task/%s/upsell/status' % task.id,
+            'sent': kw.get('sent'),
+        })
+        return request.render('visar_field_app.field_upsell_pay', values)
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/cash', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_upsell_cash(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee, require_running=False)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        task._visar_upsell_register_cash(employee)
+        return request.redirect('/visar/field/task/%s/upsell/pay' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/status', type='http',
+                auth='public', website=True, sitemap=False)
+    def field_upsell_status(self, task_id, **kw):
+        """Sondeo del pago: la pantalla del QR se refresca sola cuando el cliente
+        termina de pagar en su propio teléfono."""
+        employee = self._current_employee()
+        task = self._upsell_task(task_id, employee, require_running=False) if employee else None
+        if not task:
+            return request.make_json_response({'error': 'no_session'}, status=403)
+        return request.make_json_response({'state': task._visar_upsell_state()})
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/qr', type='http',
+                auth='public', website=True, sitemap=False)
+    def field_upsell_qr(self, task_id, **kw):
+        """PNG del QR con el enlace de pago (generado por el motor nativo de
+        códigos de barras, sin depender de un servicio externo)."""
+        employee = self._current_employee()
+        task = self._upsell_task(task_id, employee, require_running=False) if employee else None
+        if not task:
+            return request.not_found()
+        link = task._visar_upsell_payment_link()
+        if not link:
+            return request.not_found()
+        png = request.env['ir.actions.report'].sudo().barcode(
+            'QR', link, width=UPSELL_QR_PX, height=UPSELL_QR_PX, barLevel='M')
+        return request.make_response(png, [
+            ('Content-Type', 'image/png'),
+            ('Cache-Control', 'no-store'),
+        ])
+
+    @staticmethod
+    def _upsell_whatsapp_url(task, link):
+        """Enlace wa.me con el mensaje de cobro ya escrito. El técnico solo pulsa
+        enviar: en sitio no hay tiempo de redactar."""
+        if not link:
+            return ''
+        phone = task._visar_client_phone()
+        if not phone:
+            return ''
+        digits = ''.join(ch for ch in phone if ch.isdigit())
+        if not digits:
+            return ''
+        if len(digits) == 10:  # nacional sin lada de país
+            digits = '52' + digits
+        order = task._visar_upsell_order()
+        text = (
+            "Hola %s, le comparto el enlace para pagar los productos adicionales "
+            "de su servicio de hoy (%s): %s" % (
+                task.partner_id.name or '',
+                order.currency_id.format(order.amount_total) if order else '',
+                link)
+        )
+        return 'https://wa.me/%s?%s' % (digits, urlencode({'text': text}))
 
     # ==================================================================
     # Reporte nativo (PDF) — preview/descarga para el técnico

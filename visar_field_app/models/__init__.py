@@ -3,6 +3,8 @@ from . import hr_employee
 from . import field_session
 from . import field_route_order
 from . import res_partner
+from . import product_template
+from . import sale_order
 from . import project_task
 from . import ir_attachment
 from . import report_worksheet

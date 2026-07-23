@@ -31,6 +31,9 @@
                             <field name="visar_field_closed_by_id" readonly="1"/>
                             <field name="visar_field_closed_at" readonly="1"/>
                         </group>
+                        <group string="Venta en campo (upsell)">
+                            <field name="visar_upsell_order_id" readonly="1"/>
+                        </group>
                     </group>
                 </page>
             </xpath>

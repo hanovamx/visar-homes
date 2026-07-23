@@ -20,18 +20,22 @@ citas), sin tocar el frontend OWL nativo.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.12.0',
+    'version': '19.0.1.13.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_fsm',
         'website',
         'industry_fsm_report',
         'base_geolocalize',
+        # Enlace de pago del upsell: aporta `payment.link.wizard` sobre facturas
+        # (`account_move._get_default_payment_link_values`).
+        'account_payment',
     ],
     'data': [
         'security/ir.model.access.csv',
         'views/field_app_templates.xml',
         'views/hr_employee_views.xml',
+        'views/product_template_views.xml',
         'views/project_task_views.xml',
         'views/field_session_views.xml',
         'views/menus.xml',
@@ -46,6 +50,7 @@ citas), sin tocar el frontend OWL nativo.
             'visar_field_app/static/src/js/field_app.js',
             'visar_field_app/static/src/js/field_app_map.js',
             'visar_field_app/static/src/js/field_app_reorder.js',
+            'visar_field_app/static/src/js/field_app_upsell.js',
         ],
     },
     'installable': True,

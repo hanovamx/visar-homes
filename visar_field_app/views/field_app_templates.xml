@@ -157,6 +157,13 @@
                     <a href="/visar/field/tasks" class="btn btn-link px-0 mb-2">&#8592; Volver</a>
 
                     <div t-if="saved" class="alert alert-success">Guardado.</div>
+                    <div t-if="upsell_msg == 'added'" class="alert alert-success">
+                        Producto agregado.
+                    </div>
+                    <div t-if="upsell_msg == 'pending'" class="alert alert-danger">
+                        Hay productos adicionales sin cobrar. Pulse
+                        "Generar cobro" (o quítelos) antes de cerrar el servicio.
+                    </div>
 
                     <h4 t-esc="task.name"/>
                     <div t-if="task.partner_id" class="text-muted mb-1">
@@ -275,6 +282,14 @@
                             </li>
                         </ul>
                     </div>
+
+                    <!-- ================= Productos adicionales (upsell) =================
+                         Solo con el servicio EN EJECUCIÓN (el controlador también lo
+                         rechaza). Vive entre el pedido y la hoja de trabajo: el técnico
+                         ofrece mientras trabaja, no al final con el cliente esperando. -->
+                    <t t-if="upsell_available or upsell_state != 'vacio'">
+                        <t t-call="visar_field_app.upsell_card"/>
+                    </t>
 
                     <!-- Worksheet nativa (campos dinámicos del template).
                          Req 5: no se muestra ni se puede llenar hasta "Comenzar
@@ -525,6 +540,296 @@
 
                     <a t-att-href="'/visar/field/task/%s/report' % task.id"
                        target="_blank" class="btn btn-link w-100 mt-3">Ver reporte (PDF)</a>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Tarjeta "Productos adicionales" (dentro del detalle)          -->
+    <!-- Cuatro estados: vacío / carrito en borrador / por cobrar /    -->
+    <!-- pagado. El carrito es un pedido en BORRADOR: mientras nadie   -->
+    <!-- pulse "Generar cobro" no existe nada contable.                -->
+    <!-- ============================================================ -->
+    <template id="upsell_card" name="Visar Campo - Productos adicionales">
+        <div class="card p-3 mb-4 o_visar_upsell_card">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <h6 class="mb-0">Productos adicionales</h6>
+                <span t-if="upsell_state == 'pagado'" class="badge text-bg-success">Pagado</span>
+                <span t-elif="upsell_state == 'por_cobrar'" class="badge text-bg-warning">Por cobrar</span>
+                <span t-elif="upsell_zone" class="badge text-bg-light" t-esc="upsell_zone"/>
+            </div>
+
+            <!-- Aviso de póliza: el cliente necesita oír que esto NO le sube la
+                 mensualidad, y el técnico necesita saberlo para decírselo. -->
+            <div t-if="task.visar_subscription_order_id" class="alert alert-info py-2 small">
+                Este servicio viene de una <b>póliza</b>. Lo que agregue aquí se cobra
+                <b>una sola vez</b>, en un pedido aparte: <b>no</b> se suma a la
+                mensualidad del cliente.
+            </div>
+
+            <!-- Estado vacío -->
+            <t t-if="upsell_state == 'vacio'">
+                <p class="small text-muted mb-3">
+                    Agregue aquí lo que el cliente autorice durante la visita. Se cobra
+                    aparte del servicio contratado.
+                </p>
+                <a t-att-href="'/visar/field/task/%s/upsell' % task.id"
+                   class="btn btn-outline-primary w-100">+ Agregar producto</a>
+            </t>
+
+            <!-- Carrito / pedido -->
+            <t t-else="">
+                <t t-set="editable" t-value="upsell_state == 'borrador' and upsell_available"/>
+                <t t-foreach="upsell_lines" t-as="line">
+                    <div class="card p-2 mb-2">
+                        <!-- "Eliminar" solo en borrador: una vez generado el cobro la
+                             línea ya está facturada y quitarla aquí mentiría. -->
+                        <form t-if="editable"
+                              t-att-action="'/visar/field/task/%s/upsell/remove' % task.id"
+                              method="post" class="m-0 d-flex justify-content-end">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <input type="hidden" name="line_id" t-att-value="line.id"/>
+                            <button type="submit" class="btn btn-sm btn-link text-danger p-0">
+                                Eliminar
+                            </button>
+                        </form>
+                        <div class="o_visar_upsell_line">
+                            <span class="badge rounded-pill text-bg-secondary o_visar_stop_num">
+                                <t t-esc="int(line.product_uom_qty)"/>×
+                            </span>
+                            <div class="flex-grow-1 min-w-0">
+                                <strong t-esc="line.product_id.display_name"/>
+                                <div class="small text-muted">
+                                    <span t-out="line.price_unit"
+                                          t-options="{'widget': 'monetary', 'display_currency': upsell_order.currency_id}"/>
+                                    c/u
+                                </div>
+                            </div>
+                            <!-- price_total, NO price_subtotal: el IVA de Visar está
+                                 configurado como INCLUIDO en el precio, así que la base
+                                 sin impuesto (2 × $100 = $172.41) no cuadra con lo que
+                                 el técnico le dijo al cliente. Se muestra lo que se
+                                 cobra. Si mañana el impuesto pasa a no-incluido, el
+                                 total sigue siendo la cifra correcta. -->
+                            <span class="o_visar_upsell_total text-nowrap"
+                                  t-out="line.price_total"
+                                  t-options="{'widget': 'monetary', 'display_currency': upsell_order.currency_id}"/>
+                        </div>
+                    </div>
+                </t>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="fw-bold">Total a cobrar</span>
+                    <span class="o_visar_upsell_total fs-5"
+                          t-out="upsell_order.amount_total"
+                          t-options="{'widget': 'monetary', 'display_currency': upsell_order.currency_id}"/>
+                </div>
+
+                <t t-if="editable">
+                    <a t-att-href="'/visar/field/task/%s/upsell' % task.id"
+                       class="btn btn-outline-secondary w-100 mb-2">+ Agregar otro producto</a>
+                    <form t-att-action="'/visar/field/task/%s/upsell/charge' % task.id"
+                          method="post" class="m-0">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <button type="submit" class="btn btn-success btn-lg w-100">
+                            💳 Generar cobro
+                        </button>
+                    </form>
+                </t>
+                <t t-else="">
+                    <div class="small text-muted mb-2">
+                        Pedido <t t-esc="upsell_order.name"/>
+                        <t t-if="upsell_order.visar_upsell_cash_at"> · Efectivo</t>
+                    </div>
+                    <a t-if="upsell_state != 'pagado'"
+                       t-att-href="'/visar/field/task/%s/upsell/pay' % task.id"
+                       class="btn btn-primary btn-lg w-100">💳 Ir al cobro</a>
+                    <a t-else="" t-att-href="'/visar/field/task/%s/upsell/pay' % task.id"
+                       class="btn btn-link w-100">Ver el cobro</a>
+                </t>
+            </t>
+        </div>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Catálogo de venta en campo                                    -->
+    <!-- ============================================================ -->
+    <template id="field_upsell_catalog" name="Visar Campo - Agregar producto">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-3" style="max-width: 640px;">
+                    <a t-att-href="'/visar/field/task/%s' % task.id"
+                       class="btn btn-link px-0 mb-2">&#8592; Volver al servicio</a>
+
+                    <h4 class="mb-0">Agregar producto</h4>
+                    <div class="small text-muted mb-3">
+                        <t t-esc="task.partner_id.name"/>
+                        <span t-if="upsell_zone" class="badge text-bg-light ms-1" t-esc="upsell_zone"/>
+                    </div>
+
+                    <div t-if="request.params.get('empty')" class="alert alert-warning py-2">
+                        No seleccionó ninguna cantidad. Use el <b>+</b> del producto que
+                        va a vender.
+                    </div>
+
+                    <div t-if="not catalog" class="alert alert-info">
+                        No hay productos habilitados para venta en campo. Pídale a
+                        administración que marque "Vendible en campo (upsell)" en la
+                        ficha de los productos.
+                    </div>
+
+                    <form t-if="catalog"
+                          t-att-action="'/visar/field/task/%s/upsell/add' % task.id"
+                          method="post" id="visar-upsell-form">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+
+                        <!-- Buscador en cliente: el catálogo de campo es corto, no
+                             vale la pena un viaje al servidor por cada letra. -->
+                        <input type="search" id="visar-upsell-search"
+                               class="form-control mb-3" placeholder="Buscar producto…"
+                               autocomplete="off"/>
+
+                        <div class="list-group mb-3 o_visar_upsell_catalog">
+                            <div t-foreach="catalog" t-as="product"
+                                 class="list-group-item o_visar_prod_item"
+                                 t-att-data-name="product['name'].lower()">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1 min-w-0">
+                                        <strong t-esc="product['name']"/>
+                                        <div t-if="product['description']" class="small text-muted"
+                                             t-esc="product['description']"/>
+                                    </div>
+                                    <span class="badge text-bg-primary text-nowrap ms-2"
+                                          t-out="product['price']"
+                                          t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                </div>
+                                <div class="o_visar_qty mt-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm o_visar_qty_minus"
+                                            aria-label="Quitar uno">&#8722;</button>
+                                    <input type="number" min="0" step="1" value="0"
+                                           inputmode="numeric" class="form-control form-control-sm o_visar_qty_input"
+                                           t-att-name="'qty~%s' % product['id']"/>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm o_visar_qty_plus"
+                                            aria-label="Agregar uno">+</button>
+                                    <span class="ms-auto small text-muted o_visar_qty_hint"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="visar-upsell-empty" class="alert alert-info py-2 small d-none">
+                            No hay productos que coincidan con la búsqueda.
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg w-100"
+                                id="visar-upsell-submit">Agregar al servicio</button>
+                    </form>
+                </div>
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!-- Cobro de los adicionales                                      -->
+    <!-- ============================================================ -->
+    <template id="field_upsell_pay" name="Visar Campo - Cobro de adicionales">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-3" style="max-width: 640px;">
+                    <a t-att-href="'/visar/field/task/%s' % task.id"
+                       class="btn btn-link px-0 mb-2">&#8592; Volver al servicio</a>
+
+                    <h4 class="mb-0">Cobro de adicionales</h4>
+                    <div class="small text-muted mb-3">
+                        Pedido <t t-esc="upsell_order.name"/> · <t t-esc="task.partner_id.name"/>
+                    </div>
+
+                    <div class="card mb-3">
+                        <ul class="list-group list-group-flush">
+                            <li t-foreach="upsell_lines" t-as="line"
+                                class="list-group-item py-1 d-flex justify-content-between">
+                                <span>
+                                    <t t-esc="int(line.product_uom_qty)"/>×
+                                    <t t-esc="line.product_id.display_name"/>
+                                </span>
+                                <span t-out="line.price_total"
+                                      t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                            </li>
+                            <li class="list-group-item py-2 d-flex justify-content-between fw-bold">
+                                <span>Total</span>
+                                <span class="o_visar_upsell_total" t-out="upsell_order.amount_total"
+                                      t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- ============ Pagado ============ -->
+                    <t t-if="upsell_state == 'pagado'">
+                        <div class="alert alert-success py-2">
+                            <b>Cobro resuelto.</b>
+                            <t t-if="upsell_order.visar_upsell_cash_at">
+                                Registrado como pago en efectivo por
+                                <t t-esc="upsell_order.visar_upsell_cash_by_id.name"/>.
+                            </t>
+                            <t t-else="">Pago recibido en línea.</t>
+                            Ya puede cerrar el servicio.
+                        </div>
+                        <a t-att-href="'/visar/field/task/%s' % task.id"
+                           class="btn btn-primary btn-lg w-100">Volver al servicio</a>
+                    </t>
+
+                    <!-- ============ Por cobrar ============ -->
+                    <t t-else="">
+                        <div class="alert alert-info py-2 small">
+                            Se creó el pedido <b><t t-esc="upsell_order.name"/></b> solo con
+                            los adicionales. El servicio contratado no se modificó.
+                        </div>
+
+                        <div t-if="not has_providers" class="alert alert-warning py-2 small">
+                            <b>Pago en línea no disponible todavía.</b>
+                            No hay pasarela de pago configurada, así que aún no se puede
+                            generar un enlace que cobre. Registre el pago en efectivo o
+                            envíe el pedido para pagar después.
+                        </div>
+
+                        <!-- Sondeo del pago: la pantalla se recarga sola cuando el
+                             cliente termina de pagar en su propio teléfono. -->
+                        <div t-if="payment_link" id="visar-upsell-poll" class="d-none"
+                             t-att-data-status="status_url"/>
+
+                        <t t-if="payment_link">
+                            <h6 class="mb-2">Que el cliente escanee</h6>
+                            <div class="text-center mb-3">
+                                <img t-att-src="'/visar/field/task/%s/upsell/qr' % task.id"
+                                     class="o_visar_qr_img" alt="Código QR de pago"/>
+                            </div>
+                            <div id="visar-upsell-waiting" class="alert alert-warning py-2 text-center">
+                                <span class="spinner-border spinner-border-sm me-2" role="status"/>
+                                Esperando confirmación del pago…
+                            </div>
+                        </t>
+
+                        <h6 class="mb-2">Otras formas de cobrar</h6>
+                        <div class="d-grid gap-2 mb-3">
+                            <a t-if="wa_link" t-att-href="wa_link" target="_blank" rel="noopener"
+                               class="btn btn-outline-success btn-lg w-100">
+                                💬 Enviar enlace por WhatsApp
+                            </a>
+                            <form t-att-action="'/visar/field/task/%s/upsell/cash' % task.id"
+                                  method="post" class="m-0 d-grid">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <button type="submit" class="btn btn-outline-secondary btn-lg w-100">
+                                    💵 El cliente pagó en efectivo
+                                </button>
+                            </form>
+                        </div>
+
+                        <div class="alert alert-secondary py-2 small mb-0">
+                            Si el cliente va a pagar después, puede cerrar el servicio: el
+                            pedido queda pendiente de cobro y administración le da
+                            seguimiento.
+                        </div>
+                    </t>
                 </div>
             </div>
         </t>

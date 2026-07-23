@@ -128,6 +128,12 @@ class ProjectTask(models.Model):
     visar_reschedule_requested_at = fields.Datetime(
         string="Reagenda solicitada en", readonly=True)
 
+    # --- Upsell en campo ---
+    visar_upsell_order_id = fields.Many2one(
+        'sale.order', string="Pedido de adicionales", readonly=True, copy=False,
+        help="Pedido SEPARADO con los productos que el técnico vendió durante la "
+             "visita. El pedido (o póliza) que originó el servicio no se toca.")
+
     # ==================================================================
     # Flujo en sitio: etapas nativas + timesheet + reagenda (Req 2)
     # ==================================================================
@@ -523,6 +529,262 @@ class ProjectTask(models.Model):
                 'sticky': False,
             },
         }
+
+    # ==================================================================
+    # Upsell en campo: catálogo, carrito, cobro
+    # ==================================================================
+    # POR QUÉ UN PEDIDO APARTE Y NO LAS LÍNEAS DEL PEDIDO DE LA TAREA
+    #
+    # El comportamiento NATIVO (`industry_fsm_sale._fsm_ensure_sale_order`) cuelga
+    # los materiales del `sale_order_id` de la tarea. Aquí eso rompe dos cosas:
+    #
+    #   1. Pólizas. En una visita de suscripción ese pedido ES la suscripción, así
+    #      que la línea entraría al ciclo de facturación recurrente: el cliente
+    #      terminaría pagando el extra cada mes. El puente nativo
+    #      (`industry_fsm_sale_subscription`) solo filtra productos recurrentes del
+    #      catálogo — no impide que la línea aterrice en la suscripción.
+    #   2. Cobro por la diferencia. El criterio del requerimiento es cobrar ÚNICA-
+    #      MENTE lo agregado. Con un pedido propio el total ES el monto a cobrar,
+    #      sin depender de saldos ni de lo ya facturado del servicio original.
+    #
+    # El vínculo con el servicio se guarda en ambos sentidos
+    # (`visar_upsell_order_id` / `sale.order.visar_upsell_task_id`).
+    def _visar_upsell_zone(self):
+        """Zona Visar del servicio, resuelta por el CP del cliente.
+
+        Mismo criterio que el booking web (`visar.zone.cp`), para que un producto
+        no valga distinto según por dónde entró la venta.
+        """
+        self.ensure_one()
+        partner = self.partner_id
+        zip_code = partner.zip or partner.commercial_partner_id.zip
+        return self.env['visar.zone.cp'].sudo()._get_zone_for_cp(zip_code)
+
+    def _visar_upsell_pricelist(self):
+        """Lista de precios del upsell: la de la zona; si no hay zona resoluble,
+        la del cliente. Hoy los productos de upsell no tienen regla por zona y
+        caen en su precio de lista — si mañana se les pone, esto ya la respeta."""
+        self.ensure_one()
+        zone = self._visar_upsell_zone()
+        if zone and zone.pricelist_id:
+            return zone.pricelist_id
+        return self.partner_id.property_product_pricelist
+
+    def _visar_upsell_catalog(self):
+        """Productos ofrecibles en campo, con su precio ya resuelto.
+
+        Devuelve una lista de dicts (no un recordset) porque la plantilla necesita
+        el precio calculado por variante, no solo el producto.
+        """
+        self.ensure_one()
+        Template = self.env['product.template'].sudo()
+        templates = Template.search(Template._visar_upsell_domain(), order='name')
+        products = templates.product_variant_ids.filtered('active')
+        pricelist = self._visar_upsell_pricelist()
+        catalog = []
+        for product in products:
+            price = (pricelist._get_product_price(product, 1.0)
+                     if pricelist else product.lst_price)
+            catalog.append({
+                'id': product.id,
+                'name': product.display_name,
+                'description': product.description_sale or '',
+                'uom': product.uom_id.name,
+                'price': price,
+            })
+        return catalog
+
+    def _visar_upsell_order(self, employee=None, create=False):
+        """Pedido de adicionales del servicio. Con `create=True` lo crea si falta.
+
+        Se crea en BORRADOR: mientras el técnico arma el carrito nada se confirma,
+        y si se arrepiente el pedido se puede vaciar sin dejar rastro contable.
+        """
+        self.ensure_one()
+        order = self.visar_upsell_order_id.sudo()
+        if order.exists():
+            return order
+        if not create:
+            return self.env['sale.order'].sudo().browse()
+        if not self.partner_id:
+            return self.env['sale.order'].sudo().browse()
+        pricelist = self._visar_upsell_pricelist()
+        order = self.env['sale.order'].sudo().create({
+            'partner_id': self.partner_id.id,
+            'company_id': self.company_id.id or self.env.company.id,
+            'pricelist_id': pricelist.id if pricelist else False,
+            'origin': "%s — adicionales en sitio" % (self.name or ''),
+            'visar_upsell_task_id': self.id,
+            'visar_upsell_employee_id': employee.id if employee else False,
+        })
+        self.sudo().visar_upsell_order_id = order
+        return order
+
+    def _visar_upsell_add(self, employee, product_id, quantity=1):
+        """Agrega (o acumula) una línea al carrito de adicionales.
+
+        Solo acepta productos del catálogo de campo: un POST con cualquier otro
+        id se ignora en silencio. La app es pública (PIN), así que el dominio se
+        vuelve a validar aquí y no solo al pintar la pantalla.
+        """
+        self.ensure_one()
+        allowed = {p['id'] for p in self._visar_upsell_catalog()}
+        if product_id not in allowed:
+            return False
+        quantity = max(int(quantity or 1), 1)
+        order = self._visar_upsell_order(employee=employee, create=True)
+        if not order:
+            return False
+        if order.state != 'draft':
+            return False  # ya se generó el cobro: el carrito está cerrado
+        line = order.order_line.filtered(
+            lambda l: l.product_id.id == product_id and not l.display_type)[:1]
+        if line:
+            line.product_uom_qty += quantity
+        else:
+            order.write({'order_line': [(0, 0, {
+                'product_id': product_id,
+                'product_uom_qty': quantity,
+            })]})
+        return True
+
+    def _visar_upsell_remove(self, line_id):
+        """Quita una línea del carrito (solo en borrador y solo de ESTE pedido)."""
+        self.ensure_one()
+        order = self._visar_upsell_order()
+        if not order or order.state != 'draft':
+            return False
+        line = order.order_line.filtered(lambda l: l.id == int(line_id))
+        if not line:
+            return False
+        line.unlink()
+        # Carrito vacío = como si nunca hubiera existido, para que la pantalla
+        # vuelva al estado inicial en vez de quedarse con un pedido fantasma.
+        if not order.order_line:
+            self.sudo().visar_upsell_order_id = False
+            order.unlink()
+        return True
+
+    def _visar_upsell_confirm(self, employee):
+        """Confirma el pedido de adicionales y emite su factura.
+
+        Se factura de una vez porque el enlace de pago nativo cobra contra un
+        documento, y porque el objetivo del requerimiento es cerrar el cobro en
+        sitio "sin pasar por administración". Los productos de upsell facturan por
+        pedido (`invoice_policy='order'`), así que no hace falta entregar nada
+        primero. Idempotente: repetir el POST no duplica facturas.
+        """
+        self.ensure_one()
+        order = self._visar_upsell_order()
+        if not order or not order.order_line:
+            return False
+        if employee and not order.visar_upsell_employee_id:
+            order.visar_upsell_employee_id = employee.id
+        if order.state == 'draft':
+            order.action_confirm()
+        invoice = self._visar_upsell_invoice()
+        if not invoice and order.invoice_status == 'to invoice':
+            invoice = order._create_invoices()
+            invoice.action_post()
+        return order
+
+    def _visar_upsell_invoice(self):
+        """Factura de cliente POSTEADA del pedido de adicionales (o vacío)."""
+        self.ensure_one()
+        order = self._visar_upsell_order()
+        if not order:
+            return self.env['account.move'].sudo().browse()
+        return order.invoice_ids.filtered(
+            lambda m: m.move_type == 'out_invoice' and m.state == 'posted')[:1]
+
+    def _visar_upsell_payment_link(self):
+        """Enlace de pago nativo por el monto pendiente de los adicionales.
+
+        Se usa `payment.link.wizard` en vez de armar la URL a mano para heredar el
+        token de acceso, el monto pendiente y la ruta correcta cuando Odoo los
+        cambie. Devuelve '' si no hay nada que cobrar o si no hay proveedor de
+        pago habilitado (hoy: falta configurar la pasarela — ver README).
+        """
+        self.ensure_one()
+        invoice = self._visar_upsell_invoice()
+        record = invoice or self._visar_upsell_order()
+        if not record:
+            return ''
+        if not self._visar_upsell_providers():
+            return ''
+        wizard = self.env['payment.link.wizard'].sudo().create({
+            'res_model': record._name,
+            'res_id': record.id,
+            **record._get_default_payment_link_values(),
+        })
+        if wizard.amount <= 0:
+            return ''
+        return wizard.link or ''
+
+    def _visar_upsell_providers(self):
+        """Proveedores de pago REALMENTE en vivo para el cliente del servicio.
+
+        Sin ninguno, la app esconde QR/enlace y deja solo efectivo o transferencia
+        (en vez de generar un enlace que no cobra nada).
+
+        Se exige `state == 'enabled'` y no basta con el `('enabled','test')` que
+        acepta el nativo: un proveedor en **test** (hoy en Visar, el proveedor
+        Demo, publicado) liquida la transacción y marca la factura como pagada
+        **sin que entre un peso**. En una venta en sitio eso es peor que no
+        ofrecer cobro en línea: el técnico se va creyendo que cobró. El día que
+        la pasarela real pase a 'enabled', el QR se enciende solo.
+        """
+        self.ensure_one()
+        Provider = self.env['payment.provider'].sudo()
+        order = self._visar_upsell_order()
+        if not order:
+            return Provider.browse()
+        company = self.company_id or self.env.company
+        providers = Provider._get_compatible_providers(
+            company.id,
+            self.partner_id.id,
+            order.amount_total or 0.0,
+            currency_id=order.currency_id.id or None,
+        )
+        return providers.filtered(lambda p: p.state == 'enabled')
+
+    def _visar_upsell_register_cash(self, employee):
+        """Sella que el técnico recibió el pago en efectivo/transferencia.
+
+        NO registra el pago contable: en Odoo 19 un pago manual queda `in_process`
+        sin asiento hasta que se liquida, y el técnico no tiene contexto (ni
+        permisos) para elegir diario. Administración concilia contra la factura;
+        esto deja constancia de quién recibió cuánto y cuándo.
+        """
+        self.ensure_one()
+        order = self._visar_upsell_confirm(employee)
+        if not order:
+            return False
+        if not order.visar_upsell_cash_at:
+            order.write({
+                'visar_upsell_cash_at': fields.Datetime.now(),
+                'visar_upsell_cash_by_id': employee.id if employee else False,
+            })
+            order.message_post(body=Markup(
+                "<p>Pago de adicionales recibido en sitio por <b>%s</b>.</p>"
+            ) % (employee.name if employee else "el técnico"))
+        return True
+
+    def _visar_upsell_state(self):
+        """Estado del upsell para elegir qué pinta la app.
+
+        'vacio' | 'borrador' (carrito editable) | 'por_cobrar' (confirmado, sin
+        pago) | 'pagado'.
+        """
+        self.ensure_one()
+        order = self._visar_upsell_order()
+        if not order or not order.order_line:
+            return 'vacio'
+        if order.state == 'draft':
+            return 'borrador'
+        if order._visar_upsell_is_paid():
+            return 'pagado'
+        return 'por_cobrar'
 
     # ==================================================================
     # Reporte PDF — lectura "para mostrar" de la worksheet dinámica
