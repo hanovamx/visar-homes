@@ -221,3 +221,26 @@ variante, no solo pricelist). D-05 **no recrea** productos en XML:
 - Tramos `visar.service.tier` apuntan a variantes **zona B + rango**; en checkout
   `_visar_variant_for_zone` elige la variante equivalente en la zona del cliente (A/B/C).
 - Convive con pricelist por zona en la SO (doble mecanismo hasta decidir migración única).
+
+## [IMPLEMENTADO — jul-2026] Agente WhatsApp: arquitectura híbrida (runtime externo + API en Odoo)
+
+Un **agente de IA por WhatsApp** que contesta dudas de servicios y precios. Se
+parte en dos: un servicio externo **FastAPI** (`visar_fastapi/`, con LLM y loop de
+tools) y un módulo Odoo **`visar_whatsapp_agent`** que solo expone una API RPC de
+solo lectura. Detalle en `27-whatsapp-agent.md`.
+
+- **Por qué externo:** Odoo tiene pocos workers y no está hecho para esperar la
+  latencia de un LLM; un webhook público sobre el ERP amplía la superficie de
+  ataque; separar el runtime deja escalarlo/desplegarlo sin arriesgar el negocio.
+  Corre en el **mismo servidor** que Odoo.
+- **Fase 1: solo lectura, sin agendar.** El wizard (`visar_appointment`) no se toca.
+- **[RESUELTA] El precio no se reimplementa:** `agent_quote_service` arma los mismos
+  `items` del wizard y llama `_visar_quote_booking`, así el total del agente es
+  idéntico al de la web (variante combinada interior+exterior, combos, add-ons).
+  Por eso el módulo depende de `visar_appointment`, no solo de `visar_base`.
+- **[RESUELTA] Mínimo privilegio:** usuario `whatsapp_agent` (share) + grupo de solo
+  lectura; los métodos **no** usan `sudo`, así que las ACLs son el límite real.
+- **Superficie de API acotada:** tres métodos tipados; ningún nombre de modelo,
+  dominio ni SQL desde el LLM (defensa ante prompt injection).
+- **Pendiente:** instalar y **validar paridad de precio** contra el wizard; modelos
+  de configuración editables por consultores (`visar.llm.config`, etc.).

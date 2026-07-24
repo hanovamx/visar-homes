@@ -65,12 +65,18 @@ VISAR/repo/                ← Git: github.com/luisgarza-g/visar-luisg (rama mai
 ├── visar_fsm/             ← FSM: tareas agrupadas por proyecto (v19.0.1.0.1)
 ├── visar_appointment/     ← wizard web + citas (v19.0.2.0.15)
 │   └── migrations/        ← post-migrate catálogo legacy (¡solo en upgrade!)
-└── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.10.0) — ver 25-field-app.md
+├── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.10.0) — ver 25-field-app.md
+└── visar_whatsapp_agent/  ← API RPC solo lectura para el agente WhatsApp (v19.0.1.0.0) — ver 27-whatsapp-agent.md
 ```
 
 > **4º módulo (jul-2026):** `visar_field_app` se añadió después de la última revisión general
 > de esta carpeta. Cubre la mitad "UI técnico / worksheet / fotos / firma" de D-07. Documentado
 > en [`25-field-app.md`](./25-field-app.md).
+
+> **5º módulo (jul-2026):** `visar_whatsapp_agent` — superficie RPC de solo lectura para un
+> **agente de IA por WhatsApp**. La otra mitad es un servicio externo FastAPI (`visar_fastapi/`,
+> fuera de este repo, con su propio `.context/`). Fase 1: solo lectura, sin agendar. Documentado
+> en [`27-whatsapp-agent.md`](./27-whatsapp-agent.md).
 
 > ⚠️ **Setup parcial en install:** `visar_fsm` tiene `post_init_hook` (proyectos FSM). El catálogo
 > legacy y tipos de entrada de `visar_appointment` siguen en `migrations/` solamente.
@@ -88,3 +94,4 @@ Odoo 19 core: `/Users/luisgarza27/Documents/HANOVA/odoo_19_visar/odoo/addons/`
 6. `80-deploy-prod.md` — **leer antes del go-live** (fix install vs upgrade).
 7. `91-reunion-2026-06-22.md` — reglas de negocio acordadas con Visar.
 8. `25-field-app.md` — **app de campo técnicos** (`visar_field_app`, 4º módulo).
+9. `27-whatsapp-agent.md` — **agente de IA por WhatsApp** (`visar_whatsapp_agent`, 5º módulo).
