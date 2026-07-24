@@ -133,9 +133,16 @@ divergir sería datos o ACL — y las ACLs ya se cerraron.
 
 ## Fase siguiente
 
-- Modelos de configuración editables por consultores: `visar.llm.config` (selector
-  de proveedor de LLM), `visar.whatsapp.config`, `visar.agent.prompt` (para que el
-  prompt base salga de Odoo, no del código de `visar_fastapi`).
+> **Diseño detallado en [`28-whatsapp-agent-phase2-design.md`](./28-whatsapp-agent-phase2-design.md)**
+> — plataforma de capacidades (un número, varios trabajos: LLM Q&A, flujo de
+> cita determinista, salientes disparados por template), listo para implementar.
+
+En resumen:
+- **Config + prompt editables en UI Odoo** (`visar.whatsapp.config`,
+  `visar.llm.config`, `visar.agent.prompt`) — que el prompt base salga de Odoo, no
+  del código de `visar_fastapi`. Es el primer corte (Fase 2a).
+- **Salientes disparados** (app de técnicos → template aprobado): **no** con el
+  módulo WhatsApp nativo (choca con el webhook del agente); templates en Meta +
+  envío por el runtime + automatización Odoo. Ver doc 28 (Fase 2b).
+- **Agendar citas** como flujo determinista (cuestionario), no por LLM (Fase 2c).
 - Almacenamiento seguro de credenciales (hoy en el `.env` del servicio).
-- Fase 2: agendar citas (implica exponer escritura acotada y sacar la lógica del
-  wizard del controlador a métodos RPC).

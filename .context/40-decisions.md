@@ -244,3 +244,25 @@ solo lectura. Detalle en `27-whatsapp-agent.md`.
   dominio ni SQL desde el LLM (defensa ante prompt injection).
 - **Pendiente:** instalar y **validar paridad de precio** contra el wizard; modelos
   de configuración editables por consultores (`visar.llm.config`, etc.).
+
+## [DISEÑO — jul-2026] Fase 2: el número como plataforma de capacidades
+
+Un solo número que hace **varios trabajos** detrás de un **dispatcher**: dudas por
+LLM (hecho), flujo de cita determinista (cuestionario, sin LLM), y **salientes
+disparados** por eventos (p. ej. app de técnicos). Diseño completo en
+`28-whatsapp-agent-phase2-design.md`.
+
+- **No modelar todo como "prompt":** los trabajos difieren en dos ejes
+  (entrante/saliente, LLM/determinista). "Prompt editable" es solo el handler LLM.
+- **[DECISIÓN] No usar el módulo WhatsApp nativo para los salientes.** El nativo
+  asume que Odoo es dueño del webhook, que ya tiene el runtime FastAPI para lo
+  entrante. Coexistir lo deja medio ciego (envía pero no recibe estados/respuestas)
+  y duplica el token. Los salientes se hacen con **templates aprobados en Meta** +
+  envío por el runtime + **automatización Odoo** sobre el evento. El nativo solo
+  convendría si Odoo fuera el hub de WhatsApp (no es el caso).
+- **[REGLA de plataforma] Ventana de 24 h:** fuera de 24 h del último mensaje del
+  cliente, WhatsApp **solo** permite templates aprobados → los salientes disparados
+  son templates, no texto libre.
+- **Secretos:** Fase 2a mueve a Odoo solo lo **no-secreto** (prompt, model, notas);
+  token/app_secret/api_key siguen en el `.env` del runtime hasta tener
+  almacenamiento seguro (mover secretos a la BD los mete en los backups).
