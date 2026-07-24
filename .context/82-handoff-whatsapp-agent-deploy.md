@@ -101,15 +101,23 @@ UI fallback: give `whatsapp_agent` a password, log in as it, Preferences >
 Account Security > New API key.
 
 ### Smoke-test the key (no FastAPI needed)
+Use **JSON-RPC**, not XML-RPC: the quote response has `None` fields that Odoo's
+XML-RPC endpoint fails to marshal (that is why the runtime uses JSON-RPC).
 ```bash
 sudo -u odoo /opt/odoo/venv/bin/python - <<'PY'
-import xmlrpc.client
+import requests
 URL, DB, USER, KEY = "http://127.0.0.1:8069", "visar-db", "whatsapp_agent", "<API-KEY>"
-uid = xmlrpc.client.ServerProxy(f"{URL}/xmlrpc/2/common").authenticate(DB, USER, KEY, {})
-m = xmlrpc.client.ServerProxy(f"{URL}/xmlrpc/2/object")
-q = m.execute_kw(DB, uid, KEY, "visar.agent.tools", "agent_quote_service",
+def call(service, method, args):
+    r = requests.post(f"{URL}/jsonrpc", json={"jsonrpc": "2.0", "method": "call",
+        "params": {"service": service, "method": method, "args": args}, "id": 1})
+    d = r.json()
+    if "error" in d:
+        raise SystemExit(d["error"])
+    return d["result"]
+uid = call("common", "authenticate", [DB, USER, KEY, {}])
+q = call("object", "execute_kw", [DB, uid, KEY, "visar.agent.tools", "agent_quote_service",
     [{"cp": "64000", "items": [{"service_code": "FUM_INT", "m2": 120},
-                               {"service_code": "FUM_EXT", "m2": 200}]}])
+                               {"service_code": "FUM_EXT", "m2": 200}]}]])
 print("total:", q.get("total"), "| msg:", q.get("message"))
 PY
 ```

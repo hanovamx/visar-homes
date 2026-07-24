@@ -67,18 +67,29 @@ acota lo que el LLM puede pedir aunque le metan prompt injection.
 
 ## Prueba de humo por RPC
 
-```python
-import xmlrpc.client
-URL, DB, USER, KEY = "http://127.0.0.1:8069", "visar", "whatsapp_agent", "<api-key>"
-uid = xmlrpc.client.ServerProxy(f"{URL}/xmlrpc/2/common").authenticate(DB, USER, KEY, {})
-models = xmlrpc.client.ServerProxy(f"{URL}/xmlrpc/2/object")
+Usar **JSON-RPC** (`/jsonrpc`), no XML-RPC: `agent_quote_service` devuelve campos
+`None` (p. ej. `total`, `zone_code` cuando aplica) y el endpoint XML-RPC de Odoo
+lanza fault al serializar `None` en la respuesta. Por eso `visar_fastapi` habla
+JSON-RPC.
 
-snap = models.execute_kw(DB, uid, KEY, "visar.agent.tools", "agent_catalog_snapshot", [])
-zone = models.execute_kw(DB, uid, KEY, "visar.agent.tools", "agent_resolve_zone", ["64000"])
-quote = models.execute_kw(DB, uid, KEY, "visar.agent.tools", "agent_quote_service",
-                          [{"cp": "64000", "items": [
-                              {"service_code": "FUM_INT", "m2": 120},
-                              {"service_code": "FUM_EXT", "m2": 200}]}])
+```python
+import requests
+URL, DB, USER, KEY = "http://127.0.0.1:8069", "visar-db", "whatsapp_agent", "<api-key>"
+
+def call(service, method, args):
+    r = requests.post(f"{URL}/jsonrpc", json={"jsonrpc": "2.0", "method": "call",
+        "params": {"service": service, "method": method, "args": args}, "id": 1})
+    d = r.json()
+    if "error" in d:
+        raise SystemExit(d["error"])
+    return d["result"]
+
+uid = call("common", "authenticate", [DB, USER, KEY, {}])
+snap = call("object", "execute_kw", [DB, uid, KEY, "visar.agent.tools", "agent_catalog_snapshot", []])
+zone = call("object", "execute_kw", [DB, uid, KEY, "visar.agent.tools", "agent_resolve_zone", ["64000"]])
+quote = call("object", "execute_kw", [DB, uid, KEY, "visar.agent.tools", "agent_quote_service",
+    [{"cp": "64000", "items": [{"service_code": "FUM_INT", "m2": 120},
+                               {"service_code": "FUM_EXT", "m2": 200}]}]])
 print(quote["total"], quote["message"])
 ```
 
