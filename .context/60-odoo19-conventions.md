@@ -70,6 +70,23 @@ Para rutas que no pasan contexto (p. ej. `appointment_type_id_form`), inyectar v
 - `filter_resource_ids` como **JSON url-encoded**: `quote_plus(json.dumps(ids))`.
 - No reimplementar cálculo de slots; post-filtrar sobre el core cuando haga falta (Visar multi-técnico).
 
+## Versión del manifest: NO subirla salvo que sea necesario
+
+**Preferencia del cliente (jul-2026):** **no** bumpear `version` en `__manifest__.py` por
+costumbre. Subirla solo cuando el cambio **exige `-u`** para aplicarse; si basta con
+**reiniciar**, se deja la versión como está.
+
+| Tipo de cambio | ¿Aplica cómo? | ¿Bumpear versión? |
+|---|---|---|
+| Campos nuevos / modificados, XML (vistas, datos, reportes, `security`), assets nuevos | **`-u <módulo>`** | **Sí** |
+| Solo Python (métodos de modelo, controladores, rutas `@http.route` nuevas, hooks) | **Reiniciar** el servidor | **No** |
+
+Razón del split: los `.xml`/campos solo se re-leen en `-u`; el código Python se recarga
+al arrancar el proceso. Una ruta de controlador nueva es Python → **reinicio basta**.
+
+> ⚠️ El bump de versión es también lo que **dispara las migraciones** (`migrations/<ver>/`).
+> Subir la versión sin querer puede correr un post-migrate antes de tiempo.
+
 ## Validación antes de dar por terminado
 ```bash
 python -m py_compile <archivos.py>

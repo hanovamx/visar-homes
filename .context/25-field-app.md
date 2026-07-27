@@ -12,6 +12,84 @@
 
 ---
 
+## 🆕 Actualización — 27-jul-2026 — reportes por servicio, preview backend y solo-lectura en cerrados
+
+> Tanda de reportes PDF + ciclo de vida de la hoja. **Cambio SOLO Python/plantillas**: los
+> reportes y el candado son código y plantillas; la única parte que exige `-u` es la de campos
+> nuevos (solo-lectura). Ver `60-odoo19-conventions.md` → "Versión del manifest": el manifest
+> subió a **v19.0.1.14.0** SOLO por los campos nuevos; los cambios posteriores (preview inline,
+> reportes de Áreas verdes/Valoración) son Python → **basta reiniciar**, sin bump.
+
+### 1. Hoja de trabajo de servicios CERRADOS: solo lectura + "Habilitar edición"
+
+- **Problema:** `WORKSHEET_STATES` incluye `'cerrado'`, así que un servicio Completado mostraba
+  la hoja **editable** y el `POST …/worksheet` aceptaba cambios. La lista de la app deja ver los
+  cerrados (decisión de negocio), pero no deberían editarse sin más.
+- **Fix (cliente + servidor):** `_worksheet_locked(task, flow_state)` = `cerrado` **y** sin
+  desbloqueo. La plantilla pinta los controles `disabled`, oculta "Guardar" / "+ Agregar" /
+  subir-borrar fotos, y muestra un banner + botón **"Habilitar edición"**. El servidor rechaza el
+  `POST …/worksheet` de una tarea cerrada no desbloqueada (**el flag vive en el servidor**, no en
+  el form: un POST directo / pestaña vieja no lo burla).
+- **Campos nuevos** en `project.task`: `visar_worksheet_reopened_at` / `visar_worksheet_reopened_by_id`
+  (marca + atribución). Ruta nueva `POST …/worksheet/reopen` (`_visar_worksheet_reopen`, cualquier
+  técnico asignado; nota en el chatter). **Se re-bloquea al guardar** (`_visar_worksheet_relock`,
+  otra nota): cada edición exige volver a habilitarla. `_visar_reconcile_flow_markers` limpia el
+  desbloqueo si la etapa sale de Completado (no queda desbloqueo obsoleto).
+
+### 2. Botón "Reporte (PDF)" en la tarea (backend) — preview EN LÍNEA, no descarga
+
+- Botón inteligente en `project.task` (junto a "Hoja de trabajo Completada" / "Previsualización
+  del cliente"), `invisible` salvo `is_fsm`. Abre el **mismo** reporte que ve el técnico
+  (`industry_fsm.task_custom_report`, enriquecido por la maqueta Visar).
+- `visar_action_view_worksheet_report` devuelve una **`act_url` (pestaña nueva)** a
+  `GET /visar/report/task/<id>/worksheet` (`auth='user'`, `check_access('read')`) que sirve el PDF
+  con `Content-Disposition: inline` → el navegador lo abre en su visor y desde ahí se descarga
+  (como la app de campo). `report_action` NO se usa porque **fuerza la descarga directa**.
+
+### 3. Fix de galerías del reporte: mostrar TODAS las fotos (no solo la primera)
+
+- **Bug:** las galerías de campos-foto PRINCIPALES (`x_foto_inicial`, `x_foto_ejecucion` en
+  Fumigación) se consultaban sobre el **registro de worksheet** (`record._name`/`record.id`), pero
+  la app las guarda como adjuntos de la **TAREA** (`project.task`/`task.id`, ver
+  `field_task_ws_photo`). No encontraba nada → caía al binary del campo (la foto representativa) →
+  **solo 1 foto**. La evidencia por-línea (área/zona) sí funcionaba (consultaba el registro de
+  línea). Fix: `_visar_report_evidence_section` consulta `('project.task', self.id, …)`.
+
+### 4. Reportes de cliente por servicio (además de Fumigación)
+
+`_visar_worksheet_report_sections` despacha por **nombre de plantilla** a una maqueta dedicada
+(condensada + **toda la evidencia fotográfica en una sección al final**); el resto sigue el
+recorrido genérico de la vista. Helper compartido `_visar_report_services_section` (tabla de
+la orden). Constantes de nombre en `hooks.py` (`FUMIGACION_NAME`, `JARDINERIA_NAME`, `VISITA_NAME`).
+
+- **Mantenimiento de áreas verdes** (`_visar_jardineria_report_sections`): Servicios → Horario →
+  **Labores realizadas** (tabla `x_labores`, pliega "Otro") → **Cierre del servicio** (indicaciones
+  del cliente, área limpia, residuos + nº de bolsas, observaciones finales) → **Evidencia** (4
+  galerías: Estado inicial / Resultado final / Residuos generados / Retiro de residuos, adjuntos de
+  la tarea). **Omite** (interno): `x_solicitudes_adicionales` (lead comercial), `x_estado_equipo`
+  (mantenimiento de equipos).
+- **Visita de valoración técnica** (`_visar_visita_report_sections`): Servicios ($500) → Horario →
+  **Resumen de la valoración** (tipo inmueble [pliega "Otro"], complejidad, superficie, nº de
+  habitaciones, nº de visitas) → **Hallazgos y diagnóstico** (descripción, factores, resumen
+  comunicado al cliente) → **Servicios recomendados** (`x_servicios_identificados`, m2m, pliega
+  "Otro") → **Evidencia** (una galería POR ZONA etiquetada con `x_zona`, fotos por-línea
+  `x_imagen_zona`). **Omite** (operativo/interno): `x_restricciones_acceso`, `x_materiales_especiales`.
+- Helper `_visar_selection_label(record, field, otro_field)` = etiqueta del `selection` plegando
+  "Otro" al companion.
+
+> **Evidencia = TODAS las fotos.** Las galerías de campo principal se leen de la tarea; las de
+> línea (área/zona), del registro de línea. Único tope: `_WS_REPORT_GALLERY_MAX = 12` por galería
+> (salvaguarda anti data-URI gigante que corrompe wkhtmltopdf; los trabajos reales van muy por
+> debajo). ⚠️ La evidencia FINAL de Fumigación aún topa a 12 **en total** entre áreas (pendiente si
+> se quiere por-área).
+
+> **Verificado (27-jul, BD clonada, registros desechables con rollback):** ambos reportes arman las
+> secciones esperadas, pliegan "Otro", excluyen los campos internos y renderizan el HTML sin error;
+> la valoración muestra las fotos de cada zona (2 y 1). Horario/Servicios aparecen solo con datos
+> reales (llegada/cierre y línea de orden).
+
+---
+
 ## 🆕 Actualización — 17-jul-2026 (ter) — PDF: fotos que no salían + render lento
 
 > Dos problemas del reporte PDF, **ambos ajenos a las tandas Req 7/8** (uno de datos/entorno, otro un
