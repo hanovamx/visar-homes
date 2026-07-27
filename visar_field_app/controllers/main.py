@@ -456,6 +456,19 @@ class VisarFieldApp(http.Controller):
         """¿Se muestra/guarda la hoja de trabajo en esta fase? (Req 5)"""
         return flow_state in self.WORKSHEET_STATES
 
+    def _worksheet_locked(self, task, flow_state):
+        """¿La hoja de trabajo está en SOLO LECTURA?
+
+        Un servicio cerrado (Completado) muestra su hoja para consulta, pero NO se
+        edita por defecto: hay que pulsar "Habilitar edición" (`_visar_worksheet_reopen`),
+        que sella `visar_worksheet_reopened_at` y la desbloquea hasta el próximo
+        guardado. En ejecución la hoja siempre es editable. Este candado se aplica en
+        el servidor (no solo en la plantilla): un POST directo a `/worksheet` sobre un
+        servicio cerrado sin desbloquear se rechaza."""
+        if flow_state != 'cerrado':
+            return False
+        return not task.visar_worksheet_reopened_at
+
     def _signature_available(self, task, flow_state):
         """¿Se muestra la sección de firma + "Cerrar servicio"? (Req 6)
 
@@ -1330,6 +1343,9 @@ class VisarFieldApp(http.Controller):
                                  if worksheet_available else []),
             'worksheet_available': worksheet_available,
             'worksheet_saved': bool(task.visar_worksheet_saved_at),
+            # Servicio cerrado → hoja de solo lectura hasta pulsar "Habilitar edición".
+            'worksheet_locked': self._worksheet_locked(task, flow_state),
+            'reopen_action': '/visar/field/task/%s/worksheet/reopen' % task.id,
             'ws_error': kw.get('ws_error'),
             'signature_available': self._signature_available(task, flow_state),
             'track_action': '/visar/field/task/%s/track' % task.id,
@@ -1488,7 +1504,14 @@ class VisarFieldApp(http.Controller):
 
         # Req 5: no se captura antes de "Comenzar servicio". Defensa en profundidad —
         # la plantilla ni siquiera pinta el formulario, esto ataja un POST directo.
-        if not self._worksheet_available(self._task_flow_state(task)):
+        flow_state = self._task_flow_state(task)
+        if not self._worksheet_available(flow_state):
+            return request.redirect('/visar/field/task/%s' % task.id)
+
+        # Servicio cerrado sin "Habilitar edición": la hoja es de solo lectura. La
+        # plantilla oculta el botón de guardar; esto ataja un POST directo / pestaña
+        # vieja (el flag de desbloqueo vive en el servidor, no en el formulario).
+        if self._worksheet_locked(task, flow_state):
             return request.redirect('/visar/field/task/%s' % task.id)
 
         record = self._worksheet_record(task, create=True)
@@ -1518,7 +1541,28 @@ class VisarFieldApp(http.Controller):
                 ws_vals['visar_worksheet_saved_at'] = now
                 ws_vals['visar_worksheet_saved_by_id'] = employee.id
             task.write(ws_vals)
+            # Edición de un servicio cerrado: se re-bloquea (vuelve a solo lectura) y
+            # se registra en el chatter. Editar de nuevo exige "Habilitar edición".
+            if flow_state == 'cerrado':
+                task._visar_worksheet_relock(employee)
         return request.redirect('/visar/field/task/%s?saved=1' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/worksheet/reopen', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_task_worksheet_reopen(self, task_id, **post):
+        """Habilita la edición de la hoja de un servicio cerrado ("Habilitar edición").
+
+        Cualquier técnico asignado puede hacerlo (mismo modelo de acceso que el resto
+        de la app); la acción queda en el chatter. Solo tiene efecto si la tarea está
+        cerrada — en ejecución la hoja ya es editable."""
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._task_for_employee(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/tasks')
+        task._visar_worksheet_reopen(employee)
+        return request.redirect('/visar/field/task/%s' % task.id)
 
     # ==================================================================
     # Traza de acciones del técnico (Llamar / WhatsApp / Google Maps)
@@ -1849,6 +1893,29 @@ class VisarFieldApp(http.Controller):
         task = self._task_for_employee(task_id, employee) if employee else None
         if not task:
             return request.redirect('/visar/field')
+        pdf, _ctype = request.env['ir.actions.report'].sudo()._render_qweb_pdf(
+            FSM_REPORT, [task.id])
+        return request.make_response(pdf, [
+            ('Content-Type', 'application/pdf'),
+            ('Content-Disposition', 'inline; filename="reporte-servicio.pdf"'),
+        ])
+
+    # ==================================================================
+    # Reporte nativo (PDF) — previsualización EN LÍNEA desde el backend
+    # ==================================================================
+    # Sirve el MISMO reporte que la ruta de la app de campo, pero para usuarios
+    # internos (botón "Reporte (PDF)" de la vista de tarea). En línea (no descarga
+    # directa): el navegador lo abre en su visor y desde ahí se puede descargar.
+    @http.route('/visar/report/task/<int:task_id>/worksheet', type='http',
+                auth='user', website=False, sitemap=False)
+    def backend_task_worksheet_report(self, task_id, **kw):
+        task = request.env['project.task'].browse(task_id).exists()
+        # ACL: el usuario debe poder leer la tarea (no basta con estar logueado).
+        # El render se hace en sudo por la maqueta enriquecida, pero solo tras
+        # comprobar el acceso del usuario a ESTA tarea.
+        if not task:
+            raise request.not_found()
+        task.check_access('read')
         pdf, _ctype = request.env['ir.actions.report'].sudo()._render_qweb_pdf(
             FSM_REPORT, [task.id])
         return request.make_response(pdf, [

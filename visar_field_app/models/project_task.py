@@ -128,6 +128,20 @@ class ProjectTask(models.Model):
     visar_reschedule_requested_at = fields.Datetime(
         string="Reagenda solicitada en", readonly=True)
 
+    # --- Reapertura de la hoja de trabajo de un servicio CERRADO ---
+    # Un servicio cerrado (Completado) muestra su hoja en SOLO LECTURA. Para
+    # corregir algo, el técnico pulsa "Habilitar edición": eso sella este marcador
+    # y desbloquea la captura. Se re-bloquea al guardar (cada edición exige volver
+    # a habilitarla) o al sacar la tarea de la etapa Completado.
+    visar_worksheet_reopened_at = fields.Datetime(
+        string="Edición de hoja habilitada en", readonly=True, copy=False,
+        help="Momento en que un técnico habilitó la edición de la hoja de trabajo "
+             "de un servicio ya cerrado. Vacío = hoja en solo lectura.")
+    visar_worksheet_reopened_by_id = fields.Many2one(
+        'hr.employee', string="Edición de hoja habilitada por", readonly=True,
+        copy=False, help="Técnico que habilitó la edición de la hoja de un "
+             "servicio cerrado.")
+
     # --- Upsell en campo ---
     visar_upsell_order_id = fields.Many2one(
         'sale.order', string="Pedido de adicionales", readonly=True, copy=False,
@@ -292,6 +306,12 @@ class ProjectTask(models.Model):
             # (el traslado se recompute a 0 al limpiarse el sello) y la ETA.
             vals['visar_enroute_at'] = False
             vals['visar_enroute_eta_minutes'] = 0
+        # Fuera de Completado, el desbloqueo de edición de la hoja no aplica (la hoja
+        # se edita libremente en ejecución): se limpia para que no quede un desbloqueo
+        # obsoleto si la tarea vuelve a cerrarse más tarde.
+        if not (s3 and stage == s3) and self.visar_worksheet_reopened_at:
+            vals['visar_worksheet_reopened_at'] = False
+            vals['visar_worksheet_reopened_by_id'] = False
         if vals:
             self.write(vals)
 
@@ -346,6 +366,61 @@ class ProjectTask(models.Model):
                 summary="Reagendar servicio — cliente no llegó",
                 note=body)
         self.message_post(body=body)
+
+    # ==================================================================
+    # Reporte PDF desde el backend (mismo que ve el técnico al cerrar)
+    # ==================================================================
+    def visar_action_view_worksheet_report(self):
+        """Abre el MISMO PDF del reporte de servicio que ve el técnico en la app al
+        cerrar (report nativo `industry_fsm.worksheet_custom`, enriquecido por la
+        maqueta Visar). Lo usa el botón inteligente de la vista de tarea, para que
+        gestión pueda previsualizar el reporte sin entrar a la app de campo.
+
+        Devuelve una `act_url` (pestaña nueva) que sirve el PDF EN LÍNEA (no descarga
+        directa): el navegador lo abre en su visor y desde ahí se puede descargar,
+        igual que en la app de campo. `report_action` en cambio fuerza la descarga."""
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_url',
+            'url': '/visar/report/task/%s/worksheet' % self.id,
+            'target': 'new',
+        }
+
+    # ==================================================================
+    # Reapertura de la hoja de trabajo de un servicio cerrado
+    # ==================================================================
+    def _visar_worksheet_reopen(self, employee):
+        """Habilita la edición de la hoja de trabajo de un servicio YA cerrado.
+
+        Solo tiene efecto si la tarea está cerrada (estado terminal); en servicio
+        en ejecución la hoja ya es editable. Deja constancia en el chatter (quién
+        habilitó la edición) para auditoría. Devuelve True si desbloqueó."""
+        self.ensure_one()
+        if self.state not in _CLOSED_STATES:
+            return False
+        self.write({
+            'visar_worksheet_reopened_at': fields.Datetime.now(),
+            'visar_worksheet_reopened_by_id': employee.id if employee else False,
+        })
+        self.message_post(body=Markup(
+            "✎ <b>%s</b> habilitó la edición de la hoja de trabajo de un servicio "
+            "cerrado desde la app de campo.") % (employee.name or ''))
+        return True
+
+    def _visar_worksheet_relock(self, employee=None):
+        """Vuelve a bloquear la hoja (solo lectura) tras guardar una edición sobre un
+        servicio cerrado. Deja constancia de que se re-editó la hoja."""
+        self.ensure_one()
+        if not self.visar_worksheet_reopened_at:
+            return False
+        self.write({
+            'visar_worksheet_reopened_at': False,
+            'visar_worksheet_reopened_by_id': False,
+        })
+        self.message_post(body=Markup(
+            "📝 <b>%s</b> guardó cambios en la hoja de trabajo de un servicio "
+            "cerrado.") % ((employee.name if employee else '') or 'El técnico'))
+        return True
 
     # ==================================================================
     # Traza de acciones del técnico (Llamar / WhatsApp / Google Maps)

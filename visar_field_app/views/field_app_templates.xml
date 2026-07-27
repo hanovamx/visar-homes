@@ -303,10 +303,23 @@
                             Se habilita al pulsar "Comenzar servicio".
                         </span>
                     </div>
+                    <!-- Servicio cerrado: la hoja se muestra para consulta pero en SOLO
+                         LECTURA. "Habilitar edición" (form aparte: no se pueden anidar
+                         forms) desbloquea la captura hasta el próximo guardado. -->
+                    <div t-if="has_worksheet_template and worksheet_available and worksheet_locked"
+                         class="alert alert-secondary d-flex flex-wrap align-items-center justify-content-between mb-0 mt-0">
+                        <span class="small mb-2 mb-sm-0">
+                            <b>Servicio cerrado.</b> La hoja de trabajo es de solo lectura.
+                        </span>
+                        <form t-att-action="reopen_action" method="post" class="m-0">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <button type="submit" class="btn btn-outline-warning btn-sm">✎ Habilitar edición</button>
+                        </form>
+                    </div>
                     <form t-if="has_worksheet_template and worksheet_available"
                           t-att-action="'/visar/field/task/%s/worksheet' % task.id" method="post"
                           enctype="multipart/form-data" id="visar-worksheet-form"
-                          class="card p-3 mb-4">
+                          t-attf-class="card p-3 mb-4#{' o_visar_ws_readonly' if worksheet_locked else ''}">
                         <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                         <h6 class="mb-1">Hoja de trabajo</h6>
                         <!-- Aviso de error del servidor (defensa en profundidad); el
@@ -314,7 +327,7 @@
                         <div t-if="ws_error" class="alert alert-danger py-2 o_visar_ws_error_banner">
                             Faltan campos obligatorios. Revisa los marcados en rojo abajo.
                         </div>
-                        <p class="small text-muted mb-3">
+                        <p t-if="not worksheet_locked" class="small text-muted mb-3">
                             Los campos con <span class="text-danger fw-bold">*</span> son obligatorios.
                         </p>
 
@@ -355,7 +368,8 @@
                                             <t t-set="line_id" t-value="line['id']"/>
                                             <t t-set="task_id" t-value="task.id"/>
                                             <t t-set="card_rows" t-value="line['rows']"/>
-                                            <t t-set="card_disabled" t-value="False"/>
+                                            <t t-set="card_disabled" t-value="worksheet_locked"/>
+                                            <t t-set="card_removable" t-value="not worksheet_locked"/>
                                         </t>
                                     </t>
                                 </div>
@@ -369,9 +383,10 @@
                                         <t t-set="task_id" t-value="task.id"/>
                                         <t t-set="card_rows" t-value="field['blank_rows']"/>
                                         <t t-set="card_disabled" t-value="True"/>
+                                        <t t-set="card_removable" t-value="True"/>
                                     </t>
                                 </div>
-                                <button type="button"
+                                <button t-if="not worksheet_locked" type="button"
                                         class="btn btn-outline-secondary w-100 o_visar_o2m_add">
                                     + Agregar
                                 </button>
@@ -381,7 +396,8 @@
                             <div t-elif="field['type'] == 'boolean'" class="form-check">
                                 <input type="checkbox" class="form-check-input"
                                        t-att-name="field['name']" t-att-id="field['name']"
-                                       t-att-checked="field['value'] and 'checked' or None"/>
+                                       t-att-checked="field['value'] and 'checked' or None"
+                                       t-att-disabled="worksheet_locked and 'disabled' or None"/>
                                 <label class="form-check-label" t-att-for="field['name']"
                                        t-esc="field['string']"/>
                                 <t t-call="visar_field_app.req_star">
@@ -411,7 +427,8 @@
                                     <input type="checkbox" class="form-check-input"
                                            t-att-name="field['name']" t-att-value="opt['id']"
                                            t-att-id="'%s_%s' % (field['name'], opt['id'])"
-                                           t-att-checked="opt['id'] in field['value_ids'] and 'checked' or None"/>
+                                           t-att-checked="opt['id'] in field['value_ids'] and 'checked' or None"
+                                           t-att-disabled="worksheet_locked and 'disabled' or None"/>
                                     <label class="form-check-label"
                                            t-att-for="'%s_%s' % (field['name'], opt['id'])"
                                            t-esc="opt['display_name']"/>
@@ -430,7 +447,8 @@
                                 </t>
 
                                 <select t-if="field['type'] == 'selection'" class="form-select"
-                                        t-att-name="field['name']" t-att-id="field['name']">
+                                        t-att-name="field['name']" t-att-id="field['name']"
+                                        t-att-disabled="worksheet_locked and 'disabled' or None">
                                     <option value="">—</option>
                                     <option t-foreach="field['selection']" t-as="opt"
                                             t-att-value="opt[0]"
@@ -439,7 +457,8 @@
                                 </select>
 
                                 <select t-elif="field['type'] == 'many2one'" class="form-select"
-                                        t-att-name="field['name']" t-att-id="field['name']">
+                                        t-att-name="field['name']" t-att-id="field['name']"
+                                        t-att-disabled="worksheet_locked and 'disabled' or None">
                                     <option value="">—</option>
                                     <option t-foreach="field['options']" t-as="opt"
                                             t-att-value="opt['id']"
@@ -449,16 +468,19 @@
 
                                 <textarea t-elif="field['type'] in ('text', 'html')" rows="3"
                                           class="form-control" t-att-name="field['name']"
-                                          t-att-id="field['name']"><t t-esc="field['value'] or ''"/></textarea>
+                                          t-att-id="field['name']"
+                                          t-att-disabled="worksheet_locked and 'disabled' or None"><t t-esc="field['value'] or ''"/></textarea>
 
                                 <input t-elif="field['type'] in ('integer', 'float', 'monetary')"
                                        type="number" step="any" class="form-control"
                                        t-att-name="field['name']" t-att-id="field['name']"
-                                       t-att-value="field['value']"/>
+                                       t-att-value="field['value']"
+                                       t-att-disabled="worksheet_locked and 'disabled' or None"/>
 
                                 <input t-elif="field['type'] == 'date'" type="date"
                                        class="form-control" t-att-name="field['name']"
-                                       t-att-id="field['name']" t-att-value="field['value']"/>
+                                       t-att-id="field['name']" t-att-value="field['value']"
+                                       t-att-disabled="worksheet_locked and 'disabled' or None"/>
 
                                 <!-- Galería viva: multi-foto + borrado por foto (como la
                                      antigua sección "Fotos"). El campo binary nativo se
@@ -468,25 +490,31 @@
                                     <div class="row g-2 mb-2 o_visar_photo_grid">
                                         <div t-foreach="field['photos']" t-as="pid" class="col-4">
                                             <div class="o_visar_photo position-relative">
-                                                <button type="button" class="btn btn-danger o_visar_photo_x"
+                                                <button t-if="not worksheet_locked" type="button" class="btn btn-danger o_visar_photo_x"
                                                         aria-label="Eliminar foto"
                                                         t-att-data-action="'/visar/field/task/%s/ws-photo/%s/%s/delete' % (task.id, field['name'], pid)">&#215;</button>
                                                 <img t-att-src="'/visar/field/task/%s/image/%s' % (task.id, pid)"
                                                      class="img-fluid rounded o_visar_photo_img"/>
                                             </div>
                                         </div>
+                                        <div t-if="worksheet_locked and not field['photos']" class="col-12 text-muted small">
+                                            Sin fotos.
+                                        </div>
                                     </div>
-                                    <input type="file" accept="image/*" capture="environment"
-                                           multiple="multiple" class="form-control mb-2 o_visar_ws_photo_input"/>
-                                    <button type="button" class="btn btn-outline-primary w-100 o_visar_ws_photo_upload"
-                                            t-att-data-action="'/visar/field/task/%s/ws-photo/%s' % (task.id, field['name'])">
-                                        Subir fotos
-                                    </button>
+                                    <t t-if="not worksheet_locked">
+                                        <input type="file" accept="image/*" capture="environment"
+                                               multiple="multiple" class="form-control mb-2 o_visar_ws_photo_input"/>
+                                        <button type="button" class="btn btn-outline-primary w-100 o_visar_ws_photo_upload"
+                                                t-att-data-action="'/visar/field/task/%s/ws-photo/%s' % (task.id, field['name'])">
+                                            Subir fotos
+                                        </button>
+                                    </t>
                                 </div>
 
                                 <input t-else="" type="text" class="form-control"
                                        t-att-name="field['name']" t-att-id="field['name']"
-                                       t-att-value="field['value']"/>
+                                       t-att-value="field['value']"
+                                       t-att-disabled="worksheet_locked and 'disabled' or None"/>
 
                                 <t t-call="visar_field_app.req_error">
                                     <t t-set="reqf" t-value="field"/>
@@ -494,7 +522,8 @@
                             </t>
                         </div>
 
-                        <button type="submit" class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
+                        <button t-if="not worksheet_locked" type="submit"
+                                class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
                     </form>
 
                     <!-- Firma del cliente (campos nativos) + cierre.
@@ -875,7 +904,10 @@
     <!-- ============================================================ -->
     <template id="o2m_card" name="Visar Campo - Tarjeta de línea">
         <div class="o_visar_o2m_card card p-3 mb-3">
-            <div class="d-flex justify-content-end">
+            <!-- `card_removable` (default True) permite ocultar "Eliminar" en cartas de
+                 SOLO LECTURA (servicio cerrado) sin afectar la carta-plantilla que el
+                 JS clona (esa siempre es removable). -->
+            <div t-if="card_removable is None or card_removable" class="d-flex justify-content-end">
                 <button type="button"
                         class="btn btn-sm btn-link text-danger p-0 o_visar_o2m_remove">
                     Eliminar
@@ -975,7 +1007,7 @@
                         <div t-if="f['photos'] and line_id" class="row g-2 mb-2">
                             <div t-foreach="f['photos']" t-as="pid" class="col-4">
                                 <div class="o_visar_photo position-relative">
-                                    <button type="button" class="btn btn-danger o_visar_photo_x"
+                                    <button t-if="not card_disabled" type="button" class="btn btn-danger o_visar_photo_x"
                                             aria-label="Eliminar foto"
                                             t-att-data-action="'/visar/field/task/%s/line-photo/%s/%s/%s/delete' % (task_id, line_id, f['name'], pid)">&#215;</button>
                                     <img t-att-src="'/visar/field/task/%s/line-photo/%s/%s/%s' % (task_id, line_id, f['name'], pid)"
