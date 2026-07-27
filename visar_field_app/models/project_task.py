@@ -12,7 +12,7 @@ from odoo import api, fields, models
 from odoo.tools import formatLang, html2plaintext
 from odoo.tools.image import image_process
 
-from ..hooks import FUMIGACION_NAME
+from ..hooks import FUMIGACION_NAME, JARDINERIA_NAME, VISITA_NAME
 
 _logger = logging.getLogger(__name__)
 
@@ -894,11 +894,15 @@ class ProjectTask(models.Model):
             [('x_project_task_id', '=', self.id)], limit=1, order='create_date desc')
         if not record:
             return []
-        # Fumigación: maqueta dedicada, optimizada para la legibilidad del cliente
-        # (Servicios agregados → Horario → Áreas tratadas → Evidencia). El resto de
-        # plantillas siguen el recorrido genérico de la vista (de aquí para abajo).
+        # Plantillas con maqueta dedicada, optimizada para la legibilidad del cliente
+        # (secciones condensadas + toda la evidencia fotográfica al final). El resto
+        # sigue el recorrido genérico de la vista (de aquí para abajo).
         if template.sudo().name == FUMIGACION_NAME:
             return self._visar_fumigacion_report_sections(record)
+        if template.sudo().name == JARDINERIA_NAME:
+            return self._visar_jardineria_report_sections(record)
+        if template.sudo().name == VISITA_NAME:
+            return self._visar_visita_report_sections(record)
         try:
             arch = etree.fromstring(Model.get_view(view_type='form')['arch'])
         except Exception:  # noqa: BLE001 - vista dinámica ilegible → fallback nativo
@@ -1173,6 +1177,33 @@ class ProjectTask(models.Model):
             total += line.price_subtotal
         return {'rows': rows, 'total': formatLang(self.env, total, currency_obj=currency)}
 
+    def _visar_report_services_section(self):
+        """Sección "Servicios y productos agregados" (tabla con importes) o None.
+
+        Compartida por las maquetas dedicadas (Fumigación, Jardinería): las líneas de
+        la orden asignadas a ESTA tarea, con una fila de Total al final."""
+        self.ensure_one()
+        services = self._visar_report_services()
+        if not services:
+            return None
+        rows = [[
+            {'kind': 'scalar', 'text': r['name']},
+            {'kind': 'scalar', 'text': r['qty']},
+            {'kind': 'scalar', 'text': r['price']},
+            {'kind': 'scalar', 'text': r['subtotal']},
+        ] for r in services['rows']]
+        rows.append([
+            {'kind': 'scalar', 'text': "Total"},
+            {'kind': 'scalar', 'text': ''},
+            {'kind': 'scalar', 'text': ''},
+            {'kind': 'scalar', 'text': services['total']},
+        ])
+        return {'title': "Servicios y productos agregados", 'fields': [{
+            'kind': 'table', 'label': '',
+            'columns': ["Servicio", "Cantidad", "Precio unitario", "Subtotal"],
+            'rows': rows,
+        }]}
+
     def _visar_report_gallery(self, res_model, res_id, key, fallback=None):
         """Lista de imágenes (base64 JPEG, listas para embeber) de una galería de
         fotos — los adjuntos etiquetados con `visar_photo_key` de la App de Campo.
@@ -1213,13 +1244,20 @@ class ProjectTask(models.Model):
         omiten para no dejar títulos huérfanos en el PDF."""
         self.ensure_one()
         fields_out = []
+        # Las galerías de los campos-foto PRINCIPALES (`x_foto_inicial`,
+        # `x_foto_ejecucion`) se guardan como adjuntos de la TAREA (project.task /
+        # task.id), no de la worksheet: así lo hace la app de campo (ver
+        # `field_task_ws_photo`). Antes se buscaban sobre `record` (la worksheet),
+        # no encontraban nada y caían al binary → solo la foto representativa (1).
+        # El fallback al binary del campo se conserva para datos antiguos capturados
+        # antes de la galería viva (cuando solo se poblaba el binary).
         inicial = self._visar_report_gallery(
-            record._name, record.id, 'x_foto_inicial', record.x_foto_inicial)
+            'project.task', self.id, 'x_foto_inicial', record.x_foto_inicial)
         if inicial:
             fields_out.append(
                 {'kind': 'gallery', 'label': "Evidencia inicial", 'images': inicial})
         durante = self._visar_report_gallery(
-            record._name, record.id, 'x_foto_ejecucion', record.x_foto_ejecucion)
+            'project.task', self.id, 'x_foto_ejecucion', record.x_foto_ejecucion)
         if durante:
             fields_out.append(
                 {'kind': 'gallery', 'label': "Durante el tratamiento", 'images': durante})
@@ -1257,25 +1295,9 @@ class ProjectTask(models.Model):
         sections = []
 
         # (3) Servicios agregados — tabla de servicios prestados con importes.
-        services = self._visar_report_services()
+        services = self._visar_report_services_section()
         if services:
-            rows = [[
-                {'kind': 'scalar', 'text': r['name']},
-                {'kind': 'scalar', 'text': r['qty']},
-                {'kind': 'scalar', 'text': r['price']},
-                {'kind': 'scalar', 'text': r['subtotal']},
-            ] for r in services['rows']]
-            rows.append([
-                {'kind': 'scalar', 'text': "Total"},
-                {'kind': 'scalar', 'text': ''},
-                {'kind': 'scalar', 'text': ''},
-                {'kind': 'scalar', 'text': services['total']},
-            ])
-            sections.append({'title': "Servicios y productos agregados", 'fields': [{
-                'kind': 'table', 'label': '',
-                'columns': ["Servicio", "Cantidad", "Precio unitario", "Subtotal"],
-                'rows': rows,
-            }]})
+            sections.append(services)
 
         # (4) Horario del servicio — llegada y finalización (sin tiempos internos).
         times = self._visar_report_arrival_finish()
@@ -1304,3 +1326,295 @@ class ProjectTask(models.Model):
             sections.append(plaguicidas)
 
         return sections
+
+    # ==================================================================
+    # Reporte PDF — maqueta "Mantenimiento de áreas verdes" (jardinería)
+    # ==================================================================
+    # Orden pedido por el cliente: (1) Servicios → (2) Horario → (3) Labores
+    # realizadas → (4) Cierre del servicio → (5) TODA la evidencia fotográfica en
+    # una sola sección al final. Cliente, Técnico y Firma los pinta el cascarón
+    # compartido. Se OMITEN del PDF del cliente:
+    #   - x_solicitudes_adicionales (lead comercial interno);
+    #   - x_estado_equipo (mantenimiento preventivo de equipos, interno);
+    #   - companions "Otro" y campos técnicos (se pliegan / no son dato).
+
+    def _visar_jardineria_report_sections(self, record):
+        """Secciones del reporte de Mantenimiento de áreas verdes, en el orden
+        pedido por el cliente (ver comentario del bloque)."""
+        self.ensure_one()
+        sections = []
+
+        # (1) Servicios y productos agregados — compartido.
+        services = self._visar_report_services_section()
+        if services:
+            sections.append(services)
+
+        # (2) Horario del servicio — llegada y finalización (sin tiempos internos).
+        times = self._visar_report_arrival_finish()
+        if times:
+            sections.append({'title': "Horario del servicio", 'fields': [
+                {'kind': 'scalar', 'label': "Hora de llegada", 'text': times['arrived']},
+                {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
+            ]})
+
+        # (3) Labores realizadas — subficha `x_labores` como tabla.
+        labores = self._visar_jardineria_labores_table(record)
+        if labores:
+            sections.append({'title': "Labores realizadas", 'fields': [labores]})
+
+        # (4) Cierre del servicio — bloque etiqueta/valor condensado.
+        cierre = self._visar_jardineria_cierre_fields(record)
+        if cierre:
+            sections.append({'title': "Cierre del servicio", 'fields': cierre})
+
+        # (5) Evidencia fotográfica — todas las galerías en una sola sección.
+        evidence = self._visar_jardineria_evidence_section(record)
+        if evidence:
+            sections.append(evidence)
+
+        return sections
+
+    def _visar_jardineria_labores_table(self, record):
+        """Tabla de labores: Labor | ¿Completada? | Observaciones. None si no hay.
+
+        "Labor" resuelve la etiqueta del `selection` y **pliega "Otro"**: si el tipo
+        es Otro y hay texto en el companion, se muestra ese texto en su lugar."""
+        self.ensure_one()
+        lines = record.x_labores
+        if not lines:
+            return None
+        info = self.env[lines._name].sudo().fields_get(['x_tipo_servicio'])
+        selection = dict(info.get('x_tipo_servicio', {}).get('selection') or [])
+        rows = []
+        for line in lines:
+            labor = selection.get(line.x_tipo_servicio, line.x_tipo_servicio or '')
+            if (labor and labor.strip().lower().startswith('otro')
+                    and line.x_tipo_servicio_otro):
+                labor = line.x_tipo_servicio_otro
+            rows.append([
+                {'kind': 'scalar', 'text': labor or '—'},
+                {'kind': 'bool', 'bool': bool(line.x_completado)},
+                {'kind': 'scalar', 'text': line.x_observaciones or ''},
+            ])
+        return {
+            'kind': 'table', 'label': '',
+            'columns': ["Labor", "¿Completada?", "Observaciones"],
+            'rows': rows,
+        }
+
+    def _visar_jardineria_cierre_fields(self, record):
+        """Campos del bloque "Cierre del servicio" (lista de descriptores).
+
+        Incluye (por decisión de negocio): indicaciones del cliente, área limpia,
+        residuos retirados + nº de bolsas, y las observaciones finales del técnico.
+        NO incluye solicitudes adicionales ni estado del equipo (internos)."""
+        self.ensure_one()
+        fields_out = []
+
+        indicaciones = (record.x_indicaciones_cliente or '').strip()
+        if indicaciones:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Indicaciones especiales del cliente",
+                'text': indicaciones})
+
+        fields_out.append({
+            'kind': 'bool', 'label': "Área entregada limpia y en orden",
+            'bool': bool(record.x_area_limpia)})
+
+        if record.x_residuos_embolsados:
+            n = int(record.x_num_bolsas or 0)
+            text = ("Sí — %d bolsa%s" % (n, '' if n == 1 else 's')) if n else "Sí"
+        else:
+            text = "No"
+        fields_out.append({
+            'kind': 'scalar', 'label': "Residuos vegetales retirados", 'text': text})
+
+        # Observaciones finales del técnico (x_comments; puede ser html o texto).
+        info = self.env[record._name].sudo().fields_get(['x_comments']).get('x_comments') or {}
+        value = record.x_comments
+        if value:
+            if info.get('type') == 'html':
+                if html2plaintext(value).strip():
+                    fields_out.append({
+                        'kind': 'html', 'label': "Observaciones finales del técnico",
+                        'html': Markup(value)})
+            elif str(value).strip():
+                fields_out.append({
+                    'kind': 'scalar', 'label': "Observaciones finales del técnico",
+                    'text': str(value).strip()})
+
+        return fields_out
+
+    def _visar_jardineria_evidence_section(self, record):
+        """Sección única "Evidencia fotográfica" con todas las galerías etiquetadas,
+        o None si no hay ninguna foto.
+
+        Las cuatro son campos-foto PRINCIPALES → adjuntos de la TAREA (project.task),
+        como el resto de campos-foto principales de la app (ver `field_task_ws_photo`).
+        El fallback al binary del campo cubre datos antiguos sin galería."""
+        self.ensure_one()
+        galleries = [
+            ('x_foto_inicial_jardin', "Estado inicial", record.x_foto_inicial_jardin),
+            ('x_resultado_final', "Resultado final", record.x_resultado_final),
+            ('x_foto_bolsas', "Residuos generados", record.x_foto_bolsas),
+            ('x_foto_bolsas_camioneta', "Retiro de residuos", record.x_foto_bolsas_camioneta),
+        ]
+        fields_out = []
+        for key, label, fallback in galleries:
+            images = self._visar_report_gallery('project.task', self.id, key, fallback)
+            if images:
+                fields_out.append({'kind': 'gallery', 'label': label, 'images': images})
+        if not fields_out:
+            return None
+        return {'title': "Evidencia fotográfica", 'fields': fields_out}
+
+    # ==================================================================
+    # Reporte PDF — maqueta "Visita de valoración técnica"
+    # ==================================================================
+    # Orden pedido: (1) Servicios/cobro ($500 valoración) → (2) Horario →
+    # (3) Resumen de la valoración → (4) Hallazgos y diagnóstico → (5) Servicios
+    # recomendados → (6) TODA la evidencia (una galería POR ZONA, etiquetada con la
+    # descripción de la zona). Cliente/Técnico/Firma los pinta el cascarón. Se OMITEN
+    # del PDF del cliente (operativos/internos):
+    #   - x_restricciones_acceso (nota para agendar el servicio real);
+    #   - x_materiales_especiales (insumos que necesitará la cuadrilla);
+    #   - companions "Otro" y campos técnicos (se pliegan / no son dato).
+
+    def _visar_selection_label(self, record, field, otro_field=None):
+        """Etiqueta legible de un campo `selection`; si el valor es "Otro" y hay un
+        companion con texto, devuelve ese texto (pliega el "Otro")."""
+        info = self.env[record._name].sudo().fields_get([field]).get(field) or {}
+        selection = dict(info.get('selection') or [])
+        value = record[field]
+        label = selection.get(value, value or '')
+        if otro_field and label and label.strip().lower().startswith('otro'):
+            otro = (record[otro_field] or '').strip()
+            if otro:
+                return otro
+        return label or ''
+
+    def _visar_visita_report_sections(self, record):
+        """Secciones del reporte de Visita de valoración técnica (ver comentario)."""
+        self.ensure_one()
+        sections = []
+
+        # (1) Servicios/cobro de la valoración — compartido.
+        services = self._visar_report_services_section()
+        if services:
+            sections.append(services)
+
+        # (2) Horario del servicio — llegada y finalización.
+        times = self._visar_report_arrival_finish()
+        if times:
+            sections.append({'title': "Horario del servicio", 'fields': [
+                {'kind': 'scalar', 'label': "Hora de llegada", 'text': times['arrived']},
+                {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
+            ]})
+
+        # (3) Resumen de la valoración — datos de encuadre / dimensionamiento.
+        resumen = self._visar_visita_resumen_fields(record)
+        if resumen:
+            sections.append({'title': "Resumen de la valoración", 'fields': resumen})
+
+        # (4) Hallazgos y diagnóstico — lo que se encontró y se comunicó al cliente.
+        hallazgos = self._visar_visita_hallazgos_fields(record)
+        if hallazgos:
+            sections.append({'title': "Hallazgos y diagnóstico", 'fields': hallazgos})
+
+        # (5) Servicios recomendados — servicios identificados en la valoración.
+        servicios = self._visar_visita_servicios_fields(record)
+        if servicios:
+            sections.append({'title': "Servicios recomendados", 'fields': servicios})
+
+        # (6) Evidencia fotográfica — una galería por zona (etiquetada).
+        evidence = self._visar_visita_evidence_section(record)
+        if evidence:
+            sections.append(evidence)
+
+        return sections
+
+    def _visar_visita_resumen_fields(self, record):
+        """Bloque "Resumen de la valoración": tipo de inmueble (pliega "Otro"),
+        complejidad, superficie, nº de habitaciones y nº estimado de visitas.
+        Cada campo se omite si viene vacío."""
+        self.ensure_one()
+        fields_out = []
+        tipo = self._visar_selection_label(
+            record, 'x_tipo_inmueble', 'x_tipo_inmueble_otro')
+        if tipo:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Tipo de inmueble", 'text': tipo})
+        complejidad = self._visar_selection_label(record, 'x_complejidad')
+        if complejidad:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Complejidad estimada", 'text': complejidad})
+        if record.x_superficie_m2:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Superficie a tratar (m²)",
+                'text': '%g' % record.x_superficie_m2})
+        if record.x_num_habitaciones:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Número de habitaciones o espacios",
+                'text': str(record.x_num_habitaciones)})
+        if record.x_num_visitas:
+            fields_out.append({
+                'kind': 'scalar', 'label': "Número estimado de visitas",
+                'text': str(record.x_num_visitas)})
+        return fields_out
+
+    def _visar_visita_hallazgos_fields(self, record):
+        """Bloque "Hallazgos y diagnóstico": descripción del problema, factores de
+        riesgo y el resumen de hallazgos comunicado al cliente. Omite los vacíos."""
+        self.ensure_one()
+        fields_out = []
+        for field, label in [
+            ('x_descripcion_problema', "Descripción del problema encontrado"),
+            ('x_factores_condiciones', "Factores de riesgo o condiciones especiales"),
+            ('x_resumen_hallazgos', "Resumen de hallazgos"),
+        ]:
+            text = (record[field] or '').strip()
+            if text:
+                fields_out.append({'kind': 'scalar', 'label': label, 'text': text})
+        return fields_out
+
+    def _visar_visita_servicios_fields(self, record):
+        """Bloque "Servicios recomendados": los servicios identificados (m2m de
+        etiquetas), plegando "Otro" al texto del companion. [] si no hay ninguno."""
+        self.ensure_one()
+        tags = record.x_servicios_identificados
+        if not tags:
+            return []
+        names = []
+        for tag in tags:
+            name = (tag.display_name or '').strip()
+            if name.lower().startswith('otro'):
+                otro = (record.x_servicios_identificados_otro or '').strip()
+                if otro:
+                    name = otro
+            if name:
+                names.append(name)
+        if not names:
+            return []
+        return [{
+            'kind': 'scalar', 'label': "Servicios identificados",
+            'text': ', '.join(names)}]
+
+    def _visar_visita_evidence_section(self, record):
+        """Sección única "Evidencia fotográfica": UNA galería por zona inspeccionada,
+        etiquetada con la descripción de la zona (`x_zona`). None si no hay fotos.
+
+        Las fotos son POR LÍNEA (`x_imagen_zona` de cada `x_zonas_evidencia`) →
+        adjuntos del modelo de línea, como la evidencia por área de Fumigación. Se
+        muestran TODAS las fotos de cada zona (fallback al binary para datos viejos)."""
+        self.ensure_one()
+        fields_out = []
+        for line in record.x_zonas_evidencia:
+            images = self._visar_report_gallery(
+                line._name, line.id, 'x_imagen_zona', line.x_imagen_zona)
+            if images:
+                label = (line.x_zona or '').strip() or "Zona"
+                fields_out.append(
+                    {'kind': 'gallery', 'label': label, 'images': images})
+        if not fields_out:
+            return None
+        return {'title': "Evidencia fotográfica", 'fields': fields_out}
