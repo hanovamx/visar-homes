@@ -1182,13 +1182,20 @@ class ProjectTask(models.Model):
         currency = order.currency_id
         rows, total = [], 0.0
         for line in lines:
+            # Importes CON IVA (lo que paga el cliente). El IVA de Visar es
+            # `price_include` (tax_included), así que `price_unit` a veces trae el IVA
+            # dentro y a veces no según la orden; `price_total` (subtotal + impuestos)
+            # es SIEMPRE el monto con IVA, uniforme en ambos regímenes. El precio
+            # unitario se deriva del total para que unidad × cantidad = importe.
+            qty = line.product_uom_qty
+            unit_incl = (line.price_total / qty) if qty else line.price_total
             rows.append({
                 'name': line.product_id.display_name or line.name or '',
-                'qty': '%g' % line.product_uom_qty,
-                'price': formatLang(self.env, line.price_unit, currency_obj=currency),
-                'subtotal': formatLang(self.env, line.price_subtotal, currency_obj=currency),
+                'qty': '%g' % qty,
+                'price': formatLang(self.env, unit_incl, currency_obj=currency),
+                'subtotal': formatLang(self.env, line.price_total, currency_obj=currency),
             })
-            total += line.price_subtotal
+            total += line.price_total
         return {'rows': rows, 'total': formatLang(self.env, total, currency_obj=currency)}
 
     def _visar_report_services_section(self):
@@ -1207,14 +1214,17 @@ class ProjectTask(models.Model):
             {'kind': 'scalar', 'text': r['subtotal']},
         ] for r in services['rows']]
         rows.append([
-            {'kind': 'scalar', 'text': "Total"},
+            {'kind': 'scalar', 'text': "Total (IVA incl.)"},
             {'kind': 'scalar', 'text': ''},
             {'kind': 'scalar', 'text': ''},
             {'kind': 'scalar', 'text': services['total']},
         ])
+        # Importes CON IVA (ver `_visar_report_services`): las columnas se etiquetan
+        # así para que el cliente vea que los montos ya incluyen impuestos.
         return {'title': "Servicios y productos agregados", 'fields': [{
             'kind': 'table', 'label': '',
-            'columns': ["Servicio", "Cantidad", "Precio unitario", "Subtotal"],
+            'columns': ["Servicio", "Cantidad", "Precio unitario (IVA incl.)",
+                        "Importe (IVA incl.)"],
             'rows': rows,
         }]}
 

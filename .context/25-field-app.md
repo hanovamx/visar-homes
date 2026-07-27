@@ -87,6 +87,15 @@
 recorrido genérico de la vista. Helper compartido `_visar_report_services_section` (tabla de
 la orden). Constantes de nombre en `hooks.py` (`FUMIGACION_NAME`, `JARDINERIA_NAME`, `VISITA_NAME`).
 
+> **Tabla de servicios = importes CON IVA (lo que paga el cliente).** El IVA de Visar es
+> `price_include` (tax_included), pero **no de forma uniforme** entre órdenes: en unas
+> `price_unit` ya trae el IVA, en otras no (el impuesto se suma). Mezclar `price_unit`
+> (a veces con IVA) con `price_subtotal` (sin IVA) hacía que "Subtotal" saliera **menor** que
+> unidad × cantidad (por el 16%). `_visar_report_services` usa ahora **`price_total`** (subtotal
+> + impuestos, uniforme) para el importe y **deriva el unitario** del total (`price_total/qty`),
+> así unidad × cantidad = importe = total. Columnas etiquetadas "(IVA incl.)". Verificado en las
+> dos modalidades y con cantidad fraccionaria (0.25).
+
 - **Mantenimiento de áreas verdes** (`_visar_jardineria_report_sections`): Servicios → Horario →
   **Labores realizadas** (tabla `x_labores`, pliega "Otro") → **Cierre del servicio** (indicaciones
   del cliente, área limpia, residuos + nº de bolsas, observaciones finales) → **Evidencia** (4
