@@ -55,6 +55,31 @@
   **solo 1 foto**. La evidencia por-línea (área/zona) sí funcionaba (consultaba el registro de
   línea). Fix: `_visar_report_evidence_section` consulta `('project.task', self.id, …)`.
 
+### 3b. Fotos WebP no se veían en el PDF (recuadro gris) — conversión con PIL directo
+
+> Detectado en PROD (no en el clon): las fotos del task 196 estaban en **WebP**. En el
+> PDF salían como un **recuadro gris con borde** (`<img>` con data-URI que el visor no dibuja).
+> wkhtmltopdf 0.12.6.1 estaba OK (patched qt); el problema era el **formato** de la imagen.
+
+- **Causa doble:**
+  1. `odoo.tools.image.image_process` **omite WebP y SVG** (`RIFF…WEBPVP8` / `<`) y devuelve
+     los **bytes originales sin tocar** → el reporte embebía un data-URI **WebP**.
+  2. El **WebKit viejo de wkhtmltopdf (0.12.x) NO renderiza WebP** → recuadro gris. (Teléfonos
+     y navegadores suben WebP muy a menudo; el test con JPEG nunca lo ejercitó.)
+- **Fix:** `_visar_ws_report_image` ya **no** usa `image_process`; abre con **PIL directo**
+  (`Image.open`), aplica `exif_transpose` (orientación), aplana alpha sobre blanco, reduce
+  (`thumbnail`) y guarda **JPEG** sea cual sea el origen. Así el PDF siempre lleva JPEG.
+- ⚠️ **Trampa de Pillow en Odoo:** Odoo llama `PIL.Image.preinit()` (registra solo
+  BMP/GIF/JPEG/PNG/PPM) y `Image.open` **no** autocarga el resto **dentro del proceso Odoo**
+  → abrir WebP lanza `UnidentifiedImageError` y la imagen se descartaba (silenciosa). Hay que
+  **importar `PIL.WebPImagePlugin` explícitamente** (efecto de import; guardado con try) al
+  cargar el módulo. Sin esto el fix "funciona en un python suelto pero no en Odoo". No se
+  convierte en la subida: el fix en el reporte cubre lo YA capturado y lo futuro.
+- Cambio **solo Python** → basta **reiniciar** en prod (sin `-u`).
+- Verificado (clon, WebP real desechable + rollback): `image_process` devolvía WebP (`RIFF`); el
+  helper nuevo devuelve JPEG (`\xff\xd8\xff`); `pdfimages` confirma las fotos embebidas como JPEG.
+  Regresión OK: foto real, PNG con alpha (aplanado) y basura (`False` limpio).
+
 ### 4. Reportes de cliente por servicio (además de Fumigación)
 
 `_visar_worksheet_report_sections` despacha por **nombre de plantilla** a una maqueta dedicada

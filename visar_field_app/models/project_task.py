@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import base64
+import io
 import logging
 import math
 
@@ -7,10 +8,20 @@ import pytz
 import requests
 from lxml import etree
 from markupsafe import Markup
+from PIL import Image, ImageOps
+
+# Odoo llama a `PIL.Image.preinit()` al arrancar, que registra SOLO un puñado de
+# plugins (BMP/GIF/JPEG/PNG/PPM) y **no** deja que `Image.open` autocargue el resto.
+# Sin esto, abrir un **WebP** lanza `UnidentifiedImageError` — y los teléfonos y
+# navegadores suben WebP muy a menudo. Importar el plugin registra su opener (efecto
+# de import). Guardado por si un build de Pillow no trae WebP (se degrada solo).
+try:  # noqa: SIM105
+    from PIL import WebPImagePlugin  # noqa: F401
+except Exception:  # noqa: BLE001
+    pass
 
 from odoo import api, fields, models
 from odoo.tools import formatLang, html2plaintext
-from odoo.tools.image import image_process
 
 from ..hooks import FUMIGACION_NAME, JARDINERIA_NAME, VISITA_NAME
 
@@ -982,38 +993,41 @@ class ProjectTask(models.Model):
 
     @staticmethod
     def _visar_ws_report_image(value):
-        """Miniatura (base64) de una foto para EMBEBER en el PDF.
+        """Miniatura JPEG (base64) de una foto para EMBEBER en el PDF.
 
-        Las fotos de campo llegan a resolución completa (varios MB). Embeberlas
-        crudas en el HTML del reporte hincha el documento a megabytes y hace que
-        wkhtmltopdf **falle de forma intermitente** (páginas en blanco / texto que
-        desaparece — el síntoma "a veces no hay texto"). Se reescalan a un máximo
-        de 900px y se recomprime, reduciendo el peso ~10-50× y estabilizando el
-        render. Si el procesado falla (dato corrupto), se omite la imagen antes que
+        Las fotos de campo llegan a resolución completa (varios MB) y en **cualquier
+        formato** que suba el teléfono/navegador. Se reescalan a `_WS_REPORT_IMG_PX`
+        y se recomprimen a **JPEG** (peso ~10-50× menor) para estabilizar wkhtmltopdf.
+        Si el procesado falla (dato corrupto/ilegible), se omite la imagen antes que
         arriesgar un PDF roto.
 
-        ⚠️ **Encoding (la causa del "reporte sin fotos"):** `image_process` trabaja
-        con bytes **CRUDOS** en ambos extremos, pero el campo binary de Odoo
-        (`record[name]`) llega en **base64** y la plantilla usa `image_data_uri`, que
-        espera **base64**. Hay que **decodificar** antes y **re-codificar** después:
-          base64 (campo) → b64decode → image_process (crudo→crudo) → b64encode → base64.
-        Si se salta cualquiera de las dos, PIL o `image_data_uri` fallan y la imagen se
-        descartaba en silencio (PIL) o rompía el render (`image_data_uri`).
+        ⚠️ **JPEG SIEMPRE, sea cual sea el origen.** Se convierte con PIL directo (no
+        con `odoo.tools.image_process`) **a propósito**: `image_process` **omite WebP y
+        SVG** (`RIFF…WEBPVP8` / `<`) y devuelve los bytes **originales sin tocar**. Los
+        navegadores/teléfonos hoy suben **WebP** muy a menudo, y el **WebKit viejo de
+        wkhtmltopdf (0.12.x) NO renderiza WebP** → el `<img>` sale como un recuadro gris
+        vacío (el síntoma "fotos que no salen, solo un cuadro con borde"). Abriendo con
+        PIL y guardando JPEG el reporte queda en un formato que wkhtmltopdf sí dibuja.
 
-        ⚠️ **Formato JPEG, no PNG.** Las fotos van EMBEBIDAS como data-URI en el HTML;
-        un PNG grande (una captura/mapa comprime malísimo en PNG: ~270 KB aun a 900 px)
-        **corrompe el render de wkhtmltopdf** — el síntoma real observado fue la PRIMERA
-        página **en blanco** (el texto desaparece) aunque las fotos salieran en las
-        siguientes. Recomprimir a **JPEG** baja ese caso a ~70-120 KB y estabiliza el
-        documento. `WORKSHEET_REPORT_IMG_*` acota tamaño/calidad."""
+        - `exif_transpose`: respeta la orientación EXIF (fotos de teléfono no salen giradas).
+        - Alpha (WebP/PNG con transparencia) se aplana sobre **blanco** (JPEG no lleva alpha).
+        - `thumbnail`: solo reduce, conserva proporción."""
         if not value:
             return False
         try:
-            processed = image_process(
-                base64.b64decode(value),
-                size=(_WS_REPORT_IMG_PX, _WS_REPORT_IMG_PX),
-                quality=_WS_REPORT_IMG_QUALITY, output_format='JPEG')
-            return base64.b64encode(processed) if processed else False
+            image = Image.open(io.BytesIO(base64.b64decode(value)))
+            image = ImageOps.exif_transpose(image)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                image = image.convert('RGBA')
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            else:
+                image = image.convert('RGB')
+            image.thumbnail((_WS_REPORT_IMG_PX, _WS_REPORT_IMG_PX))
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG', quality=_WS_REPORT_IMG_QUALITY)
+            return base64.b64encode(buffer.getvalue())
         except Exception:  # noqa: BLE001 - imagen ilegible: mejor omitir que romper
             return False
 
