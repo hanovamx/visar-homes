@@ -1,5 +1,10 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_agent_tools,agent.tools.readonly,model_visar_agent_tools,group_whatsapp_agent_readonly,1,0,0,0
+access_agent_prompt_readonly,agent.prompt.readonly,model_visar_agent_prompt,group_whatsapp_agent_readonly,1,0,0,0
+access_agent_llm_config_readonly,agent.llm.config.readonly,model_visar_llm_config,group_whatsapp_agent_readonly,1,0,0,0
+access_agent_prompt_manager,agent.prompt.manager,model_visar_agent_prompt,base.group_system,1,1,1,1
+access_agent_llm_config_manager,agent.llm.config.manager,model_visar_llm_config,base.group_system,1,1,1,1
+access_agent_whatsapp_config_manager,agent.whatsapp.config.manager,model_visar_whatsapp_config,base.group_system,1,1,1,1
 access_agent_service_group,agent.service.group.readonly,visar_base.model_visar_service_group,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_service_dimension,agent.service.dimension.readonly,visar_base.model_visar_service_dimension,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_service_tier,agent.service.tier.readonly,visar_base.model_visar_service_tier,group_whatsapp_agent_readonly,1,0,0,0

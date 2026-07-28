@@ -121,6 +121,25 @@ class VisarAgentTools(models.AbstractModel):
         }
 
     # ------------------------------------------------------------------
+    # 1b. Configuracion de runtime (prompt editable + knobs del LLM)
+    # ------------------------------------------------------------------
+
+    @api.model
+    def agent_runtime_config(self):
+        """Config editable del runtime: prompt del sistema + knobs del LLM.
+
+        NO devuelve secretos: las credenciales del LLM y de WhatsApp siguen en el
+        `.env` del runtime. `prompt` es None si no hay ninguno configurado -> el
+        runtime cae a su BASE_PROMPT de respaldo. Las notas del negocio NO van
+        aqui: ya viajan en `agent_catalog_snapshot` y se renderizan una sola vez.
+        """
+        return {
+            'generated_at': fields.Datetime.now().isoformat(),
+            'prompt': self.env['visar.agent.prompt']._agent_active_body(),
+            'llm': self.env['visar.llm.config']._agent_active_payload(),
+        }
+
+    # ------------------------------------------------------------------
     # 2. Cobertura por codigo postal
     # ------------------------------------------------------------------
 

@@ -23,7 +23,7 @@ Fase 1: solo lectura. No agenda citas.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.0.0',
+    'version': '19.0.1.1.0',
     'license': 'LGPL-3',
     # Depende de visar_appointment porque reutiliza su motor de precios
     # (_visar_quote_booking) para que el agente y el wizard web den el mismo
@@ -32,6 +32,7 @@ Fase 1: solo lectura. No agenda citas.
     'data': [
         'security/visar_whatsapp_agent_groups.xml',
         'security/ir.model.access.csv',
+        'views/visar_agent_config_views.xml',
     ],
     'installable': True,
     'application': False,

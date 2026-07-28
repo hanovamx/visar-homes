@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================== -->
+    <!-- visar.agent.prompt                                             -->
+    <!-- ============================================================== -->
+
+    <record id="visar_agent_prompt_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.list</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <list string="Prompts del agente">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_prompt_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.form</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <form string="Prompt del agente">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Atencion a clientes"/></h1>
+                    </div>
+                    <group>
+                        <field name="sequence"/>
+                        <field name="active"/>
+                    </group>
+                    <group string="Prompt del sistema">
+                        <div class="text-muted" colspan="2">
+                            El catalogo de servicios (grupos, tramos, zonas) se agrega
+                            automaticamente despues de este texto. No hace falta listarlo aqui.
+                            El runtime usa el prompt de mayor prioridad (menor secuencia).
+                        </div>
+                        <field name="body" nolabel="1" colspan="2"
+                               widget="text" placeholder="Eres el asistente de atencion a clientes de Visar por WhatsApp..."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_prompt_action" model="ir.actions.act_window">
+        <field name="name">Prompts del agente</field>
+        <field name="res_model">visar.agent.prompt</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- visar.llm.config                                               -->
+    <!-- ============================================================== -->
+
+    <record id="visar_llm_config_view_list" model="ir.ui.view">
+        <field name="name">visar.llm.config.list</field>
+        <field name="model">visar.llm.config</field>
+        <field name="arch" type="xml">
+            <list string="Configuracion LLM">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="provider"/>
+                <field name="model"/>
+                <field name="max_tokens"/>
+                <field name="max_tool_iterations"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_llm_config_view_form" model="ir.ui.view">
+        <field name="name">visar.llm.config.form</field>
+        <field name="model">visar.llm.config</field>
+        <field name="arch" type="xml">
+            <form string="Configuracion LLM">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name"/></h1>
+                    </div>
+                    <group>
+                        <group string="Proveedor">
+                            <field name="provider"/>
+                            <field name="model"/>
+                        </group>
+                        <group string="Limites (se aplican en caliente)">
+                            <field name="max_tokens"/>
+                            <field name="max_tool_iterations"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="sequence"/>
+                        <field name="active"/>
+                    </group>
+                    <div class="alert alert-info" role="alert" colspan="2">
+                        <strong>Credenciales:</strong> la API key / token del LLM NO se
+                        guarda aqui, vive en el <code>.env</code> del runtime (fuera de la
+                        BD y de los backups). Cambiar el <strong>modelo</strong> o el
+                        <strong>proveedor</strong> requiere <strong>reiniciar</strong> el
+                        servicio; <code>max_tokens</code> e iteraciones surten efecto en el
+                        siguiente mensaje.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_llm_config_action" model="ir.actions.act_window">
+        <field name="name">Configuracion LLM</field>
+        <field name="res_model">visar.llm.config</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- visar.whatsapp.config                                          -->
+    <!-- ============================================================== -->
+
+    <record id="visar_whatsapp_config_view_list" model="ir.ui.view">
+        <field name="name">visar.whatsapp.config.list</field>
+        <field name="model">visar.whatsapp.config</field>
+        <field name="arch" type="xml">
+            <list string="Cuentas de WhatsApp">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="phone_uid"/>
+                <field name="webhook_path"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_whatsapp_config_view_form" model="ir.ui.view">
+        <field name="name">visar.whatsapp.config.form</field>
+        <field name="model">visar.whatsapp.config</field>
+        <field name="arch" type="xml">
+            <form string="Cuenta de WhatsApp">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name"/></h1>
+                    </div>
+                    <group>
+                        <group string="Identificadores de Meta">
+                            <field name="phone_uid"/>
+                            <field name="app_uid"/>
+                            <field name="waba_uid"/>
+                        </group>
+                        <group string="Webhook">
+                            <field name="verify_token"/>
+                            <field name="webhook_path"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="sequence"/>
+                        <field name="active"/>
+                    </group>
+                    <div class="alert alert-warning" role="alert" colspan="2">
+                        <strong>Fase 2a:</strong> esta pantalla es informativa. El runtime
+                        todavia lee estos datos de su <code>.env</code>, no de aqui. El
+                        access token y el app secret (secretos) NO se guardan en Odoo.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_whatsapp_config_action" model="ir.actions.act_window">
+        <field name="name">Cuentas de WhatsApp</field>
+        <field name="res_model">visar.whatsapp.config</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Menus                                                          -->
+    <!-- ============================================================== -->
+
+    <menuitem id="menu_agent_root"
+              name="Agente WhatsApp"
+              sequence="95"
+              groups="base.group_system"/>
+
+    <menuitem id="menu_agent_config"
+              name="Configuracion"
+              parent="menu_agent_root"
+              sequence="10"/>
+
+    <menuitem id="menu_agent_prompt"
+              name="Prompts"
+              parent="menu_agent_config"
+              action="visar_agent_prompt_action"
+              sequence="10"/>
+
+    <menuitem id="menu_agent_llm_config"
+              name="LLM"
+              parent="menu_agent_config"
+              action="visar_llm_config_action"
+              sequence="20"/>
+
+    <menuitem id="menu_agent_whatsapp_config"
+              name="WhatsApp"
+              parent="menu_agent_config"
+              action="visar_whatsapp_config_action"
+              sequence="30"/>
+
+</odoo>

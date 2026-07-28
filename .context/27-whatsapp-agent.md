@@ -28,7 +28,7 @@ arriesgar el negocio. Odoo se queda con lo que le corresponde: **datos y
 configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 (entrada nueva) y el `.context/40-decisions.md` de `visar_fastapi`.
 
-## `visar_whatsapp_agent` (v19.0.1.0.0)
+## `visar_whatsapp_agent` (v19.0.1.1.0)
 
 **Dependencias:** `visar_appointment`.
 
@@ -36,17 +36,26 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 > motor de precios** (`_visar_quote_booking`). Ver "La cotización no se
 > reimplementa" abajo.
 
-### Modelo
+> **v19.0.1.1.0 (28-jul-2026) — Fase 2a:** se añadieron 3 modelos de configuración
+> (`visar.agent.prompt`, `visar.llm.config`, `visar.whatsapp.config`), el método RPC
+> `agent_runtime_config()`, y vistas + menú "Agente WhatsApp" (grupo
+> `base.group_system`). **Sin secretos en la BD.** Ver `28-whatsapp-agent-phase2-design.md`.
+
+### Modelos
 
 | Modelo | Archivo | Para qué |
 |---|---|---|
-| `visar.agent.tools` | `models/visar_agent_tools.py` | **AbstractModel**. Tres métodos `@api.model` de solo lectura. Sin tabla; se llama por RPC. |
+| `visar.agent.tools` | `models/visar_agent_tools.py` | **AbstractModel**. Métodos `@api.model` de solo lectura. Sin tabla; se llama por RPC. |
+| `visar.agent.prompt` | `models/visar_agent_prompt.py` | Prompt del sistema editable (lista, uno activo por `sequence`). |
+| `visar.llm.config` | `models/visar_llm_config.py` | Proveedor/modelo/`max_tokens`/`max_tool_iterations` (sin credenciales). |
+| `visar.whatsapp.config` | `models/visar_whatsapp_config.py` | Cuenta de WhatsApp (no-secreto). **Display-only en 2a.** |
 
-### Los tres métodos
+### Los métodos RPC
 
 | Método | Entrada | Devuelve |
 |---|---|---|
 | `agent_catalog_snapshot()` | — | grupos, dimensiones, tramos y zonas (**sin** precios ni CPs) |
+| `agent_runtime_config()` | — | `{prompt\|None, llm{provider,model,max_tokens,max_tool_iterations}}` — **sin secretos, sin `notes`** (van en el catálogo) |
 | `agent_resolve_zone(cp)` | código postal | zona y cobertura |
 | `agent_quote_service(payload)` | `{cp, items:[{service_code, m2}...]}` o `{service_code, cp, m2}` | líneas y total |
 

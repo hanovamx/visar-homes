@@ -1,5 +1,16 @@
 # WhatsApp agent — Fase 2: plataforma de capacidades (DISEÑO)
 
+> **⚠️ Actualización 28-jul-2026 — Fase 2a IMPLEMENTADA.** En `visar_whatsapp_agent`
+> **v19.0.1.1.0**: modelos `visar.agent.prompt`, `visar.llm.config`,
+> `visar.whatsapp.config` (esta última display-only en 2a), método RPC
+> `agent_runtime_config()`, vistas + menú "Agente WhatsApp". Desviaciones vs. este
+> diseño: (1) **sin campos secretos** en los modelos — credenciales siguen en el
+> `.env` del runtime; (2) `agent_runtime_config()` **no** devuelve `notes` (ya van en
+> `agent_catalog_snapshot`). Knobs del LLM = **opción A** (max_tokens/iteraciones en
+> caliente; cambiar `model`/proveedor requiere reiniciar). El runtime ya lo consume
+> (`RuntimeConfigCache`). 2b/2c siguen siendo diseño. Detalle:
+> `visar_fastapi/.context/50-status-roadmap.md`.
+
 > **Estado: DISEÑO, no implementado.** Escrito 2026-07-24. Extiende
 > `27-whatsapp-agent.md` (Fase 1 = solo lectura, ya construida). Este doc está
 > para revisarse e **implementarse en una sesión posterior**. El runtime vive en
