@@ -58,6 +58,13 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 | `agent_runtime_config()` | — | `{prompt\|None, llm{provider,model,max_tokens,max_tool_iterations}}` — **sin secretos, sin `notes`** (van en el catálogo) |
 | `agent_resolve_zone(cp)` | código postal | zona y cobertura |
 | `agent_quote_service(payload)` | `{cp, items:[{service_code, m2}...]}` o `{service_code, cp, m2}` | líneas y total |
+| `agent_customer_services(payload)` | `{phone}` | servicios agendados/pendientes del cliente (etapa C) |
+
+> `agent_customer_services` (etapa C, jul-2026) es la ruta **"Servicio existente"**:
+> teléfono → `res.partner` (últimos 10 dígitos) → órdenes confirmadas → cita
+> (`calendar.event`) y tarea FSM (`project.task`). **Único método con `sudo()`**
+> (acotado): cruza datos de cliente que el ACL del usuario share no ve, y devuelve
+> un dict tipado y mínimo. No amplía el ACL del share.
 
 `service_code` es un **código de dimensión** (`FUM_INT`, `FUM_EXT`, `MAV_JAR`),
 no de grupo. Si se manda un grupo con varias dimensiones, la respuesta trae

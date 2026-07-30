@@ -15,10 +15,26 @@ Los metodos NO usan sudo: corren como el usuario RPC, asi que las ACLs del
 grupo de solo lectura son el limite efectivo.
 """
 from odoo import api, fields, models
+from odoo.tools import format_datetime
 
 # Notas de negocio para el prompt, editables sin tocar codigo desde
 # Ajustes > Tecnico > Parametros del sistema.
 NOTES_PARAM = 'visar.agent.catalog_notes'
+
+# Zona horaria para las fechas que se muestran al cliente. Visar opera en
+# Monterrey; editable sin tocar codigo desde Parametros del sistema.
+TZ_PARAM = 'visar.agent.timezone'
+DEFAULT_TZ = 'America/Monterrey'
+
+# Idioma en que se redactan las fechas ("5 de agosto, 10:00 h").
+SERVICES_LANG = 'es_MX'
+
+# Estados de orden de venta que cuentan como "servicio real" (no un presupuesto
+# a medias ni una cancelacion). draft/sent = presupuesto; cancel = cancelada.
+CONFIRMED_ORDER_STATES = ('sale', 'done')
+
+# Tope de servicios que se devuelven, para no armar un mensaje kilometrico.
+MAX_SERVICES = 10
 
 
 class VisarAgentTools(models.AbstractModel):
@@ -331,5 +347,181 @@ class VisarAgentTools(models.AbstractModel):
             'is_valuation': is_valuation,
             'lines': lines,
             'total': quote['total'],
+            'message': message,
+        }
+
+    # ------------------------------------------------------------------
+    # 4. Servicios agendados de un cliente (identidad por telefono)
+    # ------------------------------------------------------------------
+    #
+    # A diferencia de los metodos de catalogo/precio, este cruza datos de
+    # cliente (res.partner, sale.order, calendar.event, project.task) que el
+    # grupo de solo lectura del agente NO ve por ACL, a proposito. Por eso las
+    # lecturas van con sudo() ACOTADO: solo este metodo, y devuelve un dict
+    # tipado y minimo (nombre + lista de servicios). El usuario RPC no gana
+    # acceso a esos modelos por ACL; no puede leerlos de forma arbitraria. Es
+    # el cruce deliberado y contenido de la regla "sin datos de cliente".
+    # Ver `29-whatsapp-agent-routing-design.md` §"Servicio existente".
+
+    @api.model
+    def _agent_normalize_phone(self, phone):
+        """Deja los ultimos 10 digitos: el numero nacional MX.
+
+        WhatsApp entrega algo como `5218112345678` (52 de pais + el `1` de movil
+        + 10 digitos); los campos de telefono en Odoo son texto libre. Comparar
+        por los ultimos 10 digitos esquiva el prefijo de pais y el `1` de movil.
+
+        Limite conocido: si el numero guardado en Odoo trae separadores DENTRO de
+        los 10 digitos ("811 234 5678"), el ilike de la busqueda no lo encuentra.
+        Es la fuente clasica de "no encontro al cliente"; se asume el numero
+        guardado como digitos contiguos (que es como llega de WhatsApp).
+        """
+        digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
+        return digits[-10:] if len(digits) >= 10 else digits
+
+    @api.model
+    def _agent_find_partner(self, phone):
+        """Resuelve telefono -> res.partner por numero nacional normalizado."""
+        nat = self._agent_normalize_phone(phone)
+        if len(nat) != 10:
+            return self.env['res.partner'].browse()
+        Partner = self.env['res.partner'].sudo()
+        candidates = Partner.search(
+            ['|', ('phone', 'ilike', nat), ('mobile', 'ilike', nat)], limit=20)
+        for partner in candidates:
+            stored = {
+                self._agent_normalize_phone(partner.phone),
+                self._agent_normalize_phone(partner.mobile),
+            }
+            if nat in stored:
+                return partner
+        return Partner.browse()
+
+    @api.model
+    def _agent_service_date(self, line):
+        """Fecha del servicio: la de la cita, o la planeada de la tarea FSM."""
+        event = line.calendar_event_id
+        if event and event.start:
+            return event.start
+        task = line.task_id
+        if task and task.planned_date_begin:
+            return task.planned_date_begin
+        return False
+
+    @api.model
+    def _agent_service_status(self, line, date, now):
+        """Estado legible del servicio.
+
+        Si hay tarea FSM con etapa, se usa su nombre (es el estado real que ve el
+        staff). Si no, se deriva de la fecha: futura = Programada, pasada =
+        Realizada, sin fecha = Pendiente de agendar.
+        """
+        task = line.task_id
+        if task and task.stage_id:
+            return task.stage_id.name
+        if not date:
+            return "Pendiente de agendar"
+        return "Programada" if date >= now else "Realizada"
+
+    @api.model
+    def _agent_format_date(self, date, tz):
+        """Fecha UTC -> texto en espanol y zona horaria local, o None."""
+        if not date:
+            return None
+        return format_datetime(
+            self.env, date, tz=tz, dt_format="d 'de' MMMM y, HH:mm 'h'",
+            lang_code=SERVICES_LANG)
+
+    @api.model
+    def _agent_partner_services(self, partner):
+        """Servicios agendados/pendientes del cliente, ordenados por fecha.
+
+        Recorre las ordenes CONFIRMADAS del cliente -> lineas de servicio Visar ->
+        cita (calendar.event) y tarea FSM (project.task). Devuelve solo lo
+        proximo o sin agendar (no vuelca el historico completado).
+        """
+        now = fields.Datetime.now()
+        today_start = fields.Datetime.start_of(now, 'day')
+        tz = self.env['ir.config_parameter'].sudo().get_param(TZ_PARAM, DEFAULT_TZ)
+
+        orders = self.env['sale.order'].sudo().search([
+            ('partner_id', '=', partner.id),
+            ('state', 'in', CONFIRMED_ORDER_STATES),
+        ])
+
+        entries = []
+        for line in orders.mapped('order_line'):
+            if not line.product_id.visar_is_service:
+                continue
+            date = self._agent_service_date(line)
+            # Solo lo proximo o lo que aun no tiene fecha; el historico ya hecho
+            # no es lo que pregunta el cliente ("que tengo agendado").
+            if date and date < today_start:
+                continue
+            event = line.calendar_event_id
+            entries.append({
+                'service': line.product_id.display_name,
+                'date': date.isoformat() if date else None,
+                'date_label': self._agent_format_date(date, tz),
+                'status': self._agent_service_status(line, date, now),
+                'zone': event.visar_zone_id.name if event and event.visar_zone_id else None,
+                '_sort': date or fields.Datetime.end_of(now, 'year'),
+            })
+
+        # Mas proximo primero; los sin fecha (pendientes) al final.
+        entries.sort(key=lambda e: e['_sort'])
+        for entry in entries:
+            del entry['_sort']
+        return entries[:MAX_SERVICES]
+
+    @api.model
+    def agent_customer_services(self, payload):
+        """Servicios agendados de un cliente, identificado por su telefono.
+
+        `payload` = {"phone": "5218112345678"}
+
+        Devuelve:
+            {
+              "found": bool,             # se encontro al cliente por telefono
+              "partner_name": str|None,
+              "services": [{
+                  "service": str,        # nombre del servicio
+                  "date": str|None,      # ISO 8601 UTC, o None si sin agendar
+                  "date_label": str|None,# fecha ya redactada en tz/idioma local
+                  "status": str,         # Programada / Realizada / etapa FSM / ...
+                  "zone": str|None,      # zona Visar de la cita
+              }, ...],
+              "message": str,            # resumen/fallback listo para mostrar
+            }
+
+        Solo lectura, con sudo() acotado (ver nota de seccion). No revela datos
+        de otros clientes: se limita a los del telefono dado.
+        """
+        payload = payload or {}
+        partner = self._agent_find_partner(payload.get('phone'))
+        if not partner:
+            return {
+                'found': False,
+                'partner_name': None,
+                'services': [],
+                'message': (
+                    "No encontre servicios asociados a este numero. "
+                    "Conviene canalizarlo con un asesor."
+                ),
+            }
+
+        services = self._agent_partner_services(partner)
+        if not services:
+            message = (
+                "%s no tiene servicios agendados por ahora."
+                % (partner.name or "El cliente")
+            )
+        else:
+            message = "%d servicio(s) para %s." % (len(services), partner.name)
+
+        return {
+            'found': True,
+            'partner_name': partner.name or None,
+            'services': services,
             'message': message,
         }

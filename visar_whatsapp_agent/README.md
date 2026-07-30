@@ -6,13 +6,23 @@ es solo la superficie RPC.
 
 ## Que expone
 
-Tres metodos `@api.model` sobre el modelo abstracto `visar.agent.tools`:
+Metodos `@api.model` sobre el modelo abstracto `visar.agent.tools`:
 
 | Metodo | Entrada | Devuelve |
 |---|---|---|
 | `agent_catalog_snapshot()` | — | grupos, dimensiones, tramos y zonas (sin precios ni CPs) |
 | `agent_resolve_zone(cp)` | codigo postal | zona y cobertura |
 | `agent_quote_service(payload)` | `{cp, items:[{service_code, m2}...]}` | lineas y total |
+| `agent_customer_services(payload)` | `{phone}` | servicios agendados/pendientes del cliente |
+
+`agent_customer_services` es la ruta **"Servicio existente"** (etapa C):
+resuelve `res.partner` por telefono normalizado (ultimos 10 digitos) y lee sus
+ordenes confirmadas -> lineas de servicio -> cita (`calendar.event`) y tarea FSM
+(`project.task`). Devuelve `{found, partner_name, services:[{service, date,
+date_label, status, zone}], message}`. **Cruza datos de cliente**, que el grupo
+de solo lectura del agente NO ve por ACL; por eso las lecturas usan `sudo()`
+**acotado a este metodo** (no amplia el ACL del usuario share) y devuelven un
+dict tipado y minimo. Es la unica excepcion deliberada a "sin sudo".
 
 `agent_quote_service` acepta uno o varios servicios en `items`; cada
 `service_code` es un **codigo de dimension** (`FUM_INT`, `FUM_EXT`,
