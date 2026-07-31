@@ -154,6 +154,22 @@ próximo servicio?").
 
 ---
 
+## Decisión de alcance para el demo (31-jul-2026)
+
+Para el demo con el cliente se **posponen D, E y F** en su forma completa:
+
+- **Agendar (F) = liga al wizard web, por ahora.** En vez de conducir el
+  cuestionario en WhatsApp, la opción *Agendar* **manda la liga**
+  `https://visar.hanova.consulting/appointment/visar/booking?restart=1` (runtime:
+  `Settings.booking_url`). Es el hand-off más simple; el cuestionario en WhatsApp
+  (seed + deep link de abajo) sigue siendo el plan a futuro, ya como sistema robusto.
+- **Insights (D): se explorará con WhatsApp Business directo** (notas/etiquetas de
+  contacto) en lugar del modelo `visar.customer.insight` en Odoo. Si esa vía no
+  alcanza, se retoma la nota de abajo.
+- **Persistencia (E): innecesaria mientras no haya flujo de agendado en WhatsApp.**
+
+Las notas siguientes quedan como el plan **a futuro** (sistema robusto), no para el demo.
+
 ## Etapas posteriores (NOTAS — se detallan al llegar)
 
 - **Etapa D — Insights del cliente · ODOO + RUNTIME.** Modelo `visar.customer.insight`
