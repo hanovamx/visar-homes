@@ -24,6 +24,20 @@ de solo lectura del agente NO ve por ACL; por eso las lecturas usan `sudo()`
 **acotado a este metodo** (no amplia el ACL del usuario share) y devuelven un
 dict tipado y minimo. Es la unica excepcion deliberada a "sin sudo".
 
+Detalles de comportamiento (tras el diagnostico en servidor del 31-jul-2026):
+- **Telefono:** sólo `phone` (Odoo 19 eliminó `res.partner.mobile`). El lado
+  guardado se normaliza **en SQL** (`regexp_replace`) para encontrar el número en
+  cualquier formato (espacios, guiones, `+52`, `1` de móvil).
+- **Ambigüedad = privacidad:** si el número coincide con **más de un** partner, NO
+  se devuelve ninguno (`found: False`) y se registra en el log. Como el método usa
+  `sudo()`, un match equivocado revelaría los servicios de otra persona; ante duda,
+  no revelar.
+- **Idioma:** las órdenes se leen en `es_MX` (el usuario RPC puede ser `en_US`), así
+  el nombre del servicio y la etapa FSM salen en español.
+- **Contenido:** se ocultan los servicios en etapa **cerrada** (`stage_id.fold`,
+  p. ej. Completado / Cancelado) y los de fecha pasada: el cliente pregunta "qué
+  tengo agendado", no el histórico.
+
 `agent_quote_service` acepta uno o varios servicios en `items`; cada
 `service_code` es un **codigo de dimension** (`FUM_INT`, `FUM_EXT`,
 `MAV_JAR`), no de grupo. Tambien acepta la forma corta

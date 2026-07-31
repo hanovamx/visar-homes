@@ -115,6 +115,10 @@ Helpers de `visar_base` que también reutiliza: `visar.zone.cp._get_zone_for_cp`
 - `res.groups.category_id` **ya no existe** (pasó a `privilege_id` →
   `res.groups.privilege`). El grupo técnico se declara sin él.
 - `res.users.groups_id` → **`group_ids`**.
+- `res.partner.mobile` **ya no existe** (Odoo 19 lo eliminó; sólo queda `phone` +
+  `phone_sanitized`). `agent_customer_services` (etapa C) tronaba en el 100% de
+  las llamadas por buscar `mobile`; ahora sólo usa `phone`. **Diagnóstico en
+  servidor 31-jul-2026 (BD `visar-db`).**
 - API keys: el usuario *share* tiene un cap de duración de **1 día**
   (`max(group.api_key_duration) or 1.0`). El grupo fija `api_key_duration` alto
   (~10 años) para poder emitir una key de servicio de larga duración. `_generate`

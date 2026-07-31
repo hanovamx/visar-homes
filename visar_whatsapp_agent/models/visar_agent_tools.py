@@ -14,8 +14,12 @@ tramos incluidos sin cargo.
 Los metodos NO usan sudo: corren como el usuario RPC, asi que las ACLs del
 grupo de solo lectura son el limite efectivo.
 """
+import logging
+
 from odoo import api, fields, models
 from odoo.tools import format_datetime
+
+_logger = logging.getLogger(__name__)
 
 # Notas de negocio para el prompt, editables sin tocar codigo desde
 # Ajustes > Tecnico > Parametros del sistema.
@@ -370,32 +374,51 @@ class VisarAgentTools(models.AbstractModel):
         WhatsApp entrega algo como `5218112345678` (52 de pais + el `1` de movil
         + 10 digitos); los campos de telefono en Odoo son texto libre. Comparar
         por los ultimos 10 digitos esquiva el prefijo de pais y el `1` de movil.
-
-        Limite conocido: si el numero guardado en Odoo trae separadores DENTRO de
-        los 10 digitos ("811 234 5678"), el ilike de la busqueda no lo encuentra.
-        Es la fuente clasica de "no encontro al cliente"; se asume el numero
-        guardado como digitos contiguos (que es como llega de WhatsApp).
+        Se usa para el numero ENTRANTE; el lado guardado se normaliza en SQL
+        dentro de `_agent_find_partner` (asi cubre cualquier formato).
         """
         digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
         return digits[-10:] if len(digits) >= 10 else digits
 
     @api.model
     def _agent_find_partner(self, phone):
-        """Resuelve telefono -> res.partner por numero nacional normalizado."""
+        """Resuelve telefono -> res.partner por numero nacional (ultimos 10 digitos).
+
+        - `res.partner.mobile` NO existe en Odoo 19 (se elimino): solo se usa
+          `phone`.
+        - El lado guardado se normaliza EN SQL (`regexp_replace` quita todo lo que
+          no sea digito), asi el match funciona sin importar el formato guardado
+          (espacios, guiones, `+52`, el `1` de movil). Es lo unico que cubre todos
+          los formatos; el ORM con `ilike` se perderia los que traen separadores.
+        - Politica ante AMBIGUEDAD (privacidad): si mas de un partner comparte el
+          numero, NO se devuelve ninguno. Este metodo usa sudo() para saltar las
+          ACL y leer ventas/citas/tareas, asi que un match equivocado seria
+          mostrarle a un cliente los servicios de OTRA persona. Ante duda, no
+          revelar (se canaliza a un asesor). Se registra en el log para el staff.
+        """
         nat = self._agent_normalize_phone(phone)
         if len(nat) != 10:
             return self.env['res.partner'].browse()
-        Partner = self.env['res.partner'].sudo()
-        candidates = Partner.search(
-            ['|', ('phone', 'ilike', nat), ('mobile', 'ilike', nat)], limit=20)
-        for partner in candidates:
-            stored = {
-                self._agent_normalize_phone(partner.phone),
-                self._agent_normalize_phone(partner.mobile),
-            }
-            if nat in stored:
-                return partner
-        return Partner.browse()
+
+        # Numero nacional guardado, en cualquier formato, que termine en `nat`
+        # (equivale a comparar los ultimos 10 digitos: cubre +52 y el `1` de movil).
+        self.env.cr.execute(
+            """
+            SELECT id FROM res_partner
+            WHERE regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g') LIKE %s
+            """,
+            ['%' + nat],
+        )
+        ids = [row[0] for row in self.env.cr.fetchall()]
+        if len(ids) != 1:
+            if len(ids) > 1:
+                _logger.info(
+                    "agent_customer_services: el telefono terminado en %s coincide "
+                    "con %d partners; se omite por ambiguedad (posible dato "
+                    "duplicado). Ante duda no se revelan servicios.",
+                    nat[-4:], len(ids))
+            return self.env['res.partner'].browse()
+        return self.env['res.partner'].sudo().browse(ids[0])
 
     @api.model
     def _agent_service_date(self, line):
@@ -444,7 +467,10 @@ class VisarAgentTools(models.AbstractModel):
         today_start = fields.Datetime.start_of(now, 'day')
         tz = self.env['ir.config_parameter'].sudo().get_param(TZ_PARAM, DEFAULT_TZ)
 
-        orders = self.env['sale.order'].sudo().search([
+        # El usuario RPC puede estar en en_US; se leen las ordenes (y todo lo que
+        # cuelga: nombre del servicio, etapa FSM) en es_MX para que el cliente no
+        # reciba mensajes mezclados. La fecha ya fija su idioma aparte.
+        orders = self.env['sale.order'].with_context(lang=SERVICES_LANG).sudo().search([
             ('partner_id', '=', partner.id),
             ('state', 'in', CONFIRMED_ORDER_STATES),
         ])
@@ -453,8 +479,15 @@ class VisarAgentTools(models.AbstractModel):
         for line in orders.mapped('order_line'):
             if not line.product_id.visar_is_service:
                 continue
+            task = line.task_id
+            # Ocultar servicios CERRADOS (Completado / Cancelado): en
+            # project.task.type las etapas cerradas llevan fold=True. El cliente
+            # pregunta "que tengo agendado", no el historico atendido ni las citas
+            # canceladas.
+            if task and task.stage_id and task.stage_id.fold:
+                continue
             date = self._agent_service_date(line)
-            # Solo lo proximo o lo que aun no tiene fecha; el historico ya hecho
+            # Solo lo proximo o lo que aun no tiene fecha; el historico ya pasado
             # no es lo que pregunta el cliente ("que tengo agendado").
             if date and date < today_start:
                 continue
