@@ -25,7 +25,7 @@
             <style>
                 .o_report_layout_bold > h2, .o_report_layout_standard > h2 { display: none; }
                 .o_visar_ws_service_title {
-                    font-size: 15px; line-height: 1.25; margin: 4px 0 10px 0;
+                    font-size: 19px; line-height: 1.25; margin: 4px 0 10px 0;
                 }
             </style>
             <!-- margin-bottom amplio: separa la ficha Cliente/Técnico del título del
