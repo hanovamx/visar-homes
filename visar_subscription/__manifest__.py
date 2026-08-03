@@ -1,7 +1,7 @@
 # Part of VISAR Homes. See LICENSE file for full copyright and licensing details.
 {
     'name': 'VISAR - Suscripciones / Pólizas (visitas FSM)',
-    'version': '19.0.1.2.0',
+    'version': '19.0.1.3.0',
     'category': 'Sales/Subscriptions',
     'summary': 'Genera visitas de servicio (FSM) por cada periodo facturado de una póliza',
     'description': """
@@ -26,6 +26,7 @@ el precio en la renovación.
     'data': [
         'data/product_anticipo.xml',
         'views/sale_subscription_plan_views.xml',
+        'views/product_pricelist_views.xml',
         'views/product_template_views.xml',
         'views/sale_order_views.xml',
         'views/project_task_views.xml',

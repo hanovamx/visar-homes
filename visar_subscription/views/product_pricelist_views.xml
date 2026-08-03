@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Listas (zona × plan). No llevan precios: sus dos reglas derivan de la lista
+        de la zona. El descuento de la póliza se edita en la regla que tiene plan.
+    -->
+    <record id="product_pricelist_view_form_visar" model="ir.ui.view">
+        <field name="name">product.pricelist.form.visar.poliza</field>
+        <field name="model">product.pricelist</field>
+        <field name="inherit_id" ref="product.product_pricelist_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='currency_id']" position="after">
+                <field name="visar_zone_id" readonly="1"
+                       invisible="not visar_zone_id"/>
+                <field name="visar_plan_id" readonly="1"
+                       invisible="not visar_plan_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="product_pricelist_view_list_visar" model="ir.ui.view">
+        <field name="name">product.pricelist.list.visar.poliza</field>
+        <field name="model">product.pricelist</field>
+        <field name="inherit_id" ref="product.product_pricelist_view_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='currency_id']" position="before">
+                <field name="visar_zone_id" optional="show"/>
+                <field name="visar_plan_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

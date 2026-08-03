@@ -13,11 +13,13 @@ class SaleSubscriptionPlan(models.Model):
              "póliza; para pólizas anuales pon 12).",
     )
     visar_first_invoice_periods = fields.Integer(
-        string="Periodos en la 1ª factura",
+        string="Periodos cobrados por adelantado",
         default=1,
-        help="Nº de mensualidades que se cobran por adelantado en la PRIMERA factura "
-             "de la póliza (y nº de visitas generadas en ese primer ciclo). La próxima "
-             "factura se emite hasta después de esos periodos; luego la cadencia es "
-             "nativa. 1 = comportamiento normal. Para pólizas pon 2 (cobra 2 meses de "
-             "entrada y crea 2 visitas).",
+        help="Nº de periodos que el PEDIDO cobra por adelantado. Con 2, el carrito "
+             "añade una línea de mensualidad adelantada junto al servicio, de modo "
+             "que el cliente paga los meses 1 y 2 de entrada, la próxima factura cae "
+             "en el mes 3 y se generan 2 visitas en el primer ciclo.\n\n"
+             "1 = comportamiento normal. Para la Póliza Mensual pon 2. Los planes "
+             "bimestral/trimestral van en 1: su propio periodo ya cubre dos meses o "
+             "más. En planes anuales NO pongas 2: cobraría dos años de entrada.",
     )

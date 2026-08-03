@@ -109,6 +109,11 @@ class SaleOrder(models.Model):
     def action_confirm(self):
         for order in self.filtered(lambda o: o.is_subscription):
             order._visar_apply_combo_discount()
+            # Re-espejar DESPUÉS del descuento de combo: en el alta desde backend el
+            # descuento se aplica aquí, así que un anticipo creado antes traería el
+            # precio sin descontar. Es idempotente, así que en el flujo web (donde el
+            # carrito ya dejó las líneas listas) no mueve el total ya autorizado.
+            order._visar_sync_anticipo_lines()
         res = super().action_confirm()
         for order in self.filtered(lambda o: o.is_subscription and not o.end_date):
             end = order._visar_compute_end_date()
@@ -165,27 +170,95 @@ class SaleOrder(models.Model):
         return super().write(vals)
 
     # ------------------------------------------------------------------
-    # Cobro inicial de N periodos (primera factura) — Fase 1
+    # Cobro inicial de N periodos — líneas de anticipo (Fase 1)
     # ------------------------------------------------------------------
     def _visar_first_invoice_periods(self):
-        """Nº de mensualidades cobradas en la primera factura (y nº de visitas del
-        primer ciclo). 1 = normal; pólizas usan 2."""
+        """Nº de periodos que el carrito cobra por adelantado, según el plan.
+
+        1 = comportamiento normal. La Póliza Mensual usa 2 (cobra el mes 1 y el 2 de
+        entrada). Los planes bimestral/trimestral usan 1: su propio periodo ya cubre
+        dos meses o más, así que no necesitan línea de anticipo.
+        """
         self.ensure_one()
         n = self.plan_id.visar_first_invoice_periods if self.plan_id else 1
         return n if n and n > 0 else 1
 
-    def _visar_is_first_poliza_invoice(self):
-        """True cuando estamos por facturar la PRIMERA factura de una póliza nueva
-        (no renovación/upsell). Se evalúa antes de postear la factura, cuando
-        last_invoice_date todavía es falsy."""
+    def _visar_prepaid_periods_for_line(self, line):
+        """Periodos que esta línea de servicio tiene realmente pagados de entrada.
+
+        Se calcula desde las líneas de anticipo existentes —lo que de verdad se
+        vendió y se cobró— y no desde la configuración del plan, que pudo cambiar
+        después de firmar la póliza.
+        """
         self.ensure_one()
-        return bool(
-            self.is_subscription
-            and self.subscription_state == '3_progress'
-            and not self.origin_order_id            # excluye renovaciones/hijos
-            and not self.last_invoice_date          # aún no hay factura posteada
-            and self._visar_is_poliza()
-        )
+        anticipo = self.order_line.filtered(
+            lambda l: l.visar_anticipo_for_line_id == line)
+        return 1 + sum(anticipo.mapped('visar_anticipo_periods'))
+
+    def _visar_sync_anticipo_lines(self):
+        """Crea/actualiza una línea de anticipo por cada línea de servicio recurrente.
+
+        Una línea por servicio (no una sola sumada) para que el IVA y el descuento de
+        combo se reproduzcan exactos por línea, para poder contar los periodos pagados
+        de CADA servicio en una póliza combo, y para que al quitar un servicio se vaya
+        su anticipo con él (ondelete cascade).
+
+        Debe llamarse DESPUÉS de fijar los descuentos de todas las líneas: espeja el
+        estado final de cada línea de servicio.
+        """
+        self.ensure_one()
+        Line = self.env['sale.order.line'].with_context(
+            visar_skip_mandatory_addons=True)
+        extra = self._visar_first_invoice_periods() - 1
+        existing = self.order_line.filtered('visar_anticipo_for_line_id')
+
+        if extra <= 0 or not self.plan_id:
+            existing.unlink()
+            return self.env['sale.order.line']
+
+        services = self.order_line.filtered(
+            lambda l: l.recurring_invoice and not l.visar_anticipo_for_line_id
+            and not l.display_type)
+        # Anticipos huérfanos (su servicio ya no está en la orden).
+        existing.filtered(lambda l: l.visar_anticipo_for_line_id not in services).unlink()
+
+        result = self.env['sale.order.line']
+        for service in services:
+            vals = {
+                'product_id': self.env['product.template']._visar_get_anticipo_template(
+                    service.product_id).product_variant_id.id,
+                'name': _("%(service)s — mensualidad adelantada", service=service.name),
+                'product_uom_qty': service.product_uom_qty * extra,
+                'price_unit': service.price_unit,
+                'discount': service.discount,
+                # Los impuestos se copian de la línea de servicio, no se dejan al
+                # producto: el anticipo tiene que cobrar exactamente lo mismo que el
+                # servicio que espeja, y un único producto de anticipo no puede
+                # cuadrar con servicios de tasas distintas.
+                'tax_ids': [(6, 0, service.tax_ids.ids)],
+                'visar_anticipo_for_line_id': service.id,
+                'visar_anticipo_periods': extra,
+            }
+            anticipo = existing.filtered(
+                lambda l: l.visar_anticipo_for_line_id == service)[:1]
+            if anticipo:
+                anticipo.write(vals)
+            else:
+                anticipo = Line.create(dict(vals, order_id=self.id))
+            result |= anticipo
+        return result
+
+    def _get_update_prices_lines(self):
+        """Excluye las líneas de anticipo del recálculo masivo de precios.
+
+        `_recompute_prices()` reasigna `price_unit` desde la lista de precios Y pone
+        `discount` a 0. Se dispara solo al escribir la dirección del cliente en el
+        checkout (`res.partner.write` sobre country/vat/zip mueve la posición fiscal),
+        así que sin este filtro el anticipo caería al `list_price` del producto (0) y
+        el cliente pagaría de menos sin que nada avise.
+        """
+        return super()._get_update_prices_lines().filtered(
+            lambda l: not l.visar_anticipo_for_line_id)
 
     # ------------------------------------------------------------------
     # Generación de visitas — gatada al PAGO de la factura (Fase 1)
@@ -200,12 +273,13 @@ class SaleOrder(models.Model):
         Task = self.env['project.task']
         first_invoice = self.invoice_ids.filtered(
             lambda m: m.move_type == 'out_invoice').sorted('id')[:1]
-        # 1ª factura del contrato → N visitas; siguientes → 1.
-        n = self._visar_first_invoice_periods() if invoice == first_invoice else 1
+        is_first = invoice == first_invoice
         for line in self.order_line:
             tmpl = line.product_id.product_tmpl_id
             if not tmpl.visar_generates_visit or not tmpl.visar_fsm_project_id:
                 continue
+            # 1ª factura → tantas visitas como periodos pagados de entrada; luego 1.
+            n = self._visar_prepaid_periods_for_line(line) if is_first else 1
             # Idempotencia por (orden, factura, línea): crear las que falten.
             existing = Task.search_count([
                 ('visar_subscription_order_id', '=', self.id),
@@ -216,6 +290,30 @@ class SaleOrder(models.Model):
             for _i in range(max(0, n - existing)):
                 Task.create(self._visar_visit_vals(
                     line, tmpl.visar_fsm_project_id, invoice))
+            if is_first:
+                self._visar_enrich_first_visit(line)
+
+    def _visar_enrich_first_visit(self, line):
+        """La PRIMERA visita de la línea hereda fecha y técnicos de la cita reservada.
+
+        Al confirmar una póliza, `_timesheet_service_generation` saca las líneas de
+        póliza antes de que visar_fsm cree su tarea, así que el horario y el técnico
+        que el cliente eligió en el wizard no quedan en ninguna tarea. Esta es la que
+        los recoge; las demás visitas del ciclo nacen sin agendar.
+
+        Se relee la visita más antigua por id en vez de usar el índice del bucle: si
+        una corrida anterior creó solo parte de las visitas, el índice 0 le tocaría a
+        la segunda. El guardia sobre `planned_date_begin` la hace idempotente frente
+        a los dos disparadores distintos de `_invoice_paid_hook`.
+        """
+        self.ensure_one()
+        first = self.env['project.task'].search([
+            ('visar_subscription_order_id', '=', self.id),
+            ('visar_source_line_id', '=', line.id),
+            ('visar_is_warranty', '=', False),
+        ], order='id', limit=1)
+        if first and not first.planned_date_begin:
+            self._visar_enrich_fsm_tasks(first)
 
     def _visar_visit_vals(self, line, project, invoice, warranty=False):
         self.ensure_one()
