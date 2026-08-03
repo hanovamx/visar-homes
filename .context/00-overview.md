@@ -66,6 +66,7 @@ VISAR/repo/                ← Git: github.com/luisgarza-g/visar-luisg (rama mai
 ├── visar_appointment/     ← wizard web + citas (v19.0.2.0.15)
 │   └── migrations/        ← post-migrate catálogo legacy (¡solo en upgrade!)
 ├── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.10.0) — ver 25-field-app.md
+├── visar_subscription/    ← pólizas: cobro adelantado + visitas FSM por periodo — ver 35-polizas.md
 └── visar_whatsapp_agent/  ← API RPC solo lectura para el agente WhatsApp (v19.0.1.0.0) — ver 27-whatsapp-agent.md
 ```
 
