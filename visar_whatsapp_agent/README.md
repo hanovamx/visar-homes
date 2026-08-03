@@ -24,6 +24,11 @@ de solo lectura del agente NO ve por ACL; por eso las lecturas usan `sudo()`
 **acotado a este metodo** (no amplia el ACL del usuario share) y devuelven un
 dict tipado y minimo. Es la unica excepcion deliberada a "sin sudo".
 
+Acepta `scope` en el payload: `"upcoming"` (default; próximos/pendientes),
+`"history"` (realizados/pasados/cancelados) o `"all"`. La respuesta lo repite en
+`scope`. En WhatsApp el cliente ve primero los próximos y un botón para ver los
+anteriores (y viceversa).
+
 Detalles de comportamiento (tras el diagnostico en servidor del 31-jul-2026):
 - **Telefono:** sólo `phone` (Odoo 19 eliminó `res.partner.mobile`). El lado
   guardado se normaliza **en SQL** (`regexp_replace`) para encontrar el número en

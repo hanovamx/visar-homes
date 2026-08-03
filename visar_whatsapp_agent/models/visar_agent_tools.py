@@ -40,6 +40,11 @@ CONFIRMED_ORDER_STATES = ('sale', 'done')
 # Tope de servicios que se devuelven, para no armar un mensaje kilometrico.
 MAX_SERVICES = 10
 
+# Alcance de agent_customer_services: 'upcoming' = proximos o pendientes de
+# agendar; 'history' = ya realizados, pasados o cancelados; 'all' = ambos.
+SERVICE_SCOPES = ('upcoming', 'history', 'all')
+DEFAULT_SERVICE_SCOPE = 'upcoming'
+
 
 class VisarAgentTools(models.AbstractModel):
     _name = 'visar.agent.tools'
@@ -456,12 +461,29 @@ class VisarAgentTools(models.AbstractModel):
             lang_code=SERVICES_LANG)
 
     @api.model
-    def _agent_partner_services(self, partner):
-        """Servicios agendados/pendientes del cliente, ordenados por fecha.
+    def _agent_service_bucket(self, line, date, today_start):
+        """Clasifica un servicio en 'upcoming' o 'history'.
+
+        history = cerrado (etapa FSM con fold=True: Completado / Cancelado) o de
+        fecha pasada. upcoming = lo demas (proximo, en curso o sin fecha).
+        """
+        task = line.task_id
+        if task and task.stage_id and task.stage_id.fold:
+            return 'history'
+        if date and date < today_start:
+            return 'history'
+        return 'upcoming'
+
+    @api.model
+    def _agent_partner_services(self, partner, scope=DEFAULT_SERVICE_SCOPE):
+        """Servicios del cliente segun `scope`, ordenados por fecha.
 
         Recorre las ordenes CONFIRMADAS del cliente -> lineas de servicio Visar ->
-        cita (calendar.event) y tarea FSM (project.task). Devuelve solo lo
-        proximo o sin agendar (no vuelca el historico completado).
+        cita (calendar.event) y tarea FSM (project.task).
+
+          - 'upcoming' (default): proximos o pendientes de agendar.
+          - 'history': ya realizados, pasados o cancelados.
+          - 'all': ambos.
         """
         now = fields.Datetime.now()
         today_start = fields.Datetime.start_of(now, 'day')
@@ -479,17 +501,9 @@ class VisarAgentTools(models.AbstractModel):
         for line in orders.mapped('order_line'):
             if not line.product_id.visar_is_service:
                 continue
-            task = line.task_id
-            # Ocultar servicios CERRADOS (Completado / Cancelado): en
-            # project.task.type las etapas cerradas llevan fold=True. El cliente
-            # pregunta "que tengo agendado", no el historico atendido ni las citas
-            # canceladas.
-            if task and task.stage_id and task.stage_id.fold:
-                continue
             date = self._agent_service_date(line)
-            # Solo lo proximo o lo que aun no tiene fecha; el historico ya pasado
-            # no es lo que pregunta el cliente ("que tengo agendado").
-            if date and date < today_start:
+            bucket = self._agent_service_bucket(line, date, today_start)
+            if scope != 'all' and bucket != scope:
                 continue
             event = line.calendar_event_id
             entries.append({
@@ -501,22 +515,25 @@ class VisarAgentTools(models.AbstractModel):
                 '_sort': date or fields.Datetime.end_of(now, 'year'),
             })
 
-        # Mas proximo primero; los sin fecha (pendientes) al final.
-        entries.sort(key=lambda e: e['_sort'])
+        # Historial: mas reciente primero. Proximos: mas cercano primero, con los
+        # pendientes sin fecha al final (su clave de orden es un futuro lejano).
+        entries.sort(key=lambda e: e['_sort'], reverse=(scope == 'history'))
         for entry in entries:
             del entry['_sort']
         return entries[:MAX_SERVICES]
 
     @api.model
     def agent_customer_services(self, payload):
-        """Servicios agendados de un cliente, identificado por su telefono.
+        """Servicios de un cliente, identificado por su telefono.
 
-        `payload` = {"phone": "5218112345678"}
+        `payload` = {"phone": "5218112345678", "scope": "upcoming"|"history"|"all"}
+                    `scope` es opcional (default "upcoming").
 
         Devuelve:
             {
               "found": bool,             # se encontro al cliente por telefono
               "partner_name": str|None,
+              "scope": str,              # el alcance efectivamente aplicado
               "services": [{
                   "service": str,        # nombre del servicio
                   "date": str|None,      # ISO 8601 UTC, o None si sin agendar
@@ -527,15 +544,22 @@ class VisarAgentTools(models.AbstractModel):
               "message": str,            # resumen/fallback listo para mostrar
             }
 
-        Solo lectura, con sudo() acotado (ver nota de seccion). No revela datos
-        de otros clientes: se limita a los del telefono dado.
+        Con scope="upcoming" trae proximos/pendientes; con "history" el historico
+        (realizados, pasados o cancelados); con "all" ambos. Solo lectura, con
+        sudo() acotado (ver nota de seccion). No revela datos de otros clientes:
+        se limita a los del telefono dado.
         """
         payload = payload or {}
+        scope = payload.get('scope') or DEFAULT_SERVICE_SCOPE
+        if scope not in SERVICE_SCOPES:
+            scope = DEFAULT_SERVICE_SCOPE
+
         partner = self._agent_find_partner(payload.get('phone'))
         if not partner:
             return {
                 'found': False,
                 'partner_name': None,
+                'scope': scope,
                 'services': [],
                 'message': (
                     "No encontre servicios asociados a este numero. "
@@ -543,18 +567,20 @@ class VisarAgentTools(models.AbstractModel):
                 ),
             }
 
-        services = self._agent_partner_services(partner)
+        services = self._agent_partner_services(partner, scope)
+        name = partner.name or "El cliente"
         if not services:
-            message = (
-                "%s no tiene servicios agendados por ahora."
-                % (partner.name or "El cliente")
-            )
+            if scope == 'history':
+                message = "%s no tiene servicios anteriores registrados." % name
+            else:
+                message = "%s no tiene servicios agendados por ahora." % name
         else:
             message = "%d servicio(s) para %s." % (len(services), partner.name)
 
         return {
             'found': True,
             'partner_name': partner.name or None,
+            'scope': scope,
             'services': services,
             'message': message,
         }
