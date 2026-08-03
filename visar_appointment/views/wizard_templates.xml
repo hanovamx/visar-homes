@@ -811,24 +811,64 @@
                                                 <t t-out="offer['upfront_total']"
                                                    t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
                                             </strong>
-                                            — cubre los primeros <t t-esc="offer['periods']"/> meses.
-                                            Tu siguiente cargo es hasta el mes
-                                            <t t-esc="offer['periods'] + 1"/>.
+                                            <t t-if="offer['addons_total']">
+                                                —
+                                                <t t-out="offer['upfront_service_total']"
+                                                   t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                de servicio (los primeros <t t-esc="offer['periods']"/> meses)
+                                                más
+                                                <t t-out="offer['addons_total']"
+                                                   t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                de extras, que se cobran una sola vez.
+                                            </t>
+                                            <t t-else="">
+                                                — cubre los primeros <t t-esc="offer['periods']"/> meses.
+                                            </t>
+                                            Tu siguiente cargo es de
+                                            <t t-out="offer['period_total']"
+                                               t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                            en el mes <t t-esc="offer['periods'] + 1"/>.
                                         </div>
                                         <div t-else="" class="small text-muted mt-3">
                                             Se cobra por periodo completo, sin pagos adelantados extra.
+                                            <t t-if="offer['addons_total']">
+                                                Los extras
+                                                (<t t-out="offer['addons_total']"
+                                                    t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>)
+                                                se cobran una sola vez.
+                                            </t>
                                         </div>
                                     </label>
                                 </t>
 
                                 <label class="d-block border rounded p-3 mb-2"
                                        for="plan_none">
-                                    <input class="form-check-input me-2" type="radio"
-                                           name="plan_id" id="plan_none" value=""
-                                           t-att-checked="not selected_plan_id and 'checked' or None"/>
-                                    <span>Solo este servicio, sin póliza</span>
-                                    <span t-if="quote" class="float-end fw-semibold" t-out="quote['total']"
-                                          t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                    <div class="d-flex justify-content-between align-items-start gap-2">
+                                        <div class="d-flex">
+                                            <input class="form-check-input me-2 flex-shrink-0" type="radio"
+                                                   name="plan_id" id="plan_none" value=""
+                                                   t-att-checked="not selected_plan_id and 'checked' or None"/>
+                                            <div>
+                                                <span class="fw-semibold">Solo este servicio, sin póliza</span>
+                                                <div class="small text-muted">Un solo pago, sin renovación</div>
+                                            </div>
+                                        </div>
+                                        <!-- Mismo criterio que las pólizas: solo el servicio, para poder
+                                             compararlos. Los extras van aparte en ambos casos. -->
+                                        <div t-if="quote" class="text-end flex-shrink-0">
+                                            <div class="fw-semibold" t-out="quote['recurring_total']"
+                                                 t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                            <div class="small text-muted">una vez</div>
+                                        </div>
+                                    </div>
+                                    <div t-if="quote and quote['addons_total']" class="small text-muted mt-3">
+                                        Más
+                                        <t t-out="quote['addons_total']"
+                                           t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                        de extras — total
+                                        <t t-out="quote['total']"
+                                           t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>.
+                                    </div>
                                 </label>
 
                                 <button type="submit" class="btn btn-primary mt-2">Continuar</button>
@@ -849,7 +889,7 @@
                                         </div>
                                     </t>
                                     <div class="d-flex justify-content-between pt-2 border-top">
-                                        <strong>Servicio único</strong>
+                                        <strong>Total sin póliza</strong>
                                         <strong t-out="quote['total']"
                                                 t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
                                     </div>

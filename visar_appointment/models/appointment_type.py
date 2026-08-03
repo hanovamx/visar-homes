@@ -895,10 +895,13 @@ class AppointmentType(models.Model):
                 'is_addon': bool(line_vals.get('is_addon')),
                 'quantity': line_qty,
                 'has_discounted_price': bool(is_free or discount),
-                'is_recurring': bool(plan and product.recurring_invoice),
+                'is_recurring': bool(product.recurring_invoice),
             })
             total += line_total
-            if plan and product.recurring_invoice:
+            # Se separa SIEMPRE (con o sin plan) para poder comparar manzanas con
+            # manzanas: lo recurrente es lo único que la póliza abarata y repite;
+            # los add-ons son cargo único aunque se contrate póliza.
+            if product.recurring_invoice:
                 recurring_total += line_total
 
         if not quote_lines:
@@ -907,7 +910,6 @@ class AppointmentType(models.Model):
         # mensualidades extra solo aplican a lo recurrente: los add-ons y extras se
         # cobran una vez, en la primera factura.
         periods = max(1, plan.visar_first_invoice_periods or 1) if plan else 1
-        upfront_total = total + recurring_total * (periods - 1)
         return {
             'lines': quote_lines,
             'total': total,
@@ -915,8 +917,14 @@ class AppointmentType(models.Model):
             'zone_name': zone.name if zone else False,
             'plan': plan or False,
             'periods': periods,
+            # Servicio recurrente por periodo: lo que la póliza cobra "al mes".
             'recurring_total': recurring_total,
-            'upfront_total': upfront_total,
+            # Add-ons y extras: cargo único en la primera factura, no se repiten.
+            'addons_total': total - recurring_total,
+            # Servicio × periodos adelantados (sin extras).
+            'upfront_service_total': recurring_total * periods,
+            # Lo que se cobra HOY en total, extras incluidos.
+            'upfront_total': total + recurring_total * (periods - 1),
         }
 
     # Crea una copia serializable de los items del wizard para guardar en el evento de calendario.

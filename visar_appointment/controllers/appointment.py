@@ -388,11 +388,17 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'name': plan.name,
                 'billing_label': plan.billing_period_display_sentence,
                 'periods': quote['periods'],
-                'recurring_total': quote['recurring_total'],
-                'period_total': quote['total'],
+                # Precio de la PÓLIZA = solo el servicio recurrente. Los add-ons son
+                # cargo único y no se repiten cada periodo, así que meterlos en el
+                # precio "al mes" lo infla y no es lo que se va a cobrar en el mes 3.
+                'period_total': quote['recurring_total'],
+                'addons_total': quote['addons_total'],
+                'upfront_service_total': quote['upfront_service_total'],
                 'upfront_total': quote['upfront_total'],
-                # Ahorro frente a contratar el mismo servicio una sola vez.
-                'saving': max(0.0, (base or {}).get('total', 0.0) - quote['total']),
+                # Ahorro frente a contratar el mismo servicio una sola vez: se compara
+                # solo la parte recurrente, que es la única que la póliza abarata.
+                'saving': max(0.0, (base or {}).get('recurring_total', 0.0)
+                              - quote['recurring_total']),
                 'quote': quote,
             })
         return offers
