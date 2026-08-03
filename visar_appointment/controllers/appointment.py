@@ -12,7 +12,6 @@ from odoo import Command, fields, http, _
 from odoo.fields import Domain
 from odoo.http import request
 from odoo.addons.website_appointment_sale.controllers.appointment import WebsiteAppointmentSale
-from odoo.addons.portal.controllers.portal import CustomerPortal
 
 _logger = logging.getLogger(__name__)
 
@@ -1755,6 +1754,40 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return context[2].filtered(lambda p: p.id == plan_id)[:1] or empty
 
     # Construye el carrito multi-servicio del wizard y redirige a /shop/cart.
+    @staticmethod
+    def _visar_should_reassign(order_partner, booking_partner, is_anonymous):
+        """¿La orden debe reasignarse al cliente reservado? (logica pura, testeable).
+
+        El wizard lo puede correr el propio cliente (portal) o el staff en su
+        nombre. Regla:
+          - Sin cliente reservado, o ya es el de la orden -> no tocar.
+          - El partner de la orden tiene un usuario INTERNO (no share): es staff/
+            admin reservando a nombre de un tercero -> reasignar al cliente.
+          - Carrito anonimo (usuario publico del sitio) -> reasignar al cliente.
+          - Cliente de portal (share) reservando para SI MISMO -> no tocar (si no,
+            se le crearia un duplicado y se le secuestraria su propio carrito).
+        """
+        if not booking_partner or order_partner == booking_partner:
+            return False
+        if any(not user.share for user in order_partner.user_ids):
+            return True
+        return bool(is_anonymous)
+
+    def _visar_booking_customer(self, order_sudo, calendar_booking):
+        """Cliente que debe quedar en la orden, o recordset vacio si no hay que tocarla.
+
+        `calendar_booking.partner_id` siempre trae lo capturado en el formulario
+        (nombre, email, telefono): ese es el cliente real. Antes se dependia de
+        `_is_anonymous_cart()` como unica guarda, pero solo es cierto para el
+        usuario publico del sitio: con un usuario logueado (staff/admin) la orden
+        se quedaba con SU partner y el cliente real quedaba huerfano (sin ordenes).
+        """
+        customer = calendar_booking.partner_id
+        is_anonymous = bool(customer) and order_sudo._is_anonymous_cart()
+        if self._visar_should_reassign(order_sudo.partner_id, customer, is_anonymous):
+            return customer
+        return order_sudo.env['res.partner'].browse()
+
     def _visar_fill_wizard_cart_and_redirect(self, calendar_booking, booking):
         from odoo.addons.base.models.ir_qweb import keep_query
 
@@ -1827,20 +1860,14 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if plan:
             order_sudo._visar_sync_anticipo_lines()
 
-        if order_sudo._is_anonymous_cart():
-            partner_values = {
-                'name': calendar_booking.name,
-                'email': calendar_booking.partner_id.email,
-                'phone': calendar_booking.partner_id.phone,
-            }
-            booked_by_partner, feedback_dict = CustomerPortal()._create_or_update_address(
-                request.env['res.partner'].sudo(),
-                order_sudo=order_sudo,
-                verify_address_values=False,
-                **partner_values,
-            )
-            if not feedback_dict.get('invalid_fields'):
-                order_sudo._update_address(booked_by_partner.id, ['partner_id'])
+        # El wizard puede correrlo el cliente (portal) o el staff en su nombre; el
+        # cliente real es calendar_booking.partner_id. Se fija en la orden cuando
+        # corresponde (ver _visar_booking_customer). Debe ir ANTES de
+        # _visar_apply_delivery_address: el contacto de entrega se cuelga del
+        # commercial_partner_id de la orden, que ya sera el cliente correcto.
+        customer = self._visar_booking_customer(order_sudo, calendar_booking)
+        if customer:
+            order_sudo._update_address(customer.id, ['partner_id'])
 
         self._visar_apply_delivery_address(
             order_sudo, booking, partner_name=calendar_booking.name)
@@ -1886,20 +1913,12 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                     booking.get('appointment_type_id'),
                     keep_query('*', state='failed-resource'),
                 ))
-            if order_sudo._is_anonymous_cart():
-                partner_values = {
-                    'name': calendar_booking.name,
-                    'email': calendar_booking.partner_id.email,
-                    'phone': calendar_booking.partner_id.phone,
-                }
-                booked_by_partner, feedback_dict = CustomerPortal()._create_or_update_address(
-                    request.env['res.partner'].sudo(),
-                    order_sudo=order_sudo,
-                    verify_address_values=False,
-                    **partner_values,
-                )
-                if not feedback_dict.get('invalid_fields'):
-                    order_sudo._update_address(booked_by_partner.id, ['partner_id'])
+            # Mismo criterio que en el flujo del wizard: fijar el cliente reservado
+            # (calendar_booking.partner_id) cuando corresponde, antes de la
+            # direccion de entrega. Ver _visar_booking_customer.
+            customer = self._visar_booking_customer(order_sudo, calendar_booking)
+            if customer:
+                order_sudo._update_address(customer.id, ['partner_id'])
             self._visar_apply_delivery_address(
                 order_sudo, booking, partner_name=calendar_booking.name)
             return request.redirect("/shop/cart")
