@@ -117,7 +117,55 @@
     combinadas reales. **El código no cambia** (el resolutor arma la combinada por *valores* interior+
     exterior+zona). Luego configurar las 27.
   - **No** (se retira exterior-solo) → basta configurar las 27 (sin reestructura).
-- **Estado:** código **hecho y verificado** en `visar_prod` (una línea combinada E2E, descuento corte
-  intacto, regresiones OK) pero **staged en `main`, sin commitear**. Hoy la fila 1-250 cobra de más/menos
-  hasta resolver el punto anterior — **prerequisito de correctitud** igual que los precios A/C.
-- **Prioridad:** Alta si se va a activar la línea única; ligada a la decisión exterior-solo.
+- **Estado (act. 3-ago-2026):** commiteado en `fa17506` (22-jul-2026) y **vivo en producción**
+  desde el `-u` del 3-ago. Ojo: el código Python ya corría antes de ese `-u` —el número de
+  versión no gatea Python, solo XML/campos/migraciones—, así que la línea combinada llevaba
+  semanas activa aunque el módulo figurara "sin actualizar".
+  El cliente confirma que **los 27 precios de variante combinada ya están configurados en
+  producción** (la nota de precios A/C mal era de su entorno local).
+- **Sin verificar:** el punto estructural de la fila **1-250** (6 variantes que hacen doble
+  función exterior-solo / combinada) **no** se resuelve configurando precios, y no se ha
+  comprobado contra los datos de producción. Antes de darlo por cerrado, confirmar con datos
+  reales si sigue aplicando o si la restructura "Sin interior" ya se hizo.
+- **Prioridad:** Media — ya no bloquea (la línea única está activa), pero el cabo de 1-250
+  sigue abierto hasta verificarlo.
+
+## I-11 — El descuento de combo de las líneas de servicio sigue expuesto a `_recompute_prices`
+- **Qué:** `_visar_fill_wizard_cart_and_redirect` escribe `discount` en la línea después de
+  `_cart_add`. `_recompute_prices()` pone `discount` a 0 y recalcula `price_unit`, y se dispara
+  desde `res.partner.write()` al cambiar `country_id`/`vat`/`zip` — o sea, **al escribir la
+  dirección en el checkout**.
+- **Por qué importa:** el cliente vería el descuento de combo y podría acabar pagando sin él.
+  No es teórico: es el mismo mecanismo que obligó a proteger las líneas de anticipo.
+- **Recomendación:** ampliar el filtro de `sale.order._get_update_prices_lines()` (hoy solo
+  excluye anticipos) para cubrir también las líneas con `calendar_booking_ids`. Ver el gotcha
+  en `60-odoo19-conventions.md`.
+- **Prioridad:** Alta — riesgo de cobrar de menos, silencioso.
+
+## I-12 — Un solo producto de anticipo para todos los servicios
+- **Qué:** `VISAR-ANTICIPO` es un único producto; la línea copia los impuestos del servicio que
+  espeja para que el total cuadre.
+- **Por qué importa:** hoy todos los servicios llevan 16%, así que no hay conflicto. Si algún día
+  conviven servicios con tasas distintas, hará falta un producto de anticipo por grupo de
+  impuestos (o el recálculo de `tax_ids` desde el producto podría desalinear el total).
+- **Prioridad:** Baja — latente, sin impacto con el catálogo actual.
+
+## I-13 — Póliza Bimestral a precio de paridad
+- **Qué:** el plan bimestral se ofrece al mismo precio que la compra única (descuento 0%),
+  vendido por conveniencia. El mensual lleva −5%.
+- **Por qué importa:** pide compromiso sin ahorro; junto al mensual con su badge de ahorro puede
+  leerse como una opción sin sentido.
+- **Recomendación:** decidir con Visar si lleva descuento propio o se retira del paso. Cambiarlo
+  es configuración (3 reglas de lista), no código; retirarlo es el parámetro
+  `visar.poliza_plan_ids`.
+- **Prioridad:** Media — decisión de negocio, no técnica.
+
+## I-14 — Archivos del repo con dueño `root`
+- **Qué:** ~30 archivos de `visar_subscription` y `visar_field_app`, más objetos dentro de
+  `.git/objects`, pertenecen a `root` por algún `sudo git` / copia con sudo del pasado.
+- **Por qué importa:** los de `.git` **impedían `fetch` y `commit`** ("insufficient permission for
+  adding an object"); se corrigieron el 3-ago. Los del árbol de trabajo bloquean editar esos
+  archivos y volverán a aparecer si se repite la operación con sudo.
+- **Recomendación:** `sudo chown -R josegonzalez:josegonzalez /opt/custom` y no volver a correr
+  git ni copiar archivos como root en el repo.
+- **Prioridad:** Baja, pero reaparece.

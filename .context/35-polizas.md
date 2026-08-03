@@ -84,6 +84,29 @@ referencian y sus renovaciones cotizan bien desde ellas. **No las borres.**
 Si se apaga, los precios caen al `list_price` en silencio (mal por hasta 210 en zonas
 A y C). Hay un test que lo fija.
 
+## Qué precio se anuncia (y cuál no)
+
+El precio de una póliza es **solo el servicio recurrente**. Los add-ons y extras
+(estaciones antirroedores, etc.) son **cargo único en la primera factura**: no se
+repiten cada periodo, así que meterlos en el precio "al mes" lo infla y no es lo que
+se va a cobrar en el mes 3. Fue un bug real del primer corte del paso.
+
+`_visar_quote_booking` separa siempre —con o sin plan— y devuelve:
+
+| clave | qué es |
+|---|---|
+| `recurring_total` | servicio por periodo → el precio "al mes" de la póliza |
+| `addons_total` | extras, cargo único |
+| `upfront_service_total` | servicio × periodos adelantados |
+| `upfront_total` | lo que se cobra HOY, extras incluidos |
+| `total` | la reserva completa a precio de un solo pago |
+
+Ejemplo real (fumigación interior 1-250, Zona B, + 3 estaciones a 100):
+compra única 600 servicio + 300 extras = 900. Póliza Mensual: **570 al mes**,
+hoy 1440 (= 1140 de servicio por dos meses + 300 de extras), siguiente cargo 570 en
+el mes 3. El ahorro se calcula solo sobre la parte recurrente, que es la única que la
+póliza abarata.
+
 ## Contratación desde el sitio web
 
 La póliza ya **no** se contrata desde `/shop/...` (los productos 30 y 31 están sin
@@ -113,18 +136,35 @@ solo mes** cuando debía cobrar 2.
   migración. La migración los omite a propósito.
 - **Acción:** revisar con finanzas los 4 pedidos y decidir nota de crédito o ajuste.
 
-### Runbook de despliegue
+### Despliegue — YA APLICADO en producción (3-ago-2026)
 
-1. `visar_base` y `visar_appointment` traían una actualización pendiente previa
-   (código en disco por delante del instalado). Al actualizar ahora entran **dos**
-   deltas juntos — contarlo, no depurarlo a media noche.
-2. Orden: `visar_subscription` primero (Fases 1 y 2, sin cambio visible para el
-   cliente), verificar, y después `visar_appointment` (Fase 3, sí cambia el flujo).
-3. **Manual, no es código:** repuntar el botón *Contratar póliza mensual* de la
-   portada. Está en `ir_ui_view` id **1186** (`website.homepage`), es contenido del
-   editor web **sin fuente en git**. Debe apuntar a
-   `/appointment/visar/booking?restart=1` (los otros tres botones *Contratar ahora* de
-   la misma página ya usan esa URL). Una actualización de módulo NO lo cambia.
+Backup previo en `/var/lib/odoo/backups/visar-db-pre-polizas-20260803.dump`
+(`pg_dump -Fc`, 22 MB). Se corrió sobre `visar-db`:
+
+```
+-u visar_base,visar_subscription,visar_appointment,visar_field_app
+```
+
+Se incluyeron `visar_base` (traía un delta pendiente de antes) y `visar_field_app`
+(su fix del PDF estaba en disco pero **sin subir versión**, así que no se aplicaba).
+Resultado: 6 listas creadas, 2 heredadas renombradas, 14 pedidos con anticipo, **41
+omitidos** por tener factura posteada. Sin errores.
+
+Versiones instaladas tras el despliegue: `visar_base` 19.0.1.4.0,
+`visar_subscription` 19.0.1.3.0, `visar_appointment` 19.0.2.4.1.
+
+**Cuatro pedidos cambiaron de total** al añadirles el anticipo: S00159, S00140
+(ambos `3_progress`) y S00056, S00061 (`6_churn`, inertes). Si alguien iba a cobrar
+los dos primeros, el importe ya no es el de antes.
+
+### Sigue pendiente — manual, no es código
+
+Repuntar el botón *Contratar póliza mensual* de la portada. Está en `ir_ui_view` id
+**1186** (`website.homepage`), es contenido del editor web **sin fuente en git**, y
+una actualización de módulo NO lo cambia. Debe apuntar a
+`/appointment/visar/booking?restart=1` (los otros tres botones *Contratar ahora* de
+la misma página ya usan esa URL). Mientras tanto sigue llevando a la página de
+producto sin publicar.
 
 ### Verificación
 

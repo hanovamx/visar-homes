@@ -266,3 +266,52 @@ disparados** por eventos (p. ej. app de técnicos). Diseño completo en
 - **Secretos:** Fase 2a mueve a Odoo solo lo **no-secreto** (prompt, model, notas);
   token/app_secret/api_key siguen en el `.env` del runtime hasta tener
   almacenamiento seguro (mover secretos a la BD los mete en los backups).
+
+## [IMPLEMENTADO — ago-2026] Pólizas: el cobro adelantado es una línea, no un multiplicador
+
+La regla "la póliza se paga 2 meses por adelantado" vivía como `ratio = 2` al facturar.
+El sitio web nunca pasa por ahí: `website_sale` cobra exactamente `order.amount_total`.
+- **Por qué la línea:** no hay forma de cobrar de más "por detrás" en el checkout web.
+  Si el importe difiere del total del pedido, la transacción se rechaza. El segundo mes
+  tiene que existir como línea para poder cobrarse.
+- **Una línea por servicio, no una sumada:** reproduce exacto el IVA y el descuento de
+  combo por línea, permite contar los periodos pagados de **cada** servicio en una
+  póliza combo, y al quitar un servicio se va su anticipo (ondelete cascade).
+- **Efecto colateral que se arregló solo:** antes la factura (2 meses) nunca quedaba
+  pagada por el cobro (1 mes), así que `_invoice_paid_hook` no disparaba y **no se
+  generaba ninguna visita**. El bug de precio tapaba un bug de servicio.
+
+## [IMPLEMENTADO — ago-2026] Precios de póliza: listas (zona × plan), no descuento en código
+
+Un pedido solo puede tener UNA lista de precios, y las de suscripción vivían aparte de
+las de zona, así que el carrito nunca las resolvía.
+- **Alternativa descartada (calcular en código):** `_recompute_prices()` se dispara al
+  escribir la dirección en el checkout y **resetea `price_unit` y `discount`**. Un precio
+  puesto a mano se pierde ahí, después de habérselo enseñado al cliente. Además dejaba el
+  descuento como un hecho de Python, no configurable.
+- **Alternativa descartada (precios fijos en las listas de zona):** exigía 78 precios
+  duplicados —el atajo por `list_price` da mal en zonas A y C— y armaba la trampa de
+  `_cart_add` (cualquier añadido de los productos 30/31 volvería el pedido suscripción).
+- **Elegida:** 6 listas (zona × plan) con 2 reglas globales que **derivan** de la lista de
+  la zona. 12 reglas sustituyen a 78, sin duplicar un solo precio.
+- **Costo aceptado:** cambiar el descuento son 3 reglas (una por zona), no una. A cambio
+  el consultor lo edita en la UI sin tocar código. Se evaluó un campo único en el plan;
+  se dejó fuera para no volver a meter lógica de precio en Python.
+
+## [IMPLEMENTADO — ago-2026] La póliza se contrata en el wizard, no en `/shop`
+
+Se ofrecía desde una página de producto donde el cliente **volvía a elegir** Zona /
+Tamaño inmueble / Tamaño jardín, datos que el wizard ya había recogido.
+- **Dónde:** un paso más, justo después de *¿Deseas agregar algo más?*.
+- **Por qué ahí y no en el carrito:** el wizard es dueño de la sesión de reserva y arma
+  el carrito de una sola vez al final; decidir antes deja el carrito correcto desde el
+  primer momento, sin editar líneas después.
+- **La primera visita hereda la cita:** si no, el horario y el técnico que el cliente
+  acababa de elegir se perdían — `_timesheet_service_generation` saca las líneas de
+  póliza antes de que visar_fsm cree su tarea.
+- **Los add-ons no entran en el precio de la póliza:** son cargo único de la primera
+  factura, no se repiten. Anunciarlos "al mes" infla el precio y no es lo que se cobra
+  en el mes 3.
+- **Bimestral se ofrece a precio de paridad**, vendido por conveniencia (agenda
+  automática, visitas de garantía incluidas). **Pendiente de confirmar con Visar** si se
+  queda así o lleva descuento.

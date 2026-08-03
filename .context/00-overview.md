@@ -43,8 +43,13 @@ El tabulador completo está en [`70-tabulador.md`](./70-tabulador.md).
 
 Detalle en [`10-requirements.md`](./10-requirements.md).
 
-## Estado actual (resumen — 26-jun-2026)
+## Estado actual (resumen — 3-ago-2026)
 
+- **Pólizas (suscripciones):** implementado y **desplegado en producción**. El cobro de
+  2 meses por adelantado es una **línea real del pedido** (antes era un multiplicador al
+  facturar que el sitio web nunca aplicaba), se contrata en un **paso del wizard** tras
+  *¿Deseas agregar algo más?*, y la primera visita hereda fecha y técnico de la cita.
+  Ver [`35-polizas.md`](./35-polizas.md).
 - **D-03 (legacy):** implementado.
 - **D-05:** implementado — wizard configurable, multi-técnico, SO multi-línea, entrada `/appointment`.
 - **D-04:** implementado junto con D-05 — pricelist por zona, combo, valoración dedupe.
@@ -53,6 +58,11 @@ Detalle en [`10-requirements.md`](./10-requirements.md).
 - **Calificación wizard:** implementado — paso plaga/roedores/tipo plaga + producto roedores + estaciones obligatorias.
 - **Respuestas nativas:** híbrido implementado — zona, m² (rangos) y calificación en Questions & Answers.
 - **E2E web:** en curso; validar wizard completo con calificación, add-ons y generación FSM.
+
+> ⚠️ **Este servidor es producción.** `/opt/custom` es el addons path del Odoo que corre
+> (BD `visar-db`). Editar aquí es editar producción: el proceso vivo sigue con el Python que
+> cargó en memoria, pero **cualquier reinicio levanta lo que haya en disco**. Nunca correr
+> tests contra `visar-db` — ver [`60-odoo19-conventions.md`](./60-odoo19-conventions.md).
 
 Ver [`50-status-roadmap.md`](./50-status-roadmap.md).
 
@@ -96,3 +106,5 @@ Odoo 19 core: `/Users/luisgarza27/Documents/HANOVA/odoo_19_visar/odoo/addons/`
 7. `91-reunion-2026-06-22.md` — reglas de negocio acordadas con Visar.
 8. `25-field-app.md` — **app de campo técnicos** (`visar_field_app`, 4º módulo).
 9. `27-whatsapp-agent.md` — **agente de IA por WhatsApp** (`visar_whatsapp_agent`, 5º módulo).
+10. `35-polizas.md` — **pólizas / suscripciones** (`visar_subscription`, 6º módulo): cobro
+    adelantado, listas (zona × plan) y paso de póliza en el wizard.

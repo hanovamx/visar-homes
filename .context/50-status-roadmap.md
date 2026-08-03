@@ -1,9 +1,43 @@
 # Estado y roadmap
 
-> Última actualización: **26-jun-2026** — split en 3 módulos + D-06 + D-07 parcial + calificación wizard
-> + UI tarea FSM con orden de venta completa
-> (**visar_appointment v19.0.2.0.15**, **visar_base v19.0.1.0.0**, **visar_fsm v19.0.1.0.1**).
+> Última actualización: **3-ago-2026** — pólizas: cobro adelantado como línea real + paso
+> de póliza en el wizard, **desplegado en producción**
+> (**visar_appointment v19.0.2.4.1**, **visar_base v19.0.1.4.0**,
+> **visar_subscription v19.0.1.3.0**, **visar_fsm v19.0.1.0.4**).
+> Entrada anterior: 26-jun-2026 — split en 3 módulos + D-06 + D-07 parcial + calificación wizard.
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Hecho — Pólizas: cobro adelantado + paso en el wizard (ago-2026)
+
+Detalle completo en [`35-polizas.md`](./35-polizas.md).
+
+- [x] El cobro de 2 meses por adelantado es una **línea real del pedido**, no un
+      multiplicador al facturar. Antes el carrito cobraba 1 mes, la factura salía por 2 y,
+      al no quedar pagada, **no se generaba ninguna visita**.
+- [x] 6 listas (zona × plan) con 2 reglas globales sustituyen a las 78 por variante.
+      Los precios siguen viviendo solo en las listas de zona.
+- [x] Paso de póliza en el wizard tras *¿Deseas agregar algo más?*; se retira la
+      contratación desde `/shop/...` (productos 30 y 31 siguen sin publicar).
+- [x] La **primera visita hereda fecha y técnico** de la cita reservada; las demás nacen
+      sin agendar.
+- [x] El precio anunciado es **solo el servicio recurrente**; los add-ons son cargo único.
+- [x] Migración: 14 pedidos con anticipo, 41 omitidos por tener factura posteada; planes
+      anuales bajados a 1 periodo (cobraban dos años de entrada).
+- [x] 15 tests en verde contra copia de la BD real.
+- [x] Desplegado en `visar-db` el 3-ago-2026 (backup previo en `/var/lib/odoo/backups/`).
+
+### Bugs de producción encontrados de paso
+
+1. **Carrito de compra única se confirmaba como suscripción** —
+   `_visar_clear_previous_booking_lines` no limpiaba `order.plan_id`. **Corregido.**
+2. **S00087/S00088 con dos facturas de 2 meses** y **S00084/S00085 con una de 1 mes** —
+   causa eliminada, pero las facturas ya están posteadas: **decisión de finanzas pendiente**.
+
+### Pendiente de esta tanda
+
+- [ ] Repuntar el botón *Contratar póliza mensual* de la portada (editor web, no código).
+- [ ] Definir si la Póliza Bimestral se queda a precio de paridad o lleva descuento.
+- [ ] Cerrar los 4 pedidos con factura mal emitida con finanzas.
 
 ## Hecho — D-03 (inversión de flujo + filtrado de técnicos)
 
