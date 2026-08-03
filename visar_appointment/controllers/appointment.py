@@ -30,16 +30,21 @@ _VISAR_PLAGA_KEYS = (
 # inválidas si esa respuesta cambia). Además, los pasos en _VISAR_CLEARS_TIERS limpian
 # todos los tramos elegidos (tier_*). Solo se limpia lo realmente dependiente: cambiar
 # interior NO invalida exterior (mediciones independientes).
+# La póliza se cotiza sobre los items resueltos: cualquier paso que los cambie
+# invalida el plan elegido, o se cobraría el precio de otra configuración.
+_VISAR_POLIZA_KEYS = ('poliza_plan_id',)
 _VISAR_STEP_CLEARS = {
     'services': ('motivo',) + _VISAR_PLAGA_KEYS + ('cobertura',)
-                + _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS,
+                + _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_POLIZA_KEYS,
     'motivo': _VISAR_PLAGA_KEYS,
-    'plagas': _VISAR_PLAGA_KEYS,
-    'cobertura': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
-    'group': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
-    'interior': _VISAR_INTERIOR_KEYS,
-    'exterior': _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS,
-    'dimensiones': (),
+    'plagas': _VISAR_PLAGA_KEYS + _VISAR_POLIZA_KEYS,
+    'cobertura': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS
+                 + _VISAR_POLIZA_KEYS,
+    'group': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS
+             + _VISAR_POLIZA_KEYS,
+    'interior': _VISAR_INTERIOR_KEYS + _VISAR_POLIZA_KEYS,
+    'exterior': _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS + _VISAR_POLIZA_KEYS,
+    'dimensiones': _VISAR_POLIZA_KEYS,
 }
 _VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
 
@@ -301,6 +306,97 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return request.env['appointment.type'].sudo()._visar_offered_addons(
             items, zone, include_roedores=self._visar_booking_has_roedores(booking))
 
+    # ------------------------------------------------------------------
+    # Paso de póliza (upsell de suscripción)
+    # ------------------------------------------------------------------
+    def _visar_poliza_plans(self):
+        """Planes ofrecibles en el paso de póliza, en orden de presentación.
+
+        Se leen de un parámetro de sistema para no hornear ids en el código; por
+        defecto, los planes que ya tienen lista (zona × plan) configurada.
+        """
+        Plan = request.env['sale.subscription.plan'].sudo()
+        param = request.env['ir.config_parameter'].sudo().get_param(
+            'visar.poliza_plan_ids')
+        if param:
+            ids = self._visar_parse_id_list(param.replace(',', ' ').split())
+            plans = Plan.browse(ids).exists()
+            if plans:
+                return plans
+        pricelists = request.env['product.pricelist'].sudo().search(
+            [('visar_plan_id', '!=', False)])
+        return pricelists.mapped('visar_plan_id').sorted('billing_period_value')
+
+    def _visar_poliza_context(self, booking):
+        """(zone, master, plans) si la reserva puede volverse póliza; None si no.
+
+        Comprobación barata, sin cotizar: la usa `_visar_wizard_steps`, que corre en
+        CADA página del wizard para el indicador "Paso X de Y".
+        """
+        booking = booking or {}
+        if booking.get('mode') != 'wizard':
+            return None
+        zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
+        items = booking.get('items') or []
+        if not zone or not items:
+            return None
+        if self._visar_selections_require_valuation(booking.get('selections') or {}):
+            return None
+        master = request.env['appointment.type'].sudo().browse(
+            booking.get('master_appointment_type_id')).exists()
+        if not master:
+            return None
+        # Sin lista (zona × plan) no hay precio de póliza que ofrecer.
+        plans = self._visar_poliza_plans().filtered(
+            lambda p: zone._visar_poliza_pricelist(p).visar_plan_id)
+        if not plans:
+            return None
+        sale_lines = master._visar_build_sale_lines(
+            items, zone, include_roedores=self._visar_booking_has_roedores(booking),
+            extra_addons=booking.get('extras_accepted'))
+        Product = request.env['product.product'].sudo()
+        if not any(Product.browse(l['product_id']).recurring_invoice for l in sale_lines):
+            return None
+        return zone, master, plans
+
+    def _visar_poliza_offers(self, booking):
+        """Ofertas de póliza para la reserva actual (una por plan ofrecible).
+
+        Cotiza de verdad, así que se llama solo en el paso; para saber si el paso
+        existe basta `_visar_poliza_context`.
+        """
+        context = self._visar_poliza_context(booking)
+        if not context:
+            return []
+        zone, master, plans = context
+        items = booking.get('items') or []
+        include_roedores = self._visar_booking_has_roedores(booking)
+        extras = booking.get('extras_accepted')
+
+        base = master._visar_quote_booking(
+            items, zone, include_roedores=include_roedores, extra_addons=extras)
+        offers = []
+        for plan in plans:
+            quote = master._visar_quote_booking(
+                items, zone, include_roedores=include_roedores,
+                extra_addons=extras, plan=plan)
+            if not quote:
+                continue
+            offers.append({
+                'plan': plan,
+                'plan_id': plan.id,
+                'name': plan.name,
+                'billing_label': plan.billing_period_display_sentence,
+                'periods': quote['periods'],
+                'recurring_total': quote['recurring_total'],
+                'period_total': quote['total'],
+                'upfront_total': quote['upfront_total'],
+                # Ahorro frente a contratar el mismo servicio una sola vez.
+                'saving': max(0.0, (base or {}).get('total', 0.0) - quote['total']),
+                'quote': quote,
+            })
+        return offers
+
     def _visar_auto_dimensions_for_groups(self, groups, dimension_ids):
         """Añade dimensiones únicas de grupos con una sola opción."""
         Dimension = request.env['visar.service.dimension'].sudo()
@@ -407,10 +503,13 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             if mtype in measure_types:
                 steps.append(key)
         steps.append('address')
-        # El paso de extras solo existe tras resolver zona/items y si hay algo que ofrecer.
+        # Extras y póliza solo existen tras resolver zona/items y si hay qué ofrecer.
         booking = self._visar_get_booking_session()
-        if booking.get('zone_id') and booking.get('items') and self._visar_extras_offers(booking):
-            steps.append('extras')
+        if booking.get('zone_id') and booking.get('items'):
+            if self._visar_extras_offers(booking):
+                steps.append('extras')
+            if self._visar_poliza_context(booking):
+                steps.append('poliza')
         return steps
 
     # Devuelve (índice 1-based, total) del paso actual para el indicador de progreso.
@@ -434,6 +533,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'dimensiones': base + '/wizard/dimensiones',
             'address': base + '/wizard/direccion',
             'extras': base + '/wizard/extras',
+            'poliza': base + '/wizard/poliza',
         }.get(step_key, base)
 
     # URL del paso anterior al actual (para el botón "Volver"); None si es el primero.
@@ -1093,8 +1193,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'zone': zone,
                 'missing_services': missing,
             })
-        filter_ids = AptType._visar_filter_resource_ids_for_pools(pools)
-        booking = self._visar_persist_booking({
+        previous = self._visar_get_booking_session()
+        payload = {
             'mode': 'wizard',
             'master_appointment_type_id': master.id,
             'zone_id': zone.id,
@@ -1102,13 +1202,18 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'selections': selections,
             'items': items,
             'service_pools': {key: pool.ids for key, pool in pools.items()},
-        })
+        }
+        # Este handler no pasa por _visar_commit_step, así que _visar_clear_downstream
+        # no corre aquí: si el CP cambió de zona hay que soltar a mano el plan elegido,
+        # que se cotizó contra la zona anterior. (Los extras ya se sueltan solos: no
+        # van en el payload, así que _visar_booking_payload los descarta.)
+        if previous.get('zone_id') and previous['zone_id'] != zone.id:
+            selections.pop('poliza_plan_id', None)
+        booking = self._visar_persist_booking(payload)
         # Si hay add-ons opcionales para ofrecer, intercala el paso de extras.
         if self._visar_extras_offers(booking):
             return request.redirect('/appointment/visar/booking/wizard/extras')
-        filter_param = quote_plus(json.dumps(filter_ids))
-        return request.redirect(
-            '/appointment/%s?filter_resource_ids=%s' % (master.id, filter_param))
+        return self._visar_after_extras_redirect(booking)
 
     # Paso Extras (upsell): ofrece add-ons opcionales antes de elegir horario.
     @http.route(['/appointment/visar/booking/wizard/extras'],
@@ -1122,16 +1227,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
         AptType = request.env['appointment.type'].sudo()
 
-        def _to_schedule():
-            pools = self._visar_get_service_pools(booking)
-            filter_ids = AptType._visar_filter_resource_ids_for_pools(pools)
-            filter_param = quote_plus(json.dumps(filter_ids))
-            return request.redirect(
-                '/appointment/%s?filter_resource_ids=%s' % (master.id, filter_param))
-
         offers = self._visar_extras_offers(booking)
         if not offers:
-            return _to_schedule()
+            return self._visar_after_extras_redirect(booking)
 
         if request.httprequest.method == 'GET':
             zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
@@ -1157,8 +1255,62 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         ]
         booking = dict(booking)
         booking['extras_accepted'] = accepted
-        self._visar_persist_booking(booking)
-        return _to_schedule()
+        booking = self._visar_persist_booking(booking)
+        return self._visar_after_extras_redirect(booking)
+
+    # Tras los extras: ofrece la póliza si aplica, si no va directo al horario.
+    def _visar_after_extras_redirect(self, booking):
+        if self._visar_poliza_context(booking):
+            return request.redirect('/appointment/visar/booking/wizard/poliza')
+        return self._visar_schedule_redirect(booking)
+
+    # Redirección al calendario del tipo maestro, filtrado por los pools resueltos.
+    def _visar_schedule_redirect(self, booking):
+        master = self._visar_master_appointment_type()
+        pools = self._visar_get_service_pools(booking)
+        filter_ids = request.env['appointment.type'].sudo(
+        )._visar_filter_resource_ids_for_pools(pools)
+        filter_param = quote_plus(json.dumps(filter_ids))
+        return request.redirect(
+            '/appointment/%s?filter_resource_ids=%s' % (master.id, filter_param))
+
+    # Paso Póliza (upsell de suscripción): ofrece contratar el servicio como póliza.
+    @http.route(['/appointment/visar/booking/wizard/poliza'],
+                type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
+    def visar_wizard_poliza(self, **post):
+        booking = self._visar_get_booking_session()
+        master = self._visar_master_appointment_type()
+        if not master or not booking or booking.get('mode') != 'wizard' \
+                or not booking.get('zone_id') or not booking.get('items'):
+            return request.redirect('/appointment/visar/booking')
+
+        offers = self._visar_poliza_offers(booking)
+        if not offers:
+            return self._visar_schedule_redirect(booking)
+
+        selections = booking.get('selections') or {}
+        if request.httprequest.method == 'GET':
+            zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
+            # Cotización de compra única, para comparar contra cada póliza.
+            quote = request.env['appointment.type'].sudo()._visar_quote_booking(
+                booking.get('items') or [], zone,
+                include_roedores=self._visar_booking_has_roedores(booking),
+                extra_addons=booking.get('extras_accepted'))
+            ctx = self._visar_wizard_context_base(
+                'poliza', selections=selections, values=post)
+            ctx.update({
+                'poliza_offers': offers,
+                'selected_plan_id': selections.get('poliza_plan_id') or False,
+                'visar_quote': quote or False,
+            })
+            return request.render('visar_appointment.visar_wizard_poliza', ctx)
+
+        # POST: el plan elegido debe estar entre los ofrecidos (no confiar en el form).
+        offered_ids = {o['plan_id'] for o in offers}
+        chosen = self._visar_parse_id_list([post.get('plan_id')])
+        plan_id = chosen[0] if chosen and chosen[0] in offered_ids else False
+        self._visar_commit_step('poliza', {'poliza_plan_id': plan_id})
+        return self._visar_schedule_redirect(self._visar_get_booking_session())
 
     # ------------------------------------------------------------------
     # Valoración técnica
@@ -1585,14 +1737,32 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if stale:
             stale.sudo().unlink()
 
+    # Plan de póliza elegido en el wizard, si sigue siendo ofrecible para esta reserva.
+    def _visar_booking_poliza_plan(self, booking):
+        empty = request.env['sale.subscription.plan']
+        plan_id = (booking.get('selections') or {}).get('poliza_plan_id')
+        if not plan_id:
+            return empty
+        context = self._visar_poliza_context(booking)
+        if not context:
+            return empty
+        return context[2].filtered(lambda p: p.id == plan_id)[:1] or empty
+
     # Construye el carrito multi-servicio del wizard y redirige a /shop/cart.
     def _visar_fill_wizard_cart_and_redirect(self, calendar_booking, booking):
         from odoo.addons.base.models.ir_qweb import keep_query
 
         order_sudo = request.cart or request.website._create_cart()
         self._visar_clear_previous_booking_lines(order_sudo, keep_booking=calendar_booking)
+        # Soltar el plan del carrito ANTES de resolver el nuevo. `_verify_cart_after_update`
+        # solo lo limpia cuando una actualización deja cero líneas recurrentes, así que sin
+        # esto un cliente que contrató póliza, volvió atrás y reservó una compra única se
+        # llevaba el plan pegado y la orden se confirmaba como suscripción. También evita el
+        # UserError "no puedes mezclar planes" al cambiar de mensual a bimestral.
+        order_sudo.plan_id = False
         zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
-        order_sudo._visar_apply_zone_pricelist(zone)
+        plan = self._visar_booking_poliza_plan(booking)
+        order_sudo._visar_apply_zone_pricelist(zone, plan=plan)
 
         master = request.env['appointment.type'].sudo().browse(booking['master_appointment_type_id'])
         sale_lines = master._visar_build_sale_lines(
@@ -1611,14 +1781,20 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         lines_added = 0
 
         for line_vals in sale_lines:
-            if master._visar_skip_cart_line(line_vals, zone):
+            if master._visar_skip_cart_line(line_vals, zone, plan=plan):
                 continue
             line_qty = line_vals.get('quantity', quantity)
+            # `allow_one_time_sale` deja inalcanzable la rama de suscripción de
+            # website_sale_subscription en el flujo de compra única: hoy no se dispara
+            # solo porque las listas de zona no tienen reglas de plan, y eso es
+            # demasiado frágil para dejarlo al azar.
             cart_values = order_sudo._cart_add(
                 product_id=line_vals['product_id'],
                 quantity=line_qty,
                 calendar_booking_id=calendar_booking.id,
                 calendar_booking_tz=tz,
+                plan_id=plan.id if plan else None,
+                allow_one_time_sale=not plan,
             )
             if cart_values.get('quantity', 0) < line_qty:
                 calendar_booking.sudo().unlink()
@@ -1638,6 +1814,12 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             calendar_booking.sudo().unlink()
             return request.redirect('/appointment/%s?%s' % (
                 master.id, keep_query('*', state='failed-resource')))
+
+        # Las mensualidades adelantadas se añaden DESPUÉS de todo el bucle: espejan el
+        # estado final de cada línea de servicio, y el descuento de combo solo queda
+        # fijo cuando terminó de recorrerse.
+        if plan:
+            order_sudo._visar_sync_anticipo_lines()
 
         if order_sudo._is_anonymous_cart():
             partner_values = {
@@ -1664,6 +1846,8 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if booking and booking.get('mode') == 'valuation':
             order_sudo = request.cart or request.website._create_cart()
             self._visar_clear_previous_booking_lines(order_sudo, keep_booking=calendar_booking)
+            # Una valoración nunca es póliza: soltar el plan que pudiera traer el carrito.
+            order_sudo.plan_id = False
             zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
             order_sudo._visar_apply_zone_pricelist(zone)
             items = booking.get('items') or []
@@ -1687,6 +1871,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 quantity=quantity,
                 calendar_booking_id=calendar_booking.id,
                 calendar_booking_tz=tz,
+                allow_one_time_sale=True,
             )
             if cart_values.get('quantity', 0) < quantity:
                 calendar_booking.sudo().unlink()

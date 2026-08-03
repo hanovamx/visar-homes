@@ -752,6 +752,116 @@
         </t>
     </template>
 
+    <!-- Paso Póliza (upsell): contratar el servicio como suscripción -->
+    <template id="visar_wizard_poliza" name="Visar - Wizard póliza">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container my-4">
+                    <t t-set="quote" t-value="visar_quote or False"/>
+                    <t t-set="quote_currency"
+                       t-value="quote and request.env['res.currency'].browse(quote['currency_id']) or request.env.company.currency_id"/>
+                    <div class="row justify-content-center g-4">
+                        <div class="col-lg-7">
+                            <h2>¿Prefieres contratarlo como póliza?</h2>
+                            <p class="text-muted">
+                                Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
+                                — Con una póliza tu servicio se repite solo y las visitas de
+                                garantía van incluidas.
+                            </p>
+                            <div t-if="error" class="alert alert-warning" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                            <form action="/appointment/visar/booking/wizard/poliza"
+                                  method="post" class="mt-3">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+
+                                <t t-foreach="poliza_offers" t-as="offer">
+                                    <label class="d-block border rounded p-3 mb-2"
+                                           t-att-for="'plan_%s' % offer['plan_id']">
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <div class="d-flex">
+                                                <input class="form-check-input me-2 flex-shrink-0" type="radio"
+                                                       name="plan_id"
+                                                       t-att-id="'plan_%s' % offer['plan_id']"
+                                                       t-att-value="offer['plan_id']"
+                                                       t-att-checked="offer['plan_id'] == selected_plan_id and 'checked' or None"/>
+                                                <div>
+                                                    <span class="fw-semibold" t-esc="offer['name']"/>
+                                                    <span t-if="offer['saving']" class="badge text-bg-success ms-2">
+                                                        Ahorras <t t-out="offer['saving']"
+                                                                   t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                    </span>
+                                                    <div class="small text-muted" t-esc="offer['billing_label']"/>
+                                                </div>
+                                            </div>
+                                            <div class="text-end flex-shrink-0">
+                                                <div class="fw-semibold" t-out="offer['period_total']"
+                                                     t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                <div class="small text-muted" t-esc="offer['billing_label']"/>
+                                            </div>
+                                        </div>
+                                        <!--
+                                            La regla de negocio: la póliza se paga por adelantado.
+                                            Tiene que quedar imposible de pasar por alto, porque es
+                                            exactamente lo que se va a cobrar en el carrito.
+                                        -->
+                                        <div t-if="offer['periods'] &gt; 1"
+                                             class="alert alert-info py-2 px-3 mt-3 mb-0 small">
+                                            <strong>Hoy pagas
+                                                <t t-out="offer['upfront_total']"
+                                                   t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                            </strong>
+                                            — cubre los primeros <t t-esc="offer['periods']"/> meses.
+                                            Tu siguiente cargo es hasta el mes
+                                            <t t-esc="offer['periods'] + 1"/>.
+                                        </div>
+                                        <div t-else="" class="small text-muted mt-3">
+                                            Se cobra por periodo completo, sin pagos adelantados extra.
+                                        </div>
+                                    </label>
+                                </t>
+
+                                <label class="d-block border rounded p-3 mb-2"
+                                       for="plan_none">
+                                    <input class="form-check-input me-2" type="radio"
+                                           name="plan_id" id="plan_none" value=""
+                                           t-att-checked="not selected_plan_id and 'checked' or None"/>
+                                    <span>Solo este servicio, sin póliza</span>
+                                    <span t-if="quote" class="float-end fw-semibold" t-out="quote['total']"
+                                          t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                </label>
+
+                                <button type="submit" class="btn btn-primary mt-2">Continuar</button>
+                                <a t-if="back_url" t-att-href="back_url" class="btn btn-link mt-2 ms-2">Volver</a>
+                            </form>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <div class="border rounded p-3 bg-light">
+                                <h5 class="mb-3">Tu reserva</h5>
+                                <t t-if="quote">
+                                    <t t-foreach="quote['lines']" t-as="line">
+                                        <div class="d-flex justify-content-between gap-2 small mb-1"
+                                             t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
+                                            <span t-esc="line['name']"/>
+                                            <span t-out="line['price']"
+                                                  t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                        </div>
+                                    </t>
+                                    <div class="d-flex justify-content-between pt-2 border-top">
+                                        <strong>Servicio único</strong>
+                                        <strong t-out="quote['total']"
+                                                t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+
     <!-- Aviso: el rango elegido requiere valoración técnica -->
     <template id="visar_wizard_valuation_notice" name="Visar - Wizard aviso valoración">
         <t t-call="website.layout">

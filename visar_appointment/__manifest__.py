@@ -21,11 +21,14 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.3.0',
+    'version': '19.0.2.4.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
         'visar_fsm',
+        # El wizard ofrece contratar póliza al final del flujo: necesita los planes,
+        # las listas (zona × plan) y las líneas de mensualidad adelantada.
+        'visar_subscription',
         'website_appointment',
         'website_appointment_sale',
         'website_sale',

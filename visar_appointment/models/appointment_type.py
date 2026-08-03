@@ -569,38 +569,45 @@ class AppointmentType(models.Model):
         return filtered_months
 
     @api.model
-    def _visar_list_unit_price(self, product, zone):
+    def _visar_list_unit_price(self, product, zone, plan=None):
         """Precio de lista unitario desde la pricelist de la zona.
 
         La variante ya fue resuelta correctamente por _visar_get_variant_for_zone(),
         así que la pricelist encuentra el precio correcto para la zona del cliente.
+
+        Con `plan` cotiza desde la lista (zona × plan): el producto recurrente lleva
+        el descuento de la póliza y el resto sigue al precio de la zona. Sin pasar
+        `plan_id` la regla que resuelve es la de paso —el precio SIN descuento—, así
+        que el plan tiene que llegar hasta aquí o el paso anunciaría el precio de una
+        compra única.
         """
         if not product:
             return 0.0
         website = self.env['website'].get_current_website(fallback=False)
-        pricelist = zone.pricelist_id if zone else self.env['product.pricelist']
+        pricelist = zone._visar_poliza_pricelist(plan) if zone else self.env['product.pricelist']
         if not pricelist and website:
             pricelist = website._get_and_cache_current_pricelist()
         if pricelist:
-            return pricelist._get_product_price(product, 1.0)
+            kwargs = {'plan_id': plan.id} if plan and product.recurring_invoice else {}
+            return pricelist._get_product_price(product, 1.0, **kwargs)
         return product.lst_price
 
     @api.model
-    def _visar_cart_line_net_unit_price(self, line_vals, zone):
+    def _visar_cart_line_net_unit_price(self, line_vals, zone, plan=None):
         """Precio unitario neto de una línea antes de añadirla al carrito."""
         product = self.env['product.product'].browse(line_vals.get('product_id')).exists()
         if not product:
             return 0.0
-        unit = self._visar_list_unit_price(product, zone)
+        unit = self._visar_list_unit_price(product, zone, plan=plan)
         discount = line_vals.get('discount') or 0.0
         return unit * (1.0 - discount / 100.0)
 
     @api.model
-    def _visar_skip_cart_line(self, line_vals, zone):
+    def _visar_skip_cart_line(self, line_vals, zone, plan=None):
         """True si la línea no debe ir al carrito (Odoo bloquea precio 0)."""
         if line_vals.get('is_free'):
             return True
-        return self._visar_cart_line_net_unit_price(line_vals, zone) <= 0
+        return self._visar_cart_line_net_unit_price(line_vals, zone, plan=plan) <= 0
 
     @api.model
     def _visar_quote_line_label(self, line_vals, product):
@@ -839,14 +846,21 @@ class AppointmentType(models.Model):
     # Calcula los precios estimados de la reserva respetando pricelist de zona y descuentos combo.
     @api.model
     def _visar_quote_booking(self, items, zone, quantity=1, include_roedores=False,
-                             extra_addons=None):
+                             extra_addons=None, plan=None):
+        """Cotización de la reserva. Con `plan` cotiza como póliza.
+
+        En una póliza el total tiene dos caras: lo que se paga HOY (que incluye las
+        mensualidades adelantadas) y lo recurrente por periodo. Ambas van en el
+        resultado para que el paso pueda enseñar "hoy pagas X, luego Y al mes".
+        """
         sale_lines = self._visar_build_sale_lines(
             items, zone, include_roedores=include_roedores, extra_addons=extra_addons)
         if not sale_lines:
             return False
 
         website = self.env['website'].get_current_website(fallback=False)
-        pricelist = zone.pricelist_id if zone else self.env['product.pricelist']
+        pricelist = (zone._visar_poliza_pricelist(plan) if zone
+                     else self.env['product.pricelist'])
         if not pricelist and website:
             pricelist = website._get_and_cache_current_pricelist()
         currency = (pricelist.currency_id if pricelist else False) or (
@@ -854,13 +868,14 @@ class AppointmentType(models.Model):
 
         quote_lines = []
         total = 0.0
+        recurring_total = 0.0
         qty = max(int(quantity or 1), 1)
         Product = self.env['product.product'].sudo()
         for line_vals in sale_lines:
             product = Product.browse(line_vals['product_id']).exists()
             if not product:
                 continue
-            list_unit_price = self._visar_list_unit_price(product, zone)
+            list_unit_price = self._visar_list_unit_price(product, zone, plan=plan)
             discount = line_vals.get('discount') or 0.0
             is_free = line_vals.get('is_free')
             line_qty = line_vals.get('quantity', qty)
@@ -880,16 +895,28 @@ class AppointmentType(models.Model):
                 'is_addon': bool(line_vals.get('is_addon')),
                 'quantity': line_qty,
                 'has_discounted_price': bool(is_free or discount),
+                'is_recurring': bool(plan and product.recurring_invoice),
             })
             total += line_total
+            if plan and product.recurring_invoice:
+                recurring_total += line_total
 
         if not quote_lines:
             return False
+        # Periodos que el pedido cobra de entrada (2 en la Póliza Mensual). Las
+        # mensualidades extra solo aplican a lo recurrente: los add-ons y extras se
+        # cobran una vez, en la primera factura.
+        periods = max(1, plan.visar_first_invoice_periods or 1) if plan else 1
+        upfront_total = total + recurring_total * (periods - 1)
         return {
             'lines': quote_lines,
             'total': total,
             'currency_id': currency.id,
             'zone_name': zone.name if zone else False,
+            'plan': plan or False,
+            'periods': periods,
+            'recurring_total': recurring_total,
+            'upfront_total': upfront_total,
         }
 
     # Crea una copia serializable de los items del wizard para guardar en el evento de calendario.

@@ -16,11 +16,19 @@ class SaleOrder(models.Model):
         help='Contacto de entrega fijado por el flujo Visar (wizard/valoración).',
     )
 
-    def _visar_apply_zone_pricelist(self, zone):
-        """Asigna la pricelist de la zona al carrito/orden."""
+    def _visar_apply_zone_pricelist(self, zone, plan=None):
+        """Asigna al carrito/orden la lista de precios de la zona.
+
+        Con `plan` usa la lista (zona × plan) de la póliza, que deriva sus precios de
+        la lista de la zona: el servicio recurrente lleva el descuento del plan y todo
+        lo demás (add-ons, extras, roedores) cotiza idéntico a una compra única.
+        """
         self.ensure_one()
-        if zone and zone.pricelist_id:
-            self.pricelist_id = zone.pricelist_id
+        if not zone:
+            return
+        pricelist = zone._visar_poliza_pricelist(plan)
+        if pricelist:
+            self.pricelist_id = pricelist
 
     def _visar_set_service_shipping(self, partner):
         """Fija la dirección de servicio Visar y la usa como partner_shipping_id."""
