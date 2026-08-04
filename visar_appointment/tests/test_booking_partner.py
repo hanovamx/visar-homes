@@ -32,7 +32,7 @@ class TestBookingPartner(TransactionCase):
             'name': 'Cliente Portal Test',
             'login': 'portal_cli_test',
             'email': 'portal_cli_test@example.com',
-            'groups_id': [(6, 0, [cls.env.ref('base.group_portal').id])],
+            'group_ids': [(6, 0, [cls.env.ref('base.group_portal').id])],
         })
         cls.portal_partner = cls.portal_user.partner_id
 

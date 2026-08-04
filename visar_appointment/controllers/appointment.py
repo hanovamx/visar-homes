@@ -1482,6 +1482,15 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         guest_emails_str=None, **kwargs,
     ):
         appointment_type = request.env['appointment.type'].sudo().browse(appointment_type_id)
+        # Marca de agua para el dedupe por teléfono: el mayor id de res.partner
+        # ANTES de que el core cree su cliente. El core siempre crea un partner
+        # nuevo en el flujo público (nunca busca por teléfono ni email), así que
+        # cualquier partner con id > esta marca nació en ESTA petición y es el
+        # único que el dedupe puede fusionar/eliminar. Ver
+        # _visar_dedupe_booking_partner.
+        request.visar_pre_booking_max_partner_id = (
+            request.env['res.partner'].sudo().search([], order='id desc', limit=1).id or 0
+        )
         booking = self._visar_get_booking_session()
         if booking.get('mode') == 'wizard' and appointment_type.visar_is_master:
             timezone = request.session.get('timezone') or appointment_type.appointment_tz
@@ -1788,6 +1797,115 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return customer
         return order_sudo.env['res.partner'].browse()
 
+    # --- dedupe por teléfono (identidad de cliente) ---------------------------
+
+    def _visar_dedupe_booking_partner(self, calendar_booking):
+        """Fusiona el partner recién creado con el canónico del mismo teléfono.
+
+        `appointment_form_submit` del core SIEMPRE crea un `res.partner` nuevo en
+        cada reserva pública (nunca busca por teléfono ni email:
+        odoo/addons/appointment/controllers/appointment.py). En cuanto un número
+        tiene dos partners, la guarda de ambigüedad del agente de WhatsApp deja de
+        contestarle a ese cliente. Aquí colapsamos el partner nuevo en el canónico
+        ANTES de que se arme la orden, así la orden, la dirección de servicio y las
+        respuestas cuelgan del canónico.
+
+        Reglas (por coincidencias en `visar_phone_nat10`, sin contar el nuevo):
+          - 0 coincidencias  -> cliente genuinamente nuevo, se deja tal cual.
+          - exactamente 1    -> se reutiliza; se rellenan blancos, nunca se pisa.
+          - 2+ coincidencias -> no se crea otro; se reutiliza el MÁS antiguo y se
+                                registra en el log para que el staff lo desenrede.
+
+        Nunca elimina un partner que existiera antes de esta petición (id por
+        encima de la marca de `appointment_form_submit`) ni uno ligado a un login
+        (`user_ids`): solo el desechable que el core acaba de crear. Todo va en un
+        try/except: un fallo del dedupe jamás debe tumbar la reserva ni el pago.
+        """
+        try:
+            partner = calendar_booking.partner_id
+            marker = getattr(request, 'visar_pre_booking_max_partner_id', None)
+            if not partner or marker is None:
+                return
+            canonical = self._visar_canonical_partner_for(partner, marker)
+            if not canonical:
+                return  # 0 coincidencias -> se queda como cliente nuevo.
+            self._visar_fill_partner_blanks(canonical, partner)
+            # Repunta al canónico todo lo que apunta al desechable y elimínalo. La
+            # orden aún no existe (esto corre antes de armarla), así que solo hay
+            # que mover la cita y sus respuestas.
+            calendar_booking.appointment_answer_input_ids.sudo().write(
+                {'partner_id': canonical.id})
+            calendar_booking.sudo().write({'partner_id': canonical.id})
+            partner.unlink()
+        except Exception:  # noqa: BLE001 - el dedupe nunca debe romper el checkout
+            _logger.exception("visar dedupe reserva: fallo al fusionar el partner; "
+                              "se continua sin deduplicar.")
+
+    @staticmethod
+    def _visar_canonical_partner_for(partner, marker):
+        """Partner canónico del mismo teléfono que `partner`, o vacío (lógica pura).
+
+        `partner` es el desechable recién creado por el core; `marker` es el id de
+        corte capturado antes de `super()`: solo son canónicos los partners con
+        id <= marker (ya existían antes de la petición). Devuelve:
+          - vacío si `partner` no aplica (id <= marker, o ligado a un login, o sin
+            teléfono normalizable), o si no hay ninguna coincidencia (cliente nuevo);
+          - el partner del mismo `visar_phone_nat10` si hay exactamente uno;
+          - el MÁS antiguo si hay 2+, registrándolo en el log para el staff.
+        """
+        Partner = partner.env['res.partner']
+        empty = Partner.browse()
+        # Solo un partner desechable, acuñado por el core en ESTA petición y sin
+        # login. Un cliente logueado (portal/staff) queda intacto.
+        if not partner or partner.id <= marker or partner.user_ids:
+            return empty
+        key = Partner._visar_phone_nat10_value(partner.phone)
+        if not key:
+            return empty
+        # Solo son canónicos los partners que ya existían antes de la petición.
+        matches = Partner.sudo().search(
+            [('visar_phone_nat10', '=', key),
+             ('id', '!=', partner.id),
+             ('id', '<=', marker)],
+            order='id asc')
+        if not matches:
+            return empty
+        canonical = matches[0]
+        if len(matches) > 1:
+            _logger.info(
+                "visar dedupe reserva: el telefono terminado en %s ya coincide con "
+                "%d partners; se reutiliza el mas antiguo (id=%s) y se descarta el "
+                "nuevo (id=%s). Duplicados por limpiar.",
+                key[-4:], len(matches), canonical.id, partner.id)
+        return canonical
+
+    @staticmethod
+    def _visar_fill_partner_blanks(canonical, source):
+        """Rellena SOLO campos en blanco del canónico desde el partner desechable.
+
+        Nunca pisa datos existentes (regla: "jamás sobrescribir datos de un
+        partner desde un formulario público"). Si el nombre capturado difiere del
+        guardado -miembro del hogar, typo, o nuevo dueño del número- se conserva el
+        guardado y se registra la discrepancia para el staff; al visitante no se le
+        dice nada.
+        """
+        vals = {}
+        for fname in ('email', 'lang'):
+            if not canonical[fname] and source[fname]:
+                vals[fname] = source[fname]
+        src_name = (source.name or '').strip()
+        can_name = (canonical.name or '').strip()
+        if src_name and not can_name:
+            vals['name'] = src_name
+        elif src_name and can_name and src_name != can_name:
+            _logger.info(
+                "visar dedupe reserva: se reservo como '%s' pero el partner "
+                "canonical (id=%s) es '%s'; se conserva el nombre guardado. "
+                "Revisar si es la misma persona.",
+                src_name, canonical.id, can_name)
+        if vals:
+            canonical.sudo().write(vals)
+
     def _visar_fill_wizard_cart_and_redirect(self, calendar_booking, booking):
         from odoo.addons.base.models.ir_qweb import keep_query
 
@@ -1875,6 +1993,11 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
     # Construye el carrito con líneas multi-servicio y redirige al checkout de pago.
     def _redirect_to_payment(self, calendar_booking):
+        # Deduplica al cliente por teléfono ANTES de armar la orden. El core acaba
+        # de crear un partner nuevo (siempre lo hace en el flujo público); si su
+        # número ya existe, lo fusionamos con el canónico aquí, de modo que la
+        # orden, la dirección de servicio y las respuestas cuelguen del canónico.
+        self._visar_dedupe_booking_partner(calendar_booking)
         booking = self._visar_get_booking_session()
         if booking and booking.get('mode') == 'valuation':
             order_sudo = request.cart or request.website._create_cart()

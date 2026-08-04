@@ -374,56 +374,49 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_normalize_phone(self, phone):
-        """Deja los ultimos 10 digitos: el numero nacional MX.
+        """Deja los ultimos 10 digitos: el numero nacional MX, o '' si no llega.
 
         WhatsApp entrega algo como `5218112345678` (52 de pais + el `1` de movil
-        + 10 digitos); los campos de telefono en Odoo son texto libre. Comparar
-        por los ultimos 10 digitos esquiva el prefijo de pais y el `1` de movil.
-        Se usa para el numero ENTRANTE; el lado guardado se normaliza en SQL
-        dentro de `_agent_find_partner` (asi cubre cualquier formato).
+        + 10 digitos); comparar por los ultimos 10 digitos esquiva el prefijo de
+        pais y el `1` de movil. Delega en `res.partner._visar_phone_nat10_value`
+        -la regla ES la misma que usa el dedupe de reservas y el campo indexado
+        `visar_phone_nat10`- para que las dos nociones de "mismo numero" no puedan
+        divergir. Devuelve '' (no False) para conservar el contrato de str.
         """
-        digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
-        return digits[-10:] if len(digits) >= 10 else digits
+        return self.env['res.partner']._visar_phone_nat10_value(phone) or ''
 
     @api.model
     def _agent_find_partner(self, phone):
         """Resuelve telefono -> res.partner por numero nacional (ultimos 10 digitos).
 
-        - `res.partner.mobile` NO existe en Odoo 19 (se elimino): solo se usa
-          `phone`.
-        - El lado guardado se normaliza EN SQL (`regexp_replace` quita todo lo que
-          no sea digito), asi el match funciona sin importar el formato guardado
-          (espacios, guiones, `+52`, el `1` de movil). Es lo unico que cubre todos
-          los formatos; el ORM con `ilike` se perderia los que traen separadores.
+        - Busca por igualdad indexada sobre `visar_phone_nat10` (campo almacenado
+          en `res.partner`, ultimos 10 digitos del telefono). Es la MISMA clave que
+          usa el dedupe de reservas, normalizada en un solo sitio
+          (`_visar_phone_nat10_value`), asi que el agente y las reservas no pueden
+          tener nociones distintas de "mismo numero". Antes se hacia un scan con
+          `regexp_replace` sobre toda la tabla; ahora es un lookup indexado.
+        - `res.partner.mobile` NO existe en Odoo 19: solo se usa `phone`.
         - Politica ante AMBIGUEDAD (privacidad): si mas de un partner comparte el
           numero, NO se devuelve ninguno. Este metodo usa sudo() para saltar las
           ACL y leer ventas/citas/tareas, asi que un match equivocado seria
           mostrarle a un cliente los servicios de OTRA persona. Ante duda, no
           revelar (se canaliza a un asesor). Se registra en el log para el staff.
         """
-        nat = self._agent_normalize_phone(phone)
-        if len(nat) != 10:
+        key = self.env['res.partner']._visar_phone_nat10_value(phone)
+        if not key:
             return self.env['res.partner'].browse()
 
-        # Numero nacional guardado, en cualquier formato, que termine en `nat`
-        # (equivale a comparar los ultimos 10 digitos: cubre +52 y el `1` de movil).
-        self.env.cr.execute(
-            """
-            SELECT id FROM res_partner
-            WHERE regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g') LIKE %s
-            """,
-            ['%' + nat],
-        )
-        ids = [row[0] for row in self.env.cr.fetchall()]
-        if len(ids) != 1:
-            if len(ids) > 1:
+        partners = self.env['res.partner'].sudo().search(
+            [('visar_phone_nat10', '=', key)])
+        if len(partners) != 1:
+            if len(partners) > 1:
                 _logger.info(
                     "agent_customer_services: el telefono terminado en %s coincide "
                     "con %d partners; se omite por ambiguedad (posible dato "
                     "duplicado). Ante duda no se revelan servicios.",
-                    nat[-4:], len(ids))
+                    key[-4:], len(partners))
             return self.env['res.partner'].browse()
-        return self.env['res.partner'].sudo().browse(ids[0])
+        return partners
 
     @api.model
     def _agent_service_date(self, line):
