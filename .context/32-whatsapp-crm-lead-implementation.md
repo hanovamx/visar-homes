@@ -256,6 +256,43 @@ de entrada a la etapa. (Valores concretos: pendientes con el equipo — doc 31 �
 A+B se implementan ya (reemplazan el corte previo). C+D son fases Odoo-internas
 posteriores; varias "pueden empezar manuales" (doc 31 §8/§14).
 
+## Estado de implementación (2026-08-05)
+
+**Fase A + B: implementadas y verificadas** (16 tests Odoo + 140 pytest en
+`visar-db`). Commits: `visar-homes b6ed4c3`, `visar_fastapi d552110`.
+
+**Fase C + D: implementadas** (`visar-homes a236ba9`), con estas **desviaciones
+respecto al plan de arriba**, tomadas al aterrizarlo contra el código:
+
+- **Servicio programado NO se dispara en `calendar.event`, sino en
+  `sale.order.write` cuando `state -> 'sale'`.** El grupo se deriva de las líneas
+  de servicio (producto→dimensión→grupo), que están disponibles al confirmar, sin
+  la carrera de timing de cuándo se enlaza `calendar_event_id`. Fan-out por grupo.
+- **Valoración agendada y Cotización enviada quedan como BOTONES DE STAFF**, no
+  automáticas. Motivo: la orden de una valoración trae el **producto de
+  valoración, que no tiene grupo de servicio**, así que no se puede atribuir por
+  `(teléfono, grupo)` de forma fiable. Automatizable luego vía
+  `calendar.event.visar_booking_items` (los `dimension_id` del wizard) tras
+  verificar el timing/contenido en `visar-db`.
+- **Won = `project.task.write` con `state == '1_done'`** (cierre del técnico; no
+  la etapa; `'1_canceled'` no cuenta), idempotente ante reapertura.
+- **Forward-only por POSICIÓN en el pipeline (xmlids), no por
+  `crm.stage.sequence`.** Robustece contra las etapas stock globales de Odoo
+  (`team_ids` vacío) que se muestran en todos los pipelines y colisionan en
+  `sequence` con las nuestras.
+- **`visar_crm` depende de `visar_appointment`** (no solo `visar_base`): necesita
+  la normalización canónica `res.partner._visar_phone_nat10_value`, la cadena
+  producto→dimensión→grupo y `project.task.visar_sale_order_id`.
+
+**Higiene de datos en `visar-db`** (no es código): las 4 etapas stock de `crm`
+son globales (`team_ids` vacío) y aparecen como columnas en el pipeline WhatsApp;
+se acotan al equipo Sales para sacarlas. Un `crm.team` id=4 "Sales" sin dueño es
+residuo de prototipado, a borrar.
+
+**Pendiente de verificar E2E en `visar-db`:** disparar una reserva real pagada y
+un cierre de tarea FSM, y confirmar el avance de etapa + fan-out de combo con
+datos reales (como se hizo con la paridad de cotización).
+
 ## Decisiones/pendientes heredados del doc 31 (§13)
 
 - Valores de `lost_days_*` (con el equipo).
