@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: el pipeline es configuracion. Se crea al instalar, pero despues
+         el staff puede renombrar/reordenar etapas o ajustar el cron sin que una
+         actualizacion del modulo pise sus cambios. -->
+    <data noupdate="1">
+
+        <!-- Equipo/pipeline dedicado a los leads del agente de WhatsApp. Separado
+             del CRM comercial para no mezclar embudos. -->
+        <record id="crm_team_whatsapp" model="crm.team">
+            <field name="name">WhatsApp</field>
+            <field name="use_opportunities" eval="True"/>
+        </record>
+
+        <!-- Las 5 etapas (diseno 31 seccion 2). `sequence` define el avance
+             forward-only (_visar_advance_stage). OJO Odoo 19: crm.stage tiene
+             `team_ids` (Many2many), NO `team_id`: se acotan a este equipo. -->
+        <record id="crm_stage_wa_nuevo" model="crm.stage">
+            <field name="name">Nuevo</field>
+            <field name="sequence">1</field>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
+        </record>
+        <record id="crm_stage_wa_valoracion" model="crm.stage">
+            <field name="name">Visita de valoración agendada</field>
+            <field name="sequence">2</field>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
+        </record>
+        <record id="crm_stage_wa_cotizacion" model="crm.stage">
+            <field name="name">Cotización enviada</field>
+            <field name="sequence">3</field>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
+        </record>
+        <record id="crm_stage_wa_programado" model="crm.stage">
+            <field name="name">Servicio programado</field>
+            <field name="sequence">4</field>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
+        </record>
+        <!-- Cerrado con is_won=True: el won se queda visible en la columna. El lost
+             usa lost_reason_id + archivado nativo (action_set_lost). -->
+        <record id="crm_stage_wa_cerrado" model="crm.stage">
+            <field name="name">Cerrado</field>
+            <field name="sequence">5</field>
+            <field name="is_won" eval="True"/>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
+        </record>
+
+        <!-- Razon de perdida para el cron de caducidad (Fase D). -->
+        <record id="crm_lost_reason_wa_inactivo" model="crm.lost.reason">
+            <field name="name">WhatsApp - Sin respuesta</field>
+        </record>
+
+    </data>
+</odoo>

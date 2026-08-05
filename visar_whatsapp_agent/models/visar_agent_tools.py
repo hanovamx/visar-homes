@@ -45,6 +45,14 @@ MAX_SERVICES = 10
 SERVICE_SCOPES = ('upcoming', 'history', 'all')
 DEFAULT_SERVICE_SCOPE = 'upcoming'
 
+# --- Seguimiento CRM (agent_track_lead) -----------------------------------
+# XMLIDs del pipeline WhatsApp; viven en el modulo visar_crm (dependencia).
+# El agente SOLO crea/refresca en 'Nuevo'; el avance lo hace Odoo por eventos
+# reales (ver .context/32-whatsapp-crm-lead-implementation.md).
+WA_TEAM_XMLID = 'visar_crm.crm_team_whatsapp'
+WA_STAGE_NUEVO_XMLID = 'visar_crm.crm_stage_wa_nuevo'
+WA_STAGE_CERRADO_XMLID = 'visar_crm.crm_stage_wa_cerrado'
+
 
 class VisarAgentTools(models.AbstractModel):
     _name = 'visar.agent.tools'
@@ -576,4 +584,161 @@ class VisarAgentTools(models.AbstractModel):
             'scope': scope,
             'services': services,
             'message': message,
+        }
+
+    # ------------------------------------------------------------------
+    # Seguimiento CRM (agent_track_lead) — UNICO metodo de ESCRITURA
+    # ------------------------------------------------------------------
+    #
+    # Cruce deliberado y acotado de la regla "el runtime no escribe en Odoo"
+    # (diseno 31). El agente SOLO crea/refresca leads en la etapa 'Nuevo'; el
+    # avance a etapas posteriores lo hace Odoo por eventos reales (pago,
+    # valoracion, tarea FSM), no el runtime. Corre con sudo() ACOTADO a este
+    # metodo (cruza partner/ordenes/crm que el usuario share no ve por ACL,
+    # igual que agent_customer_services). Superficie tipada y minima: solo
+    # telefono + service_code + un quote opcional; nunca nombres de modelo,
+    # dominios ni SQL.
+
+    @api.model
+    def _agent_lead_skip(self, reason):
+        """Respuesta cuando NO se crea/toca lead (telefono/grupo/cliente existente)."""
+        return {'lead_id': None, 'created': False, 'stage': None,
+                'skipped_reason': reason}
+
+    @api.model
+    def _agent_partner_has_service_in_group(self, partner, group):
+        """True si el partner ya es cliente del grupo (orden confirmada en el).
+
+        Recorre las ordenes CONFIRMADAS del partner y busca una linea de servicio
+        Visar cuyo grupo (via producto -> dimension -> group_id) sea `group`. Una
+        poliza activa es tambien una orden confirmada en su grupo, asi que queda
+        cubierta sin leer subscription_state. Es la exclusion "los clientes no son
+        leads", pero POR GRUPO: un cliente de fumigacion que pregunta por jardineria
+        SI genera lead de jardineria (diseno 31 seccion 4).
+        """
+        if not partner or not group:
+            return False
+        orders = self.env['sale.order'].sudo().search([
+            ('partner_id', '=', partner.id),
+            ('state', 'in', CONFIRMED_ORDER_STATES),
+        ])
+        for line in orders.mapped('order_line'):
+            product = line.product_id
+            if not product.visar_is_service:
+                continue
+            dimension = product.product_tmpl_id.visar_dimension_id
+            if dimension and dimension.group_id.id == group.id:
+                return True
+        return False
+
+    @api.model
+    def _agent_lead_quote_note(self, dimension, quote):
+        """Nota de chatter con la cotizacion del agente (enriquecimiento, no avance)."""
+        quote = quote or {}
+        label = dimension._visar_wizard_label() if dimension else "servicio"
+        parts = []
+        total = quote.get('total')
+        if total not in (None, False):
+            try:
+                parts.append("$%s %s" % (
+                    '{:,.2f}'.format(float(total)), quote.get('currency') or ''))
+            except (TypeError, ValueError):
+                pass
+        if quote.get('m2'):
+            parts.append("%s m2" % quote['m2'])
+        if quote.get('cp'):
+            parts.append("CP %s" % quote['cp'])
+        detail = (" - " + ", ".join(parts)) if parts else ""
+        return "Cotizacion del agente: %s%s" % (label, detail)
+
+    @api.model
+    def agent_track_lead(self, payload):
+        """Registra una interaccion de WhatsApp como lead de CRM en 'Nuevo'.
+
+        `payload` = {
+          "phone":        "5218112345678",
+          "service_code": "FUM_INT",     # DIMENSION; Odoo resuelve el grupo
+          "quote":        {"cp","m2","total","currency"} | None,   # enriquecimiento
+          "source":       "whatsapp"     # opcional
+        }
+
+        Idempotente y acotado a 'Nuevo': un lead por (telefono, grupo) en el
+        pipeline WhatsApp. Devuelve:
+            {"lead_id": int|None, "created": bool, "stage": str|None,
+             "skipped_reason": None|"invalid_phone"|"no_group"|
+                               "existing_customer"|"pipeline_missing"}
+        No lanza por datos malos del runtime: el seguimiento es best-effort y no
+        debe tumbar una respuesta al cliente.
+        """
+        payload = payload or {}
+
+        nat = self._agent_normalize_phone(payload.get('phone'))
+        if len(nat) != 10:
+            return self._agent_lead_skip('invalid_phone')
+
+        dimension, _options = self._agent_resolve_dimension(payload.get('service_code'))
+        if not dimension:  # sin dimension o grupo ambiguo: no hay UN grupo
+            return self._agent_lead_skip('no_group')
+        group = dimension.group_id
+        if not group:
+            return self._agent_lead_skip('no_group')
+
+        partner = self._agent_find_partner(payload.get('phone'))
+        if self._agent_partner_has_service_in_group(partner, group):
+            return self._agent_lead_skip('existing_customer')
+
+        team = self.env.ref(WA_TEAM_XMLID, raise_if_not_found=False)
+        nuevo = self.env.ref(WA_STAGE_NUEVO_XMLID, raise_if_not_found=False)
+        cerrado = self.env.ref(WA_STAGE_CERRADO_XMLID, raise_if_not_found=False)
+        if not team or not nuevo:
+            _logger.warning(
+                "agent_track_lead: falta el pipeline WhatsApp (equipo/etapa sin "
+                "cargar). Instalar/actualizar el modulo visar_crm.")
+            return self._agent_lead_skip('pipeline_missing')
+
+        # sudo() acotado a crm.lead: el usuario RPC no tiene ACL de CRM.
+        Lead = self.env['crm.lead'].sudo()
+        domain = [
+            ('visar_wa_phone_norm', '=', nat),
+            ('visar_service_group_id', '=', group.id),
+            ('team_id', '=', team.id),
+        ]
+        if cerrado:  # lead "abierto" = aun no Cerrado (won/lost ya archivado)
+            domain.append(('stage_id', '!=', cerrado.id))
+        lead = Lead.search(domain, order='id desc', limit=1)
+
+        quote = payload.get('quote') or {}
+        created = False
+        if not lead:
+            lead = Lead.create({
+                'name': "WhatsApp %s" % (partner.name or nat),
+                'type': 'opportunity',
+                'team_id': team.id,
+                'stage_id': nuevo.id,
+                'visar_service_group_id': group.id,
+                'visar_wa_phone_norm': nat,
+                'visar_source': payload.get('source') or 'whatsapp',
+                'phone': payload.get('phone') or nat,
+                'partner_id': partner.id if partner else False,
+            })
+            created = True
+        elif partner and not lead.partner_id:
+            # El partner aparecio despues de crear el lead: enlazarlo.
+            lead.partner_id = partner.id
+
+        # Enriquecimiento (diseno 31 seccion 5.1): valor del pipeline + chatter.
+        # NO avanza la etapa: la cotizacion del agente se queda en 'Nuevo'.
+        total = quote.get('total')
+        if total not in (None, False):
+            try:
+                lead.expected_revenue = float(total)
+            except (TypeError, ValueError):
+                pass
+        lead.message_post(body=self._agent_lead_quote_note(dimension, quote))
+
+        return {
+            'lead_id': lead.id,
+            'created': created,
+            'stage': lead.stage_id.name,
+            'skipped_reason': None,
         }
