@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Botones manuales de la rama valoracion/cotizacion (staff). Solo visibles
+         para leads del pipeline WhatsApp. El avance es forward-only, asi que
+         tocarlos fuera de orden no regresa la etapa. -->
+    <record id="visar_crm_lead_view_form" model="ir.ui.view">
+        <field name="name">crm.lead.form.visar.crm</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.crm_lead_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <field name="visar_is_wa_pipeline" invisible="1"/>
+                <button name="action_visar_mark_valoracion" type="object"
+                        string="Marcar valoración agendada"
+                        invisible="not visar_is_wa_pipeline"/>
+                <button name="action_visar_mark_cotizacion" type="object"
+                        string="Marcar cotización enviada"
+                        invisible="not visar_is_wa_pipeline"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
