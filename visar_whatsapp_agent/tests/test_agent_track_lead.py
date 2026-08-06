@@ -106,6 +106,61 @@ class TestAgentTrackLead(TransactionCase):
         self.assertTrue(res_mav['created'])
         self.assertIsNone(res_mav['skipped_reason'])
 
+    def test_cliente_existente_via_enlace_dimension_producto(self):
+        """Regresion: en el catalogo real el producto NO trae visar_dimension_id;
+        el enlace vive del lado de la dimension (dimension.product_tmpl_id). La
+        exclusion debe resolver el grupo igual, y seguir siendo POR GRUPO.
+        """
+        partner = self.env['res.partner'].create(
+            {'name': 'Cliente MAV', 'phone': self.RAW_B})
+        tmpl = self.env['product.template'].create({
+            'name': 'Mantenimiento de areas verdes', 'visar_is_service': True})
+        self.assertFalse(tmpl.visar_dimension_id)  # sin puntero inverso
+        self.dim_jar.product_tmpl_id = tmpl.id     # enlace autoritativo
+        order = self.env['sale.order'].create({
+            'partner_id': partner.id,
+            'order_line': [(0, 0, {
+                'product_id': tmpl.product_variant_id.id, 'product_uom_qty': 1})],
+        })
+        order.write({'state': 'sale'})
+
+        # Ya es cliente de areas verdes -> no genera lead de areas verdes.
+        res_mav = self.Tools.agent_track_lead(
+            {'phone': self.WA_B, 'service_code': 'TST_JAR'})
+        self.assertEqual(res_mav['skipped_reason'], 'existing_customer')
+        # Pero SI genera lead de fumigacion (grupo distinto).
+        res_fum = self.Tools.agent_track_lead(
+            {'phone': self.WA_B, 'service_code': 'TST_INT'})
+        self.assertTrue(res_fum['created'])
+        self.assertIsNone(res_fum['skipped_reason'])
+
+    def test_producto_que_cubre_dos_dimensiones_excluye_por_grupo(self):
+        """Un solo producto ("Fumigacion interior + exterior") cubre DOS
+        dimensiones del mismo grupo. Comprarlo excluye el grupo completo, se
+        pregunte por la dimension que se pregunte.
+        """
+        dim_ext = self.env['visar.service.dimension'].create({
+            'name': 'Exterior', 'code': 'TST_EXT', 'group_id': self.group_fum.id})
+        tmpl = self.env['product.template'].create({
+            'name': 'Fumigacion interior + exterior', 'visar_is_service': True})
+        self.dim_int.product_tmpl_id = tmpl.id
+        dim_ext.product_tmpl_id = tmpl.id
+        self.assertEqual(tmpl._visar_service_groups(), self.group_fum)
+
+        partner = self.env['res.partner'].create(
+            {'name': 'Cliente FUM', 'phone': self.RAW_B})
+        order = self.env['sale.order'].create({
+            'partner_id': partner.id,
+            'order_line': [(0, 0, {
+                'product_id': tmpl.product_variant_id.id, 'product_uom_qty': 1})],
+        })
+        order.write({'state': 'sale'})
+
+        for code in ('TST_INT', 'TST_EXT'):
+            res = self.Tools.agent_track_lead(
+                {'phone': self.WA_B, 'service_code': code})
+            self.assertEqual(res['skipped_reason'], 'existing_customer', code)
+
     def test_nunca_avanza_de_nuevo(self):
         # Aunque un lead ya este en una etapa posterior, el agente no lo mueve
         # (ni lo regresa): agent_track_lead solo crea/refresca en 'Nuevo'.

@@ -141,14 +141,18 @@ class CrmLead(models.Model):
 
     @api.model
     def _visar_order_service_groups(self, order):
-        """Grupos de servicio DISTINTOS de una orden: linea -> producto ->
-        dimension -> grupo. Filtra a servicios Visar con dimension. Combo ->
-        varios grupos."""
-        lines = order.order_line.filtered(
+        """Grupos de servicio DISTINTOS de una orden: linea -> producto -> grupo.
+
+        Filtra a servicios Visar y delega la resolucion del grupo en
+        `product.template._visar_service_groups()`, que usa el enlace autoritativo
+        dimension -> producto (varias dimensiones pueden compartir un producto) y
+        cae al puntero inverso `visar_dimension_id` solo como respaldo. Combo ->
+        varios grupos.
+        """
+        templates = order.order_line.filtered(
             lambda l: l.product_id.visar_is_service
-            and l.product_id.product_tmpl_id.visar_dimension_id
-        )
-        return lines.mapped('product_id.product_tmpl_id.visar_dimension_id.group_id')
+        ).mapped('product_id.product_tmpl_id')
+        return templates._visar_service_groups()
 
     @api.model
     def _visar_open_lead(self, nat, group, team, cerrado):

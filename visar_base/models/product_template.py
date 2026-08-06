@@ -142,6 +142,27 @@ class ProductTemplate(models.Model):
             ('active', '=', True),
         ], limit=1)
 
+    def _visar_service_groups(self):
+        """Grupos de servicio Visar que cubre(n) esta(s) plantilla(s).
+
+        Un mismo producto puede servir a VARIAS dimensiones (p. ej. "Fumigación
+        interior + exterior" cubre las dos), así que el enlace autoritativo es
+        `visar.service.dimension.product_tmpl_id` (varias dimensiones -> un
+        producto). `visar_dimension_id` es el puntero inverso opcional
+        ("configuración alternativa") y solo puede apuntar a UNA dimensión, por
+        lo que se usa como respaldo, no como fuente única.
+
+        Devuelve un recordset de `visar.service.group` sin duplicados (vacío si
+        el producto no está ligado a ninguna dimensión). Acepta recordsets de
+        varias plantillas: una orden combo devuelve todos sus grupos.
+        """
+        templates = self.sudo()
+        dimensions = self.env['visar.service.dimension'].sudo().search([
+            ('product_tmpl_id', 'in', templates.ids),
+        ])
+        return dimensions.mapped('group_id') | templates.mapped(
+            'visar_dimension_id.group_id')
+
     def _visar_tiers_for_dimension(self, dimension):
         """Tramos del producto aplicables a una dimensión, acotados por measure_scope.
 

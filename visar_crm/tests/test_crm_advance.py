@@ -94,6 +94,21 @@ class TestCrmAdvance(TransactionCase):
         self.assertEqual(lead_fum.stage_id, self.s_prog)
         self.assertEqual(lead_mav.stage_id, self.s_prog)
 
+    def test_avance_con_producto_sin_puntero_inverso(self):
+        """Regresion: en el catalogo real el producto NO trae visar_dimension_id;
+        el enlace vive del lado de la dimension (dimension.product_tmpl_id). La
+        orden confirmada debe resolver el grupo y avanzar igual.
+        """
+        tmpl = self.env['product.template'].create({
+            'name': 'Fum sin puntero inverso', 'visar_is_service': True})
+        self.assertFalse(tmpl.visar_dimension_id)
+        self.dim_int.product_tmpl_id = tmpl.id
+        self.assertEqual(tmpl._visar_service_groups(), self.group_fum)
+
+        lead = self._lead(self.group_fum)
+        self._confirmed_order([tmpl.product_variant_id])
+        self.assertEqual(lead.stage_id, self.s_prog)
+
     def test_orden_de_otro_telefono_no_toca_el_lead(self):
         lead = self._lead(self.group_fum)
         self._confirmed_order([self.prod_fum], phone='9990009999')

@@ -610,7 +610,11 @@ class VisarAgentTools(models.AbstractModel):
         """True si el partner ya es cliente del grupo (orden confirmada en el).
 
         Recorre las ordenes CONFIRMADAS del partner y busca una linea de servicio
-        Visar cuyo grupo (via producto -> dimension -> group_id) sea `group`. Una
+        Visar cuyo grupo sea `group`. El grupo se resuelve con
+        `product.template._visar_service_groups()`, que lee el enlace autoritativo
+        dimension -> producto (un producto puede cubrir varias dimensiones, p. ej.
+        "Fumigacion interior + exterior") y no solo el puntero inverso
+        `visar_dimension_id`, que en catalogos reales suele venir vacio. Una
         poliza activa es tambien una orden confirmada en su grupo, asi que queda
         cubierta sin leer subscription_state. Es la exclusion "los clientes no son
         leads", pero POR GRUPO: un cliente de fumigacion que pregunta por jardineria
@@ -622,14 +626,10 @@ class VisarAgentTools(models.AbstractModel):
             ('partner_id', '=', partner.id),
             ('state', 'in', CONFIRMED_ORDER_STATES),
         ])
-        for line in orders.mapped('order_line'):
-            product = line.product_id
-            if not product.visar_is_service:
-                continue
-            dimension = product.product_tmpl_id.visar_dimension_id
-            if dimension and dimension.group_id.id == group.id:
-                return True
-        return False
+        templates = orders.mapped('order_line').filtered(
+            lambda l: l.product_id.visar_is_service
+        ).mapped('product_id.product_tmpl_id')
+        return group in templates._visar_service_groups()
 
     @api.model
     def _agent_lead_quote_note(self, dimension, quote):
