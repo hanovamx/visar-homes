@@ -13,4 +13,8 @@
               parent="visar_field_menu_root"
               action="visar_field_session_action" sequence="20"/>
 
+    <menuitem id="visar_field_menu_wa_outbox" name="Avisos por WhatsApp"
+              parent="visar_field_menu_root"
+              action="visar_wa_message_action" sequence="30"/>
+
 </odoo>

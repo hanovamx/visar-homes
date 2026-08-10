@@ -236,6 +236,55 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST 127.0.0.1:8000/internal/send-re
 # 422 = payload invalido · 502 = Meta rechazo (p. ej. fuera de la ventana de 24 h)
 ```
 
+### 4.1b-bis Client notifications (en route / arrived / reschedule) — three MORE templates
+
+Same wiring as §4.1b (the shared secret covers both endpoints — nothing extra to configure
+in Odoo). What is new is that these three notifications **have no viable free-form path**.
+
+The report can be tested free-form: a technician messages the business number, which opens
+Meta's 24-hour window. These notifications go to a customer who booked through the web wizard
+and **never messaged you**, so they are *always* outside the window. Until the templates are
+approved, every one of them will 502, retry, and expire.
+
+That failure is visible by design, not silent:
+- the message is recorded in **App de Campo Visar → Avisos por WhatsApp** (opens filtered on
+  *No entregados* — that list is the customers someone should phone);
+- the task chatter gets "el cliente NO fue avisado — conviene llamarle", and still carries the
+  full text of what the customer *would* have been told.
+
+Create and submit three **text** templates (body parameters, no media header), es_MX, then set
+in the runtime `.env` and restart `visar-fastapi`:
+
+```
+WA_TEMPLATE_ENROUTE=<name>      # {{1}} = technician, {{2}} = ETA minutes
+WA_TEMPLATE_ARRIVED=<name>      # {{1}} = technician, {{2}} = waiting minutes
+WA_TEMPLATE_RESCHEDULE=<name>   # {{1}} = technician
+WA_NOTIFICATION_TEMPLATE_LANG=es_MX
+```
+
+The current Spanish wording lives in `project_task._visar_msg_enroute` / `_arrived` /
+`_reschedule` — submit text that matches it, so the chatter record and what the customer
+receives stay in agreement. ⚠️ Once approved, the wording the customer sees lives at Meta:
+changing it is a re-approval, not a code change.
+
+Verify per notification type — the parameter order must match the template placeholders, or
+Meta rejects the send:
+```bash
+curl -s -X POST 127.0.0.1:8000/internal/send-notification \
+  -H "X-Visar-Token: <secret>" -H 'Content-Type: application/json' \
+  -d '{"phone":"5281XXXXXXXX","template_key":"enroute","params":["Juan","30"],
+       "fallback_text":"prueba"}'
+# 200 {"mode":"template"} = plantilla en uso · {"mode":"free"} = falta configurar esa clave
+# 502 = Meta rechazó (fuera de la ventana de 24 h, o params que no cuadran con la plantilla)
+```
+
+Then check in Odoo that the queue record moved to **Enviado** with **Modo = template**.
+
+Cron sanity: `visar_wa_outbox_cron` ("Visar App de Campo: enviar avisos de WhatsApp
+pendientes") must exist and be active. It runs every 5 minutes as a retry safety net, but the
+happy path fires immediately because enqueueing triggers it — if notifications only ever go out
+in 5-minute clumps, `_trigger()` is not working and that is worth investigating.
+
 ### 4.1c Camera-only photos — what ops needs to know
 
 Field photos are now taken **live with the device camera**; the gallery path is closed.

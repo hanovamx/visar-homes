@@ -1274,3 +1274,91 @@ número basura cuando el teléfono venía sin espacios. La lada la resuelve ahor
 - **Extremo a extremo de WhatsApp**: pide `INTERNAL_TOKEN` en ambos lados, `WHATSAPP_ENABLED=true`
   y la plantilla aprobada. Probar primero dentro de la ventana de 24 h (mensaje libre) para aislar
   el transporte de la aprobación de la plantilla.
+
+---
+
+## 🆕 Actualización — 10-ago-2026 (v19.0.1.18.0) — avisos al cliente por WhatsApp (buzón de salida)
+
+> Los avisos **"voy en camino"**, **"ya llegué"** y **"hay que reagendar"** dejan de ser
+> simulación en el chatter y se mandan de verdad. Requiere `-u` (modelo, cron, vistas y menú
+> nuevos) + reinicio. Sin migración de datos.
+
+### Lo que ya estaba bien y no se tocó
+
+`_visar_notify_client` era desde el principio el **único punto de envío**, y su docstring decía
+"cuando se conecte WhatsApp, solo cambia este método". Se cumplió: **los disparadores y los textos
+no cambiaron de sitio**, y las guardas de idempotencia que ya existían
+(`if not task.visar_enroute_at` / `visar_arrived_at`) siguen evitando el doble aviso. Al de
+reagenda se le añadió la suya (`already_flagged`), que no existía.
+
+### Por qué un BUZÓN y no un envío en línea (como el reporte)
+
+El reporte lo manda el técnico pulsando un botón y mirando un spinner. Estos avisos son **efecto
+secundario de un cambio de etapa**: si se mandaran en línea, un WhatsApp lento colgaría el toque de
+"Voy en camino" y un WhatsApp caído podría tumbar la transición. Así que se **encolan** en
+`visar.wa.message` y los manda el cron.
+
+- **El cron se dispara al encolar** (`ir.cron._trigger()`), no solo en su intervalo de 5 min: el
+  aviso sale en segundos sin que el técnico espere. El intervalo es la red de seguridad de los
+  reintentos. Mismo patrón que la cola de correo nativa.
+- **Todo aviso CADUCA** (`expire_at`). Es lo que separa una cola de *mensajes* de una cola de
+  *avisos*: reintentar "su técnico va en camino" una hora después es **peor** que no mandarlo.
+  TTL por tipo, derivado de para qué sirve el mensaje: `arrived` 15 min (acompaña una ventana de
+  espera de ~10), `enroute` 30 min, `reschedule` 24 h.
+- **Los dos finales malos avisan en el chatter** — caducidad *y* intentos agotados. Solo avisar al
+  caducar dejaba los `failed` en silencio (lo detectó la prueba de la máquina de estados).
+- **Reintento manual, no automático, desde la vista de oficina**: reenviar un aviso viejo solo tiene
+  sentido si alguien confirma que sigue siendo verdad.
+- Menú **App de Campo Visar → Avisos por WhatsApp**, que abre filtrado por **No entregados**: esa
+  lista son los clientes a los que hay que llamar.
+
+### El texto vs. la plantilla aprobada
+
+Los textos siguen en `_visar_msg_enroute` / `_arrived` / `_reschedule`, pero ahora cada builder
+devuelve **`(texto, params)`**:
+
+- el **texto** es lo que se registra en el chatter y lo que se manda mientras no haya plantilla;
+- los **params** van en el orden de los placeholders `{{1}}`/`{{2}}` de la plantilla aprobada.
+
+> ⚠️ **Consecuencia a tener presente:** en producción la redacción vive en el registro de plantillas
+> de **Meta**, no en el repo. Cambiar el texto que recibe el cliente será una **re-aprobación**, no
+> un commit. El texto del código se queda como registro interno y respaldo.
+
+`visar.wa.message` manda al runtime solo una **CLAVE** (`enroute`/`arrived`/`reschedule`); el
+mapeo clave → plantilla vive en el `.env` del runtime. Odoo no puede pedir "manda esta plantilla".
+
+### ⚠️ Esto NO llega al cliente todavía
+
+Las tres plantillas **no están aprobadas** (el reporte se está probando en modo libre). Y a
+diferencia del reporte, estos avisos **no tienen camino libre viable**: van siempre a un cliente que
+agendó por la web y **nunca escribió**, así que están **siempre fuera de la ventana de 24 h** de
+Meta. Hasta que Meta apruebe `WA_TEMPLATE_ENROUTE` / `_ARRIVED` / `_RESCHEDULE`:
+
+- el aviso se encola, se intenta, recibe **502**, se reintenta y **caduca**;
+- queda registrado en el buzón y con nota de "no se pudo entregar" en el chatter;
+- **el chatter sigue teniendo el texto completo**, así que oficina no pierde información respecto a
+  como estaba antes — solo que ahora sabe que el cliente no fue avisado.
+
+Es el comportamiento correcto (fallar visible, no en silencio), pero **no confundirlo con "ya
+funciona"**. Las tres plantillas son prerrequisito de negocio.
+
+### Archivos tocados
+
+- `models/wa_outbox.py` (**nuevo**) — `visar.wa.message`: encolar, cron, caducidad, reintento.
+- `models/project_task.py` — `_visar_notify_client` encola (ya no simula), builders devuelven
+  `(texto, params)`, `_visar_msg_reschedule` (nuevo), aviso en `_visar_flag_reschedule`.
+- `controllers/main.py` — los dos call sites pasan `params`.
+- `views/wa_outbox_views.xml` (**nuevo**), `views/menus.xml`, `data/wa_outbox_cron.xml` (**nuevo**),
+  `security/ir.model.access.csv`, `__manifest__.py` → v19.0.1.18.0.
+- **`visar_fastapi`**: `/internal/send-notification` + `WA_TEMPLATE_*`, 10 pruebas nuevas
+  (23 en el archivo, 163 en la suite).
+
+### Cómo verificar
+
+- La máquina de estados del buzón se probó **aislada** (TTL por tipo, fallo transitorio →
+  recuperación, intentos agotados → `failed` y nunca `sent`, caducidad, y el escenario actual
+  "sin plantilla → 502 → caduca"). El endpoint del runtime tiene 10 pruebas nuevas.
+- **Nada se ha corrido contra la BD.** Al hacer `-u`: confirmar que aparece el menú, que el cron
+  `visar_wa_outbox_cron` existe y está activo, y que al pulsar "Voy en camino" se crea un
+  `visar.wa.message` en `pending` que pasa a `sent`/`failed` en segundos.
+- Con plantillas aprobadas, comprobar que el buzón registra `mode = template`.

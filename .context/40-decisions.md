@@ -195,6 +195,34 @@ Las `worksheet.template` de la app de campo ("Fumigación interior o exterior (A
   (`project.project.worksheet_template_id`) es paso manual deliberado.
 - Detalle en `25-field-app.md` → "🆕 Actualización — 08-jul-2026 (bis)". Cierra backlog I-06.
 
+## [IMPLEMENTADO — 10-ago-2026] Los avisos al cliente van por BUZÓN con caducidad, no en línea
+
+Los avisos "voy en camino" / "ya llegué" / "reagendar" se encolan en `visar.wa.message` y los manda
+un cron; ya no son la simulación en chatter de `_visar_notify_client`.
+
+- **Por qué no en línea (como el reporte):** el reporte lo manda el técnico pulsando un botón y
+  esperando; estos son efecto secundario de un **cambio de etapa**. Enviar en línea colgaría el toque
+  de "Voy en camino" mientras Meta responde, y un WhatsApp caído podría tumbar la transición. El
+  buzón devuelve el control al instante.
+- **El cron se dispara al encolar** (`_trigger()`), así que el camino feliz no espera los 5 minutos
+  del intervalo — el intervalo solo cubre reintentos. Patrón de la cola de correo nativa.
+- **Cada aviso CADUCA, y eso es el corazón del diseño.** Una cola de mensajes reintenta hasta
+  lograrlo; una cola de AVISOS no debe: "su técnico va en camino" entregado una hora tarde es peor
+  que no entregado. TTL por tipo (arrived 15 min < enroute 30 min < reschedule 24 h), derivado de la
+  utilidad del mensaje, no de un número redondo.
+- **Fallar visible:** caducidad e intentos agotados dejan nota en el chatter ("el cliente NO fue
+  avisado — conviene llamarle") y la vista de oficina abre filtrada por *No entregados*. El chatter
+  conserva el texto completo, así que no se pierde información respecto a la simulación anterior.
+- **Reintento manual, no automático**, desde la vista: reenviar un aviso viejo solo tiene sentido si
+  alguien confirma que sigue siendo verdad.
+- **Coste aceptado:** la redacción que recibe el cliente pasa a vivir en el registro de plantillas de
+  Meta (`{{1}}`/`{{2}}`), no en el repo. Cambiarla será una re-aprobación, no un commit. El texto del
+  código se conserva como registro interno y respaldo del modo libre.
+- **Prerrequisito de negocio, no deuda:** estos avisos van siempre a un cliente que agendó por la web
+  y nunca escribió ⇒ **siempre** fuera de la ventana de 24 h de Meta. Sin las tres plantillas
+  aprobadas no hay camino viable y el resultado esperado es 502 → caducado.
+- Detalle en `25-field-app.md` → "🆕 Actualización — 10-ago-2026 (v19.0.1.18.0)".
+
 ## [IMPLEMENTADO — 10-ago-2026] Foto solo por cámara, y el WhatsApp saliente lo manda el runtime
 
 Dos decisiones de la tanda v19.0.1.17.0 (app de campo).

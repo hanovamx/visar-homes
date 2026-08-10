@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_wa_message_view_list" model="ir.ui.view">
+        <field name="name">visar.wa.message.list</field>
+        <field name="model">visar.wa.message</field>
+        <field name="arch" type="xml">
+            <!-- Lo que NO salió es lo que hay que ver primero: un aviso caducado
+                 significa que el cliente nunca supo que el técnico iba o llegó. -->
+            <list decoration-danger="state in ('expired', 'failed')"
+                  decoration-muted="state == 'cancelled'">
+                <field name="create_date" string="Encolado"/>
+                <field name="task_id"/>
+                <field name="template_key"/>
+                <field name="phone"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'sent'"
+                       decoration-warning="state == 'pending'"
+                       decoration-danger="state in ('expired', 'failed')"/>
+                <field name="mode_used" optional="show"/>
+                <field name="attempts" optional="hide"/>
+                <field name="sent_at" optional="hide"/>
+                <field name="expire_at" optional="hide"/>
+                <field name="last_error" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_wa_message_view_form" model="ir.ui.view">
+        <field name="name">visar.wa.message.form</field>
+        <field name="model">visar.wa.message</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <!-- Reintento MANUAL a propósito: reenviar un aviso viejo solo
+                         tiene sentido si alguien confirma que sigue siendo verdad. -->
+                    <button name="action_visar_retry" type="object"
+                            string="Reintentar" class="btn-primary"
+                            invisible="state in ('pending', 'sent')"/>
+                    <button name="action_visar_cancel" type="object"
+                            string="Cancelar" invisible="state != 'pending'"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="task_id"/>
+                            <field name="template_key"/>
+                            <field name="phone"/>
+                            <field name="mode_used"/>
+                        </group>
+                        <group>
+                            <field name="attempts"/>
+                            <field name="expire_at"/>
+                            <field name="sent_at"/>
+                            <field name="last_error"/>
+                        </group>
+                    </group>
+                    <group string="Texto del aviso">
+                        <field name="fallback_text" nolabel="1"/>
+                    </group>
+                    <group string="Parámetros de la plantilla" groups="base.group_no_one">
+                        <field name="params_json" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_wa_message_view_search" model="ir.ui.view">
+        <field name="name">visar.wa.message.search</field>
+        <field name="model">visar.wa.message</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="task_id"/>
+                <field name="phone"/>
+                <filter name="visar_wa_not_delivered" string="No entregados"
+                        domain="[('state', 'in', ('expired', 'failed'))]"/>
+                <filter name="visar_wa_pending" string="Pendientes"
+                        domain="[('state', '=', 'pending')]"/>
+                <filter name="visar_wa_sent" string="Enviados"
+                        domain="[('state', '=', 'sent')]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="visar_wa_group_state" string="Estado"
+                            context="{'group_by': 'state'}"/>
+                    <filter name="visar_wa_group_key" string="Aviso"
+                            context="{'group_by': 'template_key'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_wa_message_action" model="ir.actions.act_window">
+        <field name="name">Avisos por WhatsApp</field>
+        <field name="res_model">visar.wa.message</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_visar_wa_not_delivered': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Sin avisos por WhatsApp</p>
+            <p>
+                Aquí quedan los avisos que la app de campo manda al cliente
+                (técnico en camino, técnico llegó, reagendar). El filtro abre en
+                <b>No entregados</b>: esos son los clientes a los que hay que llamar.
+            </p>
+        </field>
+    </record>
+
+</odoo>

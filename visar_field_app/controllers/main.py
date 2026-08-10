@@ -1858,8 +1858,8 @@ class VisarFieldApp(http.Controller):
                 task.visar_enroute_at = fields.Datetime.now()
                 eta = task._visar_enroute_eta_minutes(post.get('lat'), post.get('lng'))
                 task.visar_enroute_eta_minutes = eta
-                task._visar_notify_client(
-                    task._visar_msg_enroute(eta, employee), event='enroute')
+                text, params = task._visar_msg_enroute(eta, employee)
+                task._visar_notify_client(text, event='enroute', params=params)
             task._visar_set_stage(1)  # En camino
         elif action == 'arrived':
             # La espera arranca AUTOMÁTICamente al llegar (antes era un botón manual):
@@ -1870,8 +1870,8 @@ class VisarFieldApp(http.Controller):
                 minutes = self._default_waiting_minutes()
                 task.visar_waiting_minutes = minutes
                 task.visar_waiting_start = fields.Datetime.now()
-                task._visar_notify_client(
-                    task._visar_msg_arrived(minutes, employee), event='arrived')
+                text, params = task._visar_msg_arrived(minutes, employee)
+                task._visar_notify_client(text, event='arrived', params=params)
             task._visar_set_stage(2)  # llegada → directo a En ejecución (etapa FSM)
         elif action == 'start':
             # Registra cuánto se esperó al cliente (de la llegada/espera hasta ahora).

@@ -376,6 +376,9 @@ class ProjectTask(models.Model):
         actividad para gestión (si hay a quién) y SIEMPRE una nota en el chatter.
         No reagenda el calendario (eso lo hace gestión en el backend)."""
         self.ensure_one()
+        # Doble pulsación: si ya se marcó, no se vuelve a avisar al cliente (el
+        # aviso ya está en la cola o entregado).
+        already_flagged = bool(self.visar_reschedule_requested_at)
         self.visar_reschedule_requested_by_id = employee.id
         self.visar_reschedule_requested_at = fields.Datetime.now()
         self._visar_set_stage(4)
@@ -390,6 +393,11 @@ class ProjectTask(models.Model):
                 summary="Reagendar servicio — cliente no llegó",
                 note=body)
         self.message_post(body=body)
+        # Cerrar el bucle con el cliente: se fue sin servicio y hay que decirle que
+        # se le va a contactar. No promete fecha — reagendar es trabajo de gestión.
+        if not already_flagged:
+            text, params = self._visar_msg_reschedule(employee)
+            self._visar_notify_client(text, event='reschedule', params=params)
 
     # ==================================================================
     # Reporte PDF desde el backend (mismo que ve el técnico al cerrar)
@@ -612,37 +620,77 @@ class ProjectTask(models.Model):
             ) % (who, display or '—', detail or 'sin detalle')
         self.message_post(body=body, subtype_xmlid='mail.mt_note')
 
-    def _visar_notify_client(self, body, event=''):
+    def _visar_notify_client(self, body, event='', params=None):
         """Único punto de envío de avisos al cliente.
 
-        **Hoy es una SIMULACIÓN:** deja una nota interna en el chatter etiquetada con
-        el número destino, para tener la lógica y el registro. **Cuando se conecte
-        WhatsApp, solo cambia este método** (crear `whatsapp.message` desde una
-        `whatsapp.template` aprobada); los disparadores y los textos no se tocan.
+        **Ya no es simulación:** encola el aviso en `visar.wa.message` (lo manda el
+        cron, ver ese modelo) y deja SIEMPRE la nota en el chatter con el texto — el
+        registro para oficina no depende de que WhatsApp funcione.
+
+        No bloquea ni lanza: es efecto secundario de un cambio de etapa, así que un
+        WhatsApp caído no puede tumbar la transición del técnico. Sin `event`
+        (o sin teléfono) se queda solo en nota, como antes.
         """
         self.ensure_one()
-        display, _e164 = self._visar_client_phone()
-        target = ("→ %s" % display) if display else "— sin número en el contacto"
-        label = "📱 <b>[Simulación WhatsApp %s]</b>" % target
+        display, e164 = self._visar_client_phone()
+        queued = self.env['visar.wa.message'].browse()
+        if event and e164:
+            queued = self.env['visar.wa.message']._visar_enqueue(
+                self, event, params or [], body)
+        if not e164:
+            target = "— sin número en el contacto"
+        elif queued:
+            target = "→ %s (en cola)" % display
+        else:
+            # `event` vacío: aviso solo-registro, no hay envío que encolar.
+            target = "→ %s (solo registro)" % display
+        label = "📱 <b>[WhatsApp %s]</b>" % target
         self.message_post(
             body=Markup("%s<br/>%s") % (Markup(label), body),
             subtype_xmlid='mail.mt_note')
+        return queued
 
+    # Los textos siguen viviendo aquí aunque el envío en producción use plantillas
+    # APROBADAS de Meta (donde la redacción vive en el registro de plantillas, con
+    # `{{1}}`/`{{2}}`): este texto es el que se registra en el chatter y el que se
+    # manda mientras no haya plantilla. Cada builder devuelve `(texto, params)` y los
+    # params van EN EL MISMO ORDEN que los placeholders de la plantilla aprobada.
     @staticmethod
     def _visar_msg_enroute(eta_minutes, employee=None):
-        """Texto (cliente) del aviso 'técnico en camino'."""
+        """`(texto, params)` del aviso 'técnico en camino'. Plantilla: {{1}}=técnico,
+        {{2}}=minutos."""
+        name = (employee.name if employee else '') or "asignado"
         tech = (" %s" % employee.name) if employee and employee.name else ""
-        return ("Hola, le saluda Visar. Su técnico%s va en camino y llegará en "
+        text = ("Hola, le saluda Visar. Su técnico%s va en camino y llegará en "
                 "aproximadamente %s minutos. Por favor esté disponible para "
                 "recibirlo." % (tech, eta_minutes))
+        return text, [name, eta_minutes]
 
     @staticmethod
     def _visar_msg_arrived(waiting_minutes, employee=None):
-        """Texto (cliente) del aviso 'técnico llegó' + ventana de espera."""
+        """`(texto, params)` del aviso 'técnico llegó' + ventana de espera.
+        Plantilla: {{1}}=técnico, {{2}}=minutos."""
+        name = (employee.name if employee else '') or "asignado"
         tech = (" %s" % employee.name) if employee and employee.name else ""
-        return ("Su técnico%s ya llegó a su domicilio. Cuenta con %s minutos para "
+        text = ("Su técnico%s ya llegó a su domicilio. Cuenta con %s minutos para "
                 "recibirlo; de lo contrario la cita se cancelará y deberá "
                 "reagendarse." % (tech, waiting_minutes))
+        return text, [name, waiting_minutes]
+
+    @staticmethod
+    def _visar_msg_reschedule(employee=None):
+        """`(texto, params)` del aviso 'no se pudo realizar, se reagenda'.
+        Plantilla: {{1}}=técnico.
+
+        No promete una fecha: reagendar lo hace gestión en el backend (ver
+        `_visar_flag_reschedule`), así que el aviso solo cierra el bucle con el
+        cliente y anuncia el contacto."""
+        name = (employee.name if employee else '') or "asignado"
+        tech = (" %s" % employee.name) if employee and employee.name else ""
+        text = ("Hola, le saluda Visar. Su técnico%s acudió a su domicilio pero no "
+                "fue posible realizar el servicio. Nos pondremos en contacto con "
+                "usted para reagendar su cita." % tech)
+        return text, [name]
 
     def _visar_enroute_eta_minutes(self, tech_lat=None, tech_lng=None):
         """Minutos estimados de traslado del técnico al domicilio de servicio.

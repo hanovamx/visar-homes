@@ -8,3 +8,4 @@ from . import sale_order
 from . import project_task
 from . import ir_attachment
 from . import report_worksheet
+from . import wa_outbox

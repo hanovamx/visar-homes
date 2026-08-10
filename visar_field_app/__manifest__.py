@@ -20,7 +20,7 @@ citas), sin tocar el frontend OWL nativo.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.17.0',
+    'version': '19.0.1.18.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_fsm',
@@ -38,6 +38,8 @@ citas), sin tocar el frontend OWL nativo.
         'views/product_template_views.xml',
         'views/project_task_views.xml',
         'views/field_session_views.xml',
+        'views/wa_outbox_views.xml',
+        'data/wa_outbox_cron.xml',
         'views/menus.xml',
         'views/geolocalize_action.xml',
         'report/worksheet_report_templates.xml',

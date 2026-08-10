@@ -3,3 +3,5 @@ access_visar_field_session_user,visar.field.session user,model_visar_field_sessi
 access_visar_field_session_hr,visar.field.session hr,model_visar_field_session,hr.group_hr_user,1,1,1,1
 access_visar_field_route_order_user,visar.field.route.order user,model_visar_field_route_order,base.group_user,1,0,0,0
 access_visar_field_route_order_hr,visar.field.route.order hr,model_visar_field_route_order,hr.group_hr_user,1,1,1,1
+access_visar_wa_message_user,visar.wa.message user,model_visar_wa_message,base.group_user,1,0,0,0
+access_visar_wa_message_hr,visar.wa.message hr,model_visar_wa_message,hr.group_hr_user,1,1,1,1

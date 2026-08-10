@@ -135,8 +135,18 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
       **Reporte firmado por WhatsApp** desde la app: Odoo renderiza el PDF y el runtime
       (`visar_fastapi`, `POST /internal/send-report` por loopback) lo entrega con pywa — primer
       camino Odoo → runtime. Ver `25-field-app.md`.
-      Pendiente: verificar en **teléfono real** y **extremo a extremo con Meta** (requiere plantilla
-      aprobada con cabecera DOCUMENT: fuera de la ventana de 24 h el mensaje libre no se entrega).
+      **10-ago-2026 (v19.0.1.18.0):** los avisos al cliente (**en camino / llegó / reagendar**)
+      dejan de ser simulación: se encolan en `visar.wa.message` y los manda un cron (disparado al
+      encolar, con **caducidad por tipo** — un aviso viejo no se manda tarde) contra
+      `/internal/send-notification`. Vista de oficina "Avisos por WhatsApp" filtrada por
+      *No entregados*. Ver `25-field-app.md`.
+- [x] **Reporte por WhatsApp funcionando en el servidor** (modo libre, dentro de la ventana de 24 h).
+- [ ] **Plantillas de Meta aprobadas** — prerrequisito de negocio, bloquea el uso real:
+      `WA_REPORT_TEMPLATE` (cabecera DOCUMENT) y las tres de aviso (`WA_TEMPLATE_ENROUTE`,
+      `_ARRIVED`, `_RESCHEDULE`). Los **avisos no tienen camino libre viable**: van siempre a un
+      cliente que agendó por la web y nunca escribió, así que están siempre fuera de la ventana —
+      hasta la aprobación se encolan, dan 502 y caducan (visible en el buzón y en el chatter).
+- [ ] Verificar la **cámara en teléfono real** (iOS no debe ofrecer la fototeca).
 - [ ] Reporte dual interno vs cliente.
 - [ ] Cross-link explícito cita ↔ tarea en agenda (hoy vía SO compartida + `visar_sale_order_id` en tarea).
 - [ ] E2E: confirmar pago → verificar N tareas FSM correctas en UI técnico.
