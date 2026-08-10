@@ -13,6 +13,8 @@ from odoo import fields, http
 from odoo.http import request
 from odoo.tools import html2plaintext, plaintext2html
 
+from ..hooks import AREAS_FIJAS, FUM_LINE
+
 _logger = logging.getLogger(__name__)
 
 # Claves de sesión HTTP que identifican al técnico en el dispositivo.
@@ -47,6 +49,15 @@ WORKSHEET_SKIP_NAME_HINTS = ('nombre_de_quien_firma',)
 # Tipos de campo de LÍNEA (subficha one2many) que la app no captura en tarjetas.
 # Binary (foto por tarjeta) y many2many (grupo de casillas) SÍ se soportan.
 LINE_SKIP_TYPES = ('one2many',)
+# Línea "fija": tarjeta que la hoja trae de nacimiento y el técnico no puede
+# eliminar (áreas de inspección obligatoria). El campo no va en el arch — es
+# contabilidad interna — así que se lee del modelo, no del descriptor.
+LINE_FIXED_FLAG = 'x_fija'
+# Campo que da título a una tarjeta fija (su valor ya está decidido al sembrarla).
+LINE_FIXED_TITLE_FIELD = 'x_area'
+# Áreas de inspección obligatoria por modelo de línea. El catálogo vive en
+# `hooks.py` (fuente de verdad de la plantilla) y aquí solo se mapea al modelo.
+LINE_FIXED_AREAS = {FUM_LINE: AREAS_FIJAS}
 # Prefijos de los inputs de las tarjetas one2many (una sola submission).
 #   o2mline~{campo_o2m}~{fila}~{campo_linea} = valor
 #   o2mline~{campo_o2m}~{fila}~id            = id de la línea existente (o vacío)
@@ -72,8 +83,6 @@ UPSELL_QR_PX = 320
 #    Los companion "Especifique cuál otro" NO van aquí: son obligatorios cuando se
 #    muestran, y eso se deriva de su propia condición de visibilidad (`conditional`).
 WORKSHEET_REQUIRED_IF = {
-    # Fumigación (línea): foto de evidencia si el área tiene infestación activa.
-    'x_foto_evidencia': ('x_infestacion_activa', 'truthy', ''),
     # Áreas verdes: foto y número de bolsas si se embolsaron residuos.
     'x_foto_bolsas': ('x_residuos_embolsados', 'truthy', ''),
     'x_num_bolsas': ('x_residuos_embolsados', 'truthy', ''),
@@ -81,6 +90,49 @@ WORKSHEET_REQUIRED_IF = {
 # 2. Subfichas one2many que exigen AL MENOS UNA línea (el arch no tiene forma de
 #    declarar "min 1" en un o2m). Nombres únicos entre las tres plantillas.
 WORKSHEET_MIN_ONE = {'x_areas_tratadas', 'x_labores', 'x_zonas_evidencia'}
+
+# 3. Campos que dejan de ser obligatorios cuando un disparador está puesto, POR
+#    LÍNEA COMPLETA: `{modelo_de_línea: campo_disparador}`. Todo campo de esa
+#    tarjeta (salvo el disparador mismo) deja de exigirse. Se declara por modelo y
+#    no campo-por-campo para que agregar un campo a la tarjeta quede cubierto solo.
+WORKSHEET_REQUIRED_UNLESS_LINE = {
+    # "Cliente NO permitió que se fumigara en esta área": el área es obligatoria,
+    # pero si no se dejó tratar no se le puede exigir foto, plaga ni plaguicida.
+    'x_visar_area_tratada_v2': 'x_cliente_no_permitio',
+}
+
+# ------------------------------------------------------------------
+# Visibilidad condicional DECLARADA
+# ------------------------------------------------------------------
+# Además de la convención `{base}_otro` (ver `_otro_conditional`), un campo puede
+# declarar aquí su condición de visibilidad: `{campo: (controlador, kind, trigger)}`.
+#   - kind='truthy'     → el controlador (casilla) marcado. `trigger` se ignora.
+#   - kind='many2many'  → `trigger` es el NOMBRE de la etiqueta que debe estar
+#                         marcada (se resuelve a id al renderizar, porque el id
+#                         cambia entre BDs y no se puede hardcodear).
+#   - kind='selection'  → `trigger` es el valor de la opción.
+# Un campo oculto por su condición NO es obligatorio (ni en cliente ni en
+# servidor), aunque el arch lo marque `required="1"`.
+WORKSHEET_CONDITIONAL = {
+    # Fumigación (línea): el bloque de plaga cuelga de "¿presencia activa?".
+    'x_foto_evidencia': ('x_infestacion_activa', 'truthy', ''),
+    'x_plaga_ids': ('x_infestacion_activa', 'truthy', ''),
+    # Taxonomía de 2 niveles: cada lista de especies cuelga de su categoría.
+    'x_plaga_rastreros_ids': ('x_plaga_ids', 'many2many', "Rastreros"),
+    'x_plaga_voladores_ids': ('x_plaga_ids', 'many2many', "Voladores"),
+    'x_plaga_roedores_ids': ('x_plaga_ids', 'many2many', "Roedores"),
+    'x_plaga_otras_ids': ('x_plaga_ids', 'many2many', "Otras plagas"),
+    # Se declara EXPLÍCITAMENTE (no por convención `_otro`): la convención busca la
+    # etiqueta que empieza con "otro" y aquí hay dos candidatas ("Otras plagas" y
+    # "Otra plaga no en las opciones") — elegiría la equivocada.
+    'x_plaga_ids_otro': ('x_plaga_ids', 'many2many', "Otra plaga no en las opciones"),
+}
+# Campos que se pintan indentados bajo el campo que los controla (jerarquía
+# visual de la taxonomía). Puramente cosmético.
+WORKSHEET_NESTED = set(WORKSHEET_CONDITIONAL) & {
+    'x_plaga_rastreros_ids', 'x_plaga_voladores_ids',
+    'x_plaga_roedores_ids', 'x_plaga_otras_ids',
+}
 
 
 class VisarFieldApp(http.Controller):
@@ -505,7 +557,50 @@ class VisarFieldApp(http.Controller):
             [(WORKSHEET_LINK, '=', task.id)], limit=1, order='create_date desc')
         if not record and create:
             record = Model.create({WORKSHEET_LINK: task.id})
+        # Solo se siembra cuando el llamador va a ESCRIBIR: las rutas de lectura
+        # (servir una foto, pintar una hoja cerrada) no deben mutar la hoja.
+        if record and create:
+            self._seed_fixed_lines(record)
         return record
+
+    def _seed_fixed_lines(self, record):
+        """Siembra las tarjetas de área OBLIGATORIA que falten en esta hoja.
+
+        Idempotente y por VALOR de área, no por conteo: si el técnico ya llenó
+        "Cocina" no se duplica, y si el catálogo gana un área obligatoria mañana,
+        las hojas ya abiertas la reciben al siguiente render. Solo se siembra sobre
+        subfichas cuyo modelo de línea tenga la marca `x_fija` (hoy, Fumigación).
+        """
+        for name, field in record._fields.items():
+            if field.type != 'one2many':
+                continue
+            fixed_areas = LINE_FIXED_AREAS.get(field.comodel_name)
+            if not fixed_areas:
+                continue
+            LineModel = request.env[field.comodel_name].sudo()
+            if LINE_FIXED_FLAG not in LineModel._fields:
+                continue  # BD sin re-sembrar todavía: se degrada a solo dinámicas
+            present = set(record[name].filtered(
+                lambda l: l[LINE_FIXED_FLAG]).mapped(LINE_FIXED_TITLE_FIELD))
+            missing = [a for a in fixed_areas if a not in present]
+            if not missing:
+                continue
+            fk = self._o2m_fk_name(LineModel, record)
+            if not fk:
+                continue
+            has_x_name = 'x_name' in LineModel._fields
+            for index, area in enumerate(fixed_areas):
+                if area not in missing:
+                    continue
+                vals = {fk: record.id, LINE_FIXED_TITLE_FIELD: area,
+                        LINE_FIXED_FLAG: True}
+                # Secuencia negativa: las fijas quedan antes de cualquier área
+                # que el técnico agregue (y el orden entre ellas es el del catálogo).
+                if 'x_sequence' in LineModel._fields:
+                    vals['x_sequence'] = index - len(fixed_areas)
+                if has_x_name:
+                    vals['x_name'] = area
+                LineModel.create(vals)
 
     # ==================================================================
     # Galerías de fotos por campo (adjuntos etiquetados con visar_photo_key)
@@ -631,6 +726,11 @@ class VisarFieldApp(http.Controller):
             # Obligatoriedad condicional: None, o {'controller','kind','value'}.
             # El campo es obligatorio solo cuando la condición se cumple.
             'required_if': None,
+            # Dispensa: si la condición se cumple, el campo NO es obligatorio
+            # aunque `required`/`required_if` digan que sí.
+            'required_unless': None,
+            # Cosmético: se pinta indentado bajo el campo que lo controla.
+            'nested': name in WORKSHEET_NESTED,
             'value': value,
             'options': [],
             'value_id': False,
@@ -638,6 +738,8 @@ class VisarFieldApp(http.Controller):
             'has_file': False,
             'photos': [],
             'conditional': None,
+            # Condición propia + las de los ancestros (ver `_conditional_chain`).
+            'conditional_chain': [],
         }
         if ftype == 'many2one' and info.get('relation'):
             comodel = request.env[info['relation']].sudo()
@@ -656,14 +758,60 @@ class VisarFieldApp(http.Controller):
             desc['value'] = html2plaintext(value) if value else ''
         return desc
 
-    def _otro_conditional(self, name, meta):
-        """Si `name` es un companion `{base}_otro`, devuelve la condición que lo
-        muestra (cuando el campo base tiene 'Otro'/'Otros' elegido); si no, None.
+    def _declared_conditional(self, name, meta):
+        """Condición de visibilidad DECLARADA en `WORKSHEET_CONDITIONAL`, o None.
 
-        Funciona con selección simple (valor = opción 'Otro') y múltiple/m2m
-        (trigger = id de la etiqueta 'Otro'). Convención: el companion va justo
-        después de su campo base en la plantilla y se llama `{base}_otro`.
+        Tiene prioridad sobre la convención `{base}_otro`. Para `many2many` el
+        trigger se declara por NOMBRE de etiqueta y se resuelve al id vigente en
+        esta BD (los ids de los catálogos no son estables entre BDs).
         """
+        rule = WORKSHEET_CONDITIONAL.get(name)
+        if not rule:
+            return None
+        controller, kind, trigger = rule
+        info = meta.get(controller)
+        if not info:
+            return None
+        if kind == 'many2many':
+            if not info.get('relation'):
+                return None
+            tag = request.env[info['relation']].sudo().search(
+                [('x_name', '=', trigger)], limit=1)
+            if not tag:
+                _logger.warning(
+                    "Condicional de %s: no existe la etiqueta %r en %s",
+                    name, trigger, info['relation'])
+                return None
+            trigger = str(tag.id)
+        return {'controller': controller, 'kind': kind, 'trigger': trigger}
+
+    def _conditional_chain(self, name, meta, _depth=0):
+        """Condiciones que deben cumplirse TODAS para que el campo se vea: la suya
+        y las de sus ancestros.
+
+        La taxonomía de plagas anida dos niveles (especies → categoría → "¿presencia
+        activa?"), así que mirar solo la condición propia no basta: un POST viejo
+        podría traer la categoría marcada con la casilla de presencia apagada y el
+        servidor exigiría un campo que el técnico no vio. El cliente resuelve lo
+        mismo por la cascada del DOM (ver `evalCondFields`).
+        """
+        cond = self._otro_conditional(name, meta)
+        if not cond or _depth >= 5:  # tope: protege de una declaración circular
+            return [cond] if cond else []
+        return [cond] + self._conditional_chain(
+            cond['controller'], meta, _depth + 1)
+
+    def _otro_conditional(self, name, meta):
+        """Condición de visibilidad de un campo, o None si siempre se ve.
+
+        Primero la declaración explícita (`WORKSHEET_CONDITIONAL`); si no hay,
+        la convención `{base}_otro`: el companion se muestra cuando el campo base
+        tiene 'Otro'/'Otros' elegido. Funciona con selección simple (valor =
+        opción 'Otro') y múltiple/m2m (trigger = id de la etiqueta 'Otro').
+        """
+        declared = self._declared_conditional(name, meta)
+        if declared:
+            return declared
         if not name.endswith('_otro'):
             return None
         base = name[:-5]
@@ -760,6 +908,17 @@ class VisarFieldApp(http.Controller):
                     rows.extend([x] for x in pair)
         return rows
 
+    @staticmethod
+    def _line_fixed_title(line, line_meta):
+        """Etiqueta legible del área de una tarjeta fija (para el encabezado)."""
+        info = line_meta.get(LINE_FIXED_TITLE_FIELD)
+        if not info:
+            return ''
+        value = line[LINE_FIXED_TITLE_FIELD]
+        if info['type'] == 'selection':
+            return dict(info.get('selection') or []).get(value, value or '')
+        return value or ''
+
     def _o2m_descriptor(self, Model, info, name, record, o2m_help=''):
         """Descriptor de una subficha one2many (tarjetas dinámicas)."""
         relation = info.get('relation')
@@ -777,12 +936,24 @@ class VisarFieldApp(http.Controller):
             (n for n in line_meta if n.endswith('_sequence')
              and line_meta[n]['type'] == 'integer'), None)
 
+        # Disparador de dispensa de esta tarjeta ("cliente no permitió…"): exime a
+        # TODOS los campos de la línea menos a sí mismo.
+        unless_field = WORKSHEET_REQUIRED_UNLESS_LINE.get(relation)
+        if unless_field and unless_field not in line_meta:
+            unless_field = None
+
         def mk(n, h, req, rec_line):
             d = self._scalar_descriptor(
                 line_meta[n], n, (rec_line[n] if rec_line else False), h,
                 required=req)
-            d['conditional'] = self._otro_conditional(n, line_meta)
+            d['conditional_chain'] = self._conditional_chain(n, line_meta)
+            d['conditional'] = d['conditional_chain'][0] if d['conditional_chain'] else None
             d['required_if'] = self._required_if(n, d['conditional'])
+            # El campo que IDENTIFICA la tarjeta (el área) nunca se dispensa: sin él
+            # quedaría una tarjeta anónima. Se exime todo lo demás.
+            if unless_field and n not in (unless_field, LINE_FIXED_TITLE_FIELD):
+                d['required_unless'] = {
+                    'controller': unless_field, 'kind': 'truthy', 'trigger': ''}
             if d['type'] == 'binary':
                 d['photos'] = (self._field_photo_ids(relation, rec_line.id, n)
                                if rec_line else [])
@@ -793,13 +964,27 @@ class VisarFieldApp(http.Controller):
             return [[mk(n, h, req, rec_line) for (n, h, req) in row]
                     for row in line_rows]
 
+        # Áreas obligatorias: tarjetas que la hoja trae de nacimiento, no se pueden
+        # eliminar y van SIEMPRE primero (el técnico las recorre en orden).
+        has_fixed = LINE_FIXED_FLAG in line_meta
         lines = []
         if record:
             existing = record[name]
             if seq_field:
                 existing = existing.sorted(lambda l: l[seq_field])
+            if has_fixed:
+                existing = existing.sorted(
+                    lambda l: not l[LINE_FIXED_FLAG])  # fijas primero (estable)
             for line in existing:
-                lines.append({'id': line.id, 'rows': build_rows(line)})
+                fixed = bool(has_fixed and line[LINE_FIXED_FLAG])
+                lines.append({
+                    'id': line.id,
+                    'rows': build_rows(line),
+                    'fixed': fixed,
+                    # Título de la tarjeta fija: el área ya está decidida, así que se
+                    # muestra como encabezado y su campo se emite oculto (ver plantilla).
+                    'title': self._line_fixed_title(line, line_meta) if fixed else '',
+                })
         return {
             'name': name,
             'type': 'one2many',
@@ -812,10 +997,16 @@ class VisarFieldApp(http.Controller):
             'blank_rows': build_rows(None),
             'lines': lines,
             'conditional': None,
+            'conditional_chain': [],
             'required': False,
             'required_if': None,
+            'required_unless': None,
+            'nested': False,
             # Exige al menos una línea (Req 7). El arch no puede declararlo.
             'min_one': name in WORKSHEET_MIN_ONE,
+            # Campo que en las tarjetas FIJAS se pinta como título en vez de como
+            # control editable (su valor ya está decidido; va en un hidden).
+            'fixed_title_field': LINE_FIXED_TITLE_FIELD if has_fixed else '',
         }
 
     def _worksheet_descriptors(self, task, record):
@@ -849,7 +1040,9 @@ class VisarFieldApp(http.Controller):
                 sdesc = self._scalar_descriptor(
                     info, name, record[name] if record else False, help_text,
                     required=node_req)
-                sdesc['conditional'] = self._otro_conditional(name, meta)
+                sdesc['conditional_chain'] = self._conditional_chain(name, meta)
+                sdesc['conditional'] = (sdesc['conditional_chain'][0]
+                                        if sdesc['conditional_chain'] else None)
                 sdesc['required_if'] = self._required_if(name, sdesc['conditional'])
                 if sdesc['type'] == 'binary':
                     # Galería viva sobre la tarea (existe siempre), etiquetada por campo.
@@ -901,11 +1094,28 @@ class VisarFieldApp(http.Controller):
         return str(get_value(ctrl) or '') == trigger  # selection
 
     def _field_is_required_now(self, desc, get_value, get_list):
-        """¿El campo es obligatorio en el estado ACTUAL del formulario?"""
+        """¿El campo es obligatorio en el estado ACTUAL del formulario?
+
+        Orden de resolución (el mismo que aplica el cliente):
+          1. **Oculto por su condición → nunca obligatorio.** Un campo condicional
+             puede traer `required="1"` del arch (así se exige cuando SÍ se muestra),
+             así que sin este corte el servidor exigiría campos que el técnico no
+             llegó a ver.
+          2. **Dispensa por línea** (`required_unless`): p. ej. el cliente no dejó
+             tratar el área.
+          3. Obligatorio siempre (`required`) o por disparador (`required_if`).
+        """
+        chain = desc.get('conditional_chain') or (
+            [desc['conditional']] if desc.get('conditional') else [])
+        if any(not self._cond_met(c, get_value, get_list) for c in chain):
+            return False
+        unless = desc.get('required_unless')
+        if unless and self._cond_met(unless, get_value, get_list):
+            return False
         if desc.get('required'):
             return True
-        cond = desc.get('required_if')
-        return bool(cond) and self._cond_met(cond, get_value, get_list)
+        cond_if = desc.get('required_if')
+        return bool(cond_if) and self._cond_met(cond_if, get_value, get_list)
 
     def _main_field_empty(self, task, desc, post, form, files):
         """¿Un campo principal obligatorio quedó vacío?"""
@@ -1131,6 +1341,10 @@ class VisarFieldApp(http.Controller):
         # están en valid_ids, así que nunca se borran por error). Se limpian también
         # sus adjuntos-foto (no hay cascade automático de ir.attachment).
         stale = LineModel.browse(list(valid_ids - submitted_ids)).exists()
+        # Las áreas OBLIGATORIAS no se borran nunca, ni por un POST manipulado que
+        # omita su fila: la plantilla ni siquiera les pinta "Eliminar".
+        if stale and LINE_FIXED_FLAG in LineModel._fields:
+            stale = stale.filtered(lambda l: not l[LINE_FIXED_FLAG])
         if stale:
             self._unlink_line_photos(stale, binary_fields)
             stale.unlink()
@@ -1324,14 +1538,21 @@ class VisarFieldApp(http.Controller):
         if not task:
             return request.redirect('/visar/field/tasks')
 
-        # Las fotos ya no son una sección general: cada campo-foto de la hoja de
-        # trabajo trae su propia galería (descriptores con clave 'photos').
-        worksheet = self._worksheet_record(task)
         # Minutos de espera: el valor elegido por el técnico en la tarea; si no ha
         # elegido (0), el parámetro global.
         waiting_minutes = task.visar_waiting_minutes or self._default_waiting_minutes()
         flow_state = self._task_flow_state(task)
         worksheet_available = self._worksheet_available(flow_state)
+        # Las fotos ya no son una sección general: cada campo-foto de la hoja de
+        # trabajo trae su propia galería (descriptores con clave 'photos').
+        #
+        # `create` solo cuando la hoja se va a poder CAPTURAR: crear el registro es
+        # lo que permite sembrar las tarjetas de área obligatoria con id propio (y
+        # así ordenarlas y protegerlas de borrado). En una hoja de solo lectura
+        # —servicio cerrado, o aún no comenzado— no se toca nada.
+        worksheet_editable = (worksheet_available
+                              and not self._worksheet_locked(task, flow_state))
+        worksheet = self._worksheet_record(task, create=worksheet_editable)
         values = self._upsell_render_values(task)
         values.update({
             'employee': employee,

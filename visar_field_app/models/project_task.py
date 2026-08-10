@@ -23,7 +23,13 @@ except Exception:  # noqa: BLE001
 from odoo import api, fields, models
 from odoo.tools import formatLang, html2plaintext
 
-from ..hooks import FUMIGACION_NAME, JARDINERIA_NAME, VISITA_NAME
+from ..hooks import (
+    FUMIGACION_NAME,
+    JARDINERIA_NAME,
+    PLAGA_ESPECIES,
+    PLAGA_OTRO,
+    VISITA_NAME,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1092,6 +1098,9 @@ class ProjectTask(models.Model):
         return {
             'label': label, 'help': help_text, 'kind': 'table',
             'columns': [lbl for (_n, lbl, _t, _i) in columns],
+            # Nombres técnicos en el mismo orden que `columns`: permite a una maqueta
+            # dedicada reescribir UNA columna sin casar por etiqueta (que se renombra).
+            'field_names': [n for (n, _lbl, _t, _i) in columns],
             'rows': rows,
         }
 
@@ -1332,12 +1341,9 @@ class ProjectTask(models.Model):
             ]})
 
         # (5) Áreas tratadas — subficha one2many como tabla (columnas de la vista).
-        info = self.env[record._name].sudo().fields_get(['x_areas_tratadas']).get('x_areas_tratadas')
-        if info:
-            table = self._visar_ws_table_descriptor(
-                'x_areas_tratadas', info, '', '', record)
-            if table:
-                sections.append({'title': "Áreas tratadas", 'fields': [table]})
+        table = self._visar_fumigacion_areas_table(record)
+        if table:
+            sections.append({'title': "Áreas tratadas", 'fields': [table]})
 
         # (6) Evidencia — galerías inicial / durante / final.
         evidence = self._visar_report_evidence_section(record)
@@ -1350,6 +1356,52 @@ class ProjectTask(models.Model):
             sections.append(plaguicidas)
 
         return sections
+
+    def _visar_fumigacion_areas_table(self, record):
+        """Tabla de "Áreas tratadas" con la taxonomía de plaga ya condensada.
+
+        La tabla genérica saca una columna por `<field>` de la sublista. Las cuatro
+        listas de especies no caben ahí (el PDF del cliente es vertical y la tabla
+        ya lleva 8 columnas), así que NO van en la sublista y en su lugar se
+        reescribe la celda de "Tipo de plaga" con `Categoría (especie, especie)`.
+        """
+        info = self.env[record._name].sudo().fields_get(
+            ['x_areas_tratadas']).get('x_areas_tratadas')
+        if not info:
+            return None
+        table = self._visar_ws_table_descriptor(
+            'x_areas_tratadas', info, '', '', record)
+        if not table:
+            return None
+        try:
+            col = table['field_names'].index('x_plaga_ids')
+        except ValueError:
+            return table  # la sublista ya no trae la columna: nada que reescribir
+        for line, cells in zip(record['x_areas_tratadas'], table['rows']):
+            cells[col] = {'kind': 'scalar',
+                          'text': self._visar_fumigacion_plaga_text(line)}
+        return table
+
+    @staticmethod
+    def _visar_fumigacion_plaga_text(line):
+        """"Rastreros (Cucarachas, Arañas); Otras plagas (Termitas)" para una línea.
+
+        La categoría sin especies marcadas sale sola; la escotilla "Otra plaga no
+        en las opciones" se sustituye por el texto que escribió el técnico (si no,
+        el reporte diría literalmente "otra plaga" y no cuál)."""
+        parts = []
+        for categoria in line.x_plaga_ids:
+            nombre = categoria.x_name or ''
+            if nombre == PLAGA_OTRO:
+                parts.append(line.x_plaga_ids_otro or nombre)
+                continue
+            especies = []
+            for fname, _tm, cat_name, _lbl, _esp in PLAGA_ESPECIES:
+                if cat_name == nombre and fname in line._fields:
+                    especies = [e for e in line[fname].mapped('x_name') if e]
+            parts.append("%s (%s)" % (nombre, ", ".join(especies))
+                         if especies else nombre)
+        return "; ".join(p for p in parts if p)
 
     # ==================================================================
     # Reporte PDF — maqueta "Mantenimiento de áreas verdes" (jardinería)

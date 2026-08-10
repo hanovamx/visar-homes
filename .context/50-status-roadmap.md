@@ -124,7 +124,13 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
       min-uno (cliente rojo+bloqueo y servidor) — **cierra I-05**; traza de botones (Llamar/WhatsApp/
       Maps) al chatter; lista **Hoy/Todos** + **ruta arrastrable**; icono de la app; PDF con **"Tiempo
       en sitio"** y **fotos** (fix de encoding + JPEG). Ver `25-field-app.md`.
-      Pendiente: **#2 fotos múltiples por campo** (galerías + quitar sección Fotos externa).
+      **10-ago-2026 (v19.0.1.16.0):** Fumigación reestructurada — **áreas obligatorias**
+      (Cocina/Baño/Área de basura, no borrables, con dispensa "cliente no permitió") y **taxonomía de
+      plagas de 2 niveles** (categoría → especies, indentadas) tras el gate "¿presencia activa?";
+      el sembrador ahora **converge catálogos** (`_sync_selection` / `_sync_tag_records`) y la
+      obligatoriedad respeta la visibilidad **también en servidor**. Ver `25-field-app.md`.
+      Pendiente de esa tanda: **cámara obligatoria sin galería** (widget `getUserMedia`) y
+      **envío del PDF firmado por WhatsApp** (endpoint saliente en `visar_fastapi`).
 - [ ] Reporte dual interno vs cliente.
 - [ ] Cross-link explícito cita ↔ tarea en agenda (hoy vía SO compartida + `visar_sale_order_id` en tarea).
 - [ ] E2E: confirmar pago → verificar N tareas FSM correctas en UI técnico.

@@ -30,7 +30,43 @@ FACTORES = [
     "Aberturas hacia el exterior", "Resumideros sin protección", "Puertas sin guardapolvo",
     "Alimento expuesto", "Saneamiento inadecuado", "Mantenimiento inadecuado del inmueble", "Otro",
 ]
-PLAGAS = ["Voladores", "Rastreros", "Roedores", "Termitas", "Polilla", "Chinches", "Otros"]
+# --- taxonomía de plagas (2 niveles) ---
+# Nivel 1 = CATEGORÍA (el m2m principal de cada área tratada). Nivel 2 = especie,
+# en un m2m companion por categoría que solo se muestra si su categoría está
+# marcada. Las categorías replican las del wizard de reserva
+# (`visar_appointment/views/wizard_templates.xml`, "¿Qué estás viendo en casa?")
+# para que lo que el cliente reporta al cotizar y lo que el técnico confirma en
+# campo hablen el mismo idioma.
+PLAGA_RASTREROS = "Rastreros"
+PLAGA_VOLADORES = "Voladores"
+PLAGA_ROEDORES = "Roedores"
+PLAGA_OTRAS = "Otras plagas"
+# Escotilla de salida. OJO: no puede empezar con "Otro"/"Otros" a secas —
+# `_otro_conditional` (convención de nombre) elegiría la etiqueta equivocada
+# entre esta y "Otras plagas"; por eso su condición se declara EXPLÍCITAMENTE en
+# `WORKSHEET_CONDITIONAL` (controllers/main.py) y no por convención.
+PLAGA_OTRO = "Otra plaga no en las opciones"
+PLAGAS = [PLAGA_RASTREROS, PLAGA_VOLADORES, PLAGA_ROEDORES, PLAGA_OTRAS, PLAGA_OTRO]
+
+# (campo companion, modelo-etiqueta, categoría que lo revela, etiqueta, especies)
+# Termitas / Chinches / Polilla viven como ESPECIES bajo "Otras plagas": en el
+# wizard aparecen solo como síntomas (madera dañada, picaduras en hilera), no
+# como categorías con especies propias.
+PLAGA_ESPECIES = [
+    ('x_plaga_rastreros_ids', 'x_visar_plaga_rastrero', PLAGA_RASTREROS,
+     "Rastreros — ¿cuáles?", ["Cucarachas", "Alacranes", "Hormigas", "Arañas"]),
+    ('x_plaga_voladores_ids', 'x_visar_plaga_volador', PLAGA_VOLADORES,
+     "Voladores — ¿cuáles?", ["Moscas", "Mosquitos o zancudos"]),
+    ('x_plaga_roedores_ids', 'x_visar_plaga_roedor', PLAGA_ROEDORES,
+     "Roedores — ¿cuáles?", ["Ratas", "Ratones"]),
+    ('x_plaga_otras_ids', 'x_visar_plaga_otra', PLAGA_OTRAS,
+     "Otras plagas — ¿cuáles?", ["Termitas", "Chinches de cama", "Polilla"]),
+]
+
+# Áreas que SIEMPRE se inspeccionan: la hoja nace con estas tres tarjetas, no se
+# pueden eliminar y sus campos son obligatorios (salvo que el cliente no haya
+# permitido tratarlas). El técnico agrega las demás con "+ Agregar".
+AREAS_FIJAS = ["Cocina", "Baño", "Área de basura"]
 NIVEL = ["Preventivo", "Moderado", "Alto"]
 AREAS = ["Cocina", "Baño", "Áreas comunes", "Sala", "Bodega", "Oficina", "Dormitorios",
          "Jardines", "Rampas", "Área de basura", "Bardas", "Otros"]
@@ -81,8 +117,9 @@ FUMIGACION_ARCH = """<form create="false" duplicate="false">
         <field name="x_areas_tratadas" help="Llene la información para cada área tratada.">
           <list>
             <field name="x_area"/>
-            <field name="x_plaga_ids" widget="many2many_tags"/>
+            <field name="x_cliente_no_permitio"/>
             <field name="x_infestacion_activa"/>
+            <field name="x_plaga_ids" widget="many2many_tags"/>
             <field name="x_plaguicida_nombre"/>
             <field name="x_plaguicida_dosis"/>
             <field name="x_trampa_monitoreo"/>
@@ -90,18 +127,23 @@ FUMIGACION_ARCH = """<form create="false" duplicate="false">
           </list>
           <form>
             <group>
+              <field name="x_cliente_no_permitio" help="Marca esto si no se pudo tratar el área. Al marcarlo, los demás campos de esta área dejan de ser obligatorios."/>
               <field name="x_area" required="1"/>
               <field name="x_area_otro"/>
-              <field name="x_plaga_ids" widget="many2many_tags" required="1" help="Alinea con las plagas reportadas al cotizar."/>
-              <field name="x_plaga_ids_otro"/>
               <field name="x_infestacion_activa"/>
+              <field name="x_foto_evidencia" widget="image" required="1" help="Evidencia de la plaga detectada en esta área."/>
+              <field name="x_plaga_ids" widget="many2many_tags" required="1" help="Alinea con las plagas reportadas al cotizar."/>
+              <field name="x_plaga_rastreros_ids" widget="many2many_tags" required="1"/>
+              <field name="x_plaga_voladores_ids" widget="many2many_tags" required="1"/>
+              <field name="x_plaga_roedores_ids" widget="many2many_tags" required="1"/>
+              <field name="x_plaga_otras_ids" widget="many2many_tags" required="1"/>
+              <field name="x_plaga_ids_otro"/>
               <group>
                 <field name="x_plaguicida_nombre" required="1" help="Si no aparece en la lista, selecciona 'Otro' y descríbelo."/>
                 <field name="x_plaguicida_dosis" placeholder="20"/>
               </group>
               <field name="x_plaguicida_nombre_otro"/>
               <field name="x_trampa_monitoreo"/>
-              <field name="x_foto_evidencia" widget="image" help="Obligatoria si el área quedó marcada como 'Aplicado'."/>
               <field name="x_accion_correctiva"/>
               <field name="x_accion_correctiva_otro"/>
             </group>
@@ -238,7 +280,13 @@ def _ensure_model(env, model_name, label, extra_fields):
                              'ttype': 'char', 'required': True})] + extra_fields})
 
 
-def _ensure_tag(env, model_name, label, records):
+def _ensure_tag(env, model_name, label, records, prune=False):
+    """Crea el modelo-etiqueta y **converge** su catálogo al de `records`.
+
+    Antes solo poblaba el catálogo cuando estaba vacío, así que agregar una opción
+    en este archivo no llegaba nunca a una BD donde el modelo ya existía (QA/prod).
+    Ahora siempre sincroniza: ver `_sync_tag_records`.
+    """
     Model = env['ir.model'].sudo()
     rec = Model.search([('model', '=', model_name)], limit=1)
     if not rec:
@@ -248,11 +296,69 @@ def _ensure_tag(env, model_name, label, records):
                                  'ttype': 'char', 'required': True})]})
         _acls(env, model_name, rec.id)
     env.cr.flush()
-    Tag = env[model_name].sudo()
-    if Tag.search_count([]) == 0:
-        for value in records:
-            Tag.create({'x_name': value})
+    _sync_tag_records(env, model_name, records, prune=prune)
     return rec
+
+
+def _sync_tag_records(env, model_name, records, prune=False):
+    """Converge el catálogo de un modelo-etiqueta al orden/contenido de `records`.
+
+    - **Agrega** las etiquetas que falten (por `x_name` exacto).
+    - **No toca** las que ya existen: su id vive en los m2m ya capturados.
+    - `prune=True` **borra** las que no estén en la lista canónica. Solo para
+      catálogos cuyo contenido manda el código (p. ej. la taxonomía de plagas al
+      reestructurarla). Borrar una etiqueta solo quita las filas de relación de
+      los m2m que la usaban; no rompe la línea que la referenciaba.
+    """
+    Tag = env[model_name].sudo()
+    existing = {t.x_name: t for t in Tag.search([])}
+    for value in records:
+        if value not in existing:
+            Tag.create({'x_name': value})
+    if prune:
+        stale = Tag.browse([t.id for name, t in existing.items()
+                            if name not in records])
+        if stale:
+            _logger.info("Catálogo %s: se retiran %s etiqueta(s) fuera del canon: %s",
+                         model_name, len(stale), stale.mapped('x_name'))
+            stale.unlink()
+
+
+def _sync_selection(env, model_name, field_name, options, prune=False):
+    """Converge las opciones de un campo `selection` YA existente.
+
+    `_ensure_field` no toca campos existentes y `_sel` solo corre al crearlos, así
+    que sin esto agregar una opción a un catálogo de este archivo no llegaba nunca
+    a una BD donde el campo ya existía. Agrega las que falten y reordena todas al
+    orden canónico; `prune=True` borra las que sobren.
+
+    Ojo: el `value` almacenado ES la cadena, así que **renombrar** una opción
+    huérfana los registros que la tenían — se agrega la nueva y (con `prune`) se
+    va la vieja, no hay mapeo posible. Cambiar redacciones es una migración de
+    datos aparte, no un cambio de catálogo.
+    """
+    field = env['ir.model.fields'].sudo().search(
+        [('model', '=', model_name), ('name', '=', field_name)], limit=1)
+    if not field or field.ttype != 'selection':
+        return
+    Sel = env['ir.model.fields.selection'].sudo()
+    existing = {s.value: s for s in Sel.search([('field_id', '=', field.id)])}
+    for index, value in enumerate(options):
+        sequence = index * 10
+        current = existing.get(value)
+        if current:
+            if current.sequence != sequence:
+                current.write({'sequence': sequence})
+        else:
+            Sel.create({'field_id': field.id, 'value': value, 'name': value,
+                        'sequence': sequence})
+    if prune:
+        stale = Sel.browse([s.id for value, s in existing.items()
+                            if value not in options])
+        if stale:
+            _logger.info("Selección %s.%s: se retiran %s opción(es) fuera del canon: %s",
+                         model_name, field_name, len(stale), stale.mapped('value'))
+            stale.unlink()
 
 
 def _ensure_field(env, model_name, model_id, name, ttype, string, **kw):
@@ -306,7 +412,12 @@ def _seed_fumigacion(env):
     ws, wid = tmpl.model_id.model, tmpl.model_id.id
 
     _ensure_tag(env, FACTOR_MODEL, "Factor de riesgo (Visar)", FACTORES)
-    _ensure_tag(env, PLAGA_MODEL, "Plaga (Visar)", PLAGAS)
+    # `prune=True`: la taxonomía de plagas pasó de lista plana a 2 niveles, así que
+    # las viejas categorías-especie (Termitas / Polilla / Chinches / Otros) tienen
+    # que SALIR del nivel 1 — ahora viven bajo "Otras plagas".
+    _ensure_tag(env, PLAGA_MODEL, "Tipo de plaga (Visar)", PLAGAS, prune=True)
+    for _f, tag_model, categoria, label, especies in PLAGA_ESPECIES:
+        _ensure_tag(env, tag_model, "Plaga — %s (Visar)" % categoria, especies)
 
     line = _ensure_model(env, FUM_LINE, "Área tratada (Fumigación v2)", [
         (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
@@ -320,12 +431,28 @@ def _seed_fumigacion(env):
 
     _ensure_field(env, FUM_LINE, lid, 'x_area', 'selection', 'Área', selection=AREAS)
     _ensure_field(env, FUM_LINE, lid, 'x_area_otro', 'char', OTRO)
-    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids', 'many2many', 'Plaga a controlar',
+    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids', 'many2many', 'Tipo de plaga',
                   relation=PLAGA_MODEL, relation_table='x_area_plaga_rel',
                   column1='area_id', column2='plaga_id')
-    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids_otro', 'char', OTRO)
+    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids_otro', 'char',
+                  "Especifica qué plaga")
+    # Especies por categoría. Tabla de relación EXPLÍCITA y corta: el nombre
+    # autogenerado se pasa del límite de identificador de Postgres y el m2m
+    # desaparece sin error (bug ya vivido con `x_plaga_ids`).
+    for index, (fname, tag_model, _categoria, label, _especies) in enumerate(
+            PLAGA_ESPECIES):
+        _ensure_field(env, FUM_LINE, lid, fname, 'many2many', label,
+                      relation=tag_model,
+                      relation_table='x_area_plesp%d_rel' % index,
+                      column1='area_id', column2='especie_id')
     _ensure_field(env, FUM_LINE, lid, 'x_infestacion_activa', 'boolean',
-                  'Infestación activa en esta área')
+                  '¿Se detectó presencia activa de plaga?')
+    # Marca de "área fija" (Cocina / Baño / Área de basura): no se puede eliminar
+    # y se siembra al crear la hoja. NO va en el arch a propósito — es contabilidad
+    # interna, no captura del técnico.
+    _ensure_field(env, FUM_LINE, lid, 'x_fija', 'boolean', 'Área obligatoria')
+    _ensure_field(env, FUM_LINE, lid, 'x_cliente_no_permitio', 'boolean',
+                  'Cliente NO permitió que se fumigara en esta área')
     _ensure_field(env, FUM_LINE, lid, 'x_plaguicida_nombre', 'selection',
                   'Plaguicida — nombre', selection=PLAGUICIDAS)
     _ensure_field(env, FUM_LINE, lid, 'x_plaguicida_nombre_otro', 'char', OTRO)
@@ -357,6 +484,17 @@ def _seed_fumigacion(env):
     _relabel_field(env, ws, 'x_foto_inicial', 'Fotos estado inicial zona afectada')
     _relabel_field(env, ws, 'x_foto_ejecucion', 'Fotos generales durante la ejecución')
     _relabel_field(env, FUM_LINE, 'x_foto_evidencia', 'Fotos de evidencia')
+    # Reetiquetados de la taxonomía de 2 niveles (campos que ya existen en QA/prod).
+    _relabel_field(env, FUM_LINE, 'x_plaga_ids', 'Tipo de plaga')
+    _relabel_field(env, FUM_LINE, 'x_plaga_ids_otro', "Especifica qué plaga")
+    _relabel_field(env, FUM_LINE, 'x_infestacion_activa',
+                   '¿Se detectó presencia activa de plaga?')
+    for fname, _tm, _categoria, label, _especies in PLAGA_ESPECIES:
+        _relabel_field(env, FUM_LINE, fname, label)
+    _sync_selection(env, FUM_LINE, 'x_area', AREAS)
+    _sync_selection(env, FUM_LINE, 'x_plaguicida_nombre', PLAGUICIDAS)
+    _sync_selection(env, FUM_LINE, 'x_accion_correctiva', ACCION)
+    _sync_selection(env, ws, 'x_nivel_infestacion', NIVEL)
     _relabel_comments(env, ws, 'Observaciones finales del técnico')
     _write_arch(env, ws, FUMIGACION_ARCH)
     tmpl._generate_qweb_report_template()
@@ -407,6 +545,8 @@ def _seed_jardineria(env):
     _relabel_field(env, ws, 'x_foto_inicial_jardin', 'Fotos estado inicial del jardín')
     _relabel_field(env, ws, 'x_foto_bolsas', 'Fotos de bolsas de residuos generadas')
     _relabel_field(env, ws, 'x_foto_bolsas_camioneta', 'Fotos de bolsas dentro de la camioneta')
+    _sync_selection(env, JAR_LINE, 'x_tipo_servicio', TIPO_SERVICIO)
+    _sync_selection(env, ws, 'x_estado_equipo', ESTADO_EQUIPO)
     _relabel_comments(env, ws, 'Observaciones finales del técnico')
     _write_arch(env, ws, JARDINERIA_ARCH)
     tmpl._generate_qweb_report_template()
@@ -466,6 +606,8 @@ def _seed_visita(env):
                   'Resumen de hallazgos comunicado al cliente')
     env.cr.flush()
 
+    _sync_selection(env, ws, 'x_tipo_inmueble', TIPO_INMUEBLE)
+    _sync_selection(env, ws, 'x_complejidad', COMPLEJIDAD)
     _write_arch(env, ws, VISITA_ARCH)
     tmpl._generate_qweb_report_template()
     _logger.info("Seeded worksheet template %s (%s)", VISITA_NAME, ws)

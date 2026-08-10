@@ -1032,3 +1032,132 @@ seguiría llamando al mismo contrato de controlador.
   PWA/offline (necesidad real de campo que la decisión original no ponderó).
 - **Reporte dual interno vs cliente** (D-07 pendiente) — hoy la app sirve un único PDF nativo.
 - Endurecer identidad (hash de PIN, throttling) y añadir guardas de cierre si el negocio lo exige.
+
+---
+
+## 🆕 Actualización — 10-ago-2026 (v19.0.1.16.0) — Fumigación: áreas obligatorias + taxonomía de plagas de 2 niveles
+
+> Reestructura **solo** la plantilla "Fumigación interior o exterior (App v2)" (Jardinería y Visita
+> no se tocan) y, de paso, **cierra dos huecos del sembrador** que hacían que los cambios de
+> catálogo no llegaran nunca a una BD ya instalada. Requiere **`-u`** (cambia `views/` y hay
+> migración) + reinicio.
+>
+> **Se modificó la plantilla existente, NO se creó una nueva.** Un template nuevo obligaba a
+> re-declarar los ~12 campos de línea (el modelo de línea ata su FK a UN modelo de worksheet), a
+> una rama nueva en la maqueta del PDF (que despacha por NOMBRE de plantilla) y a re-apuntar el
+> proyecto — más trabajo y un duplicado permanente en la configuración. Todo lo pedido es
+> aditivo: ningún campo cambia de tipo, así que no hay migración de datos.
+
+### Huecos del sembrador que se cerraron (aplicaban a las TRES plantillas)
+
+`_ensure_field` no toca campos existentes y `_sel`/`_ensure_tag` solo poblaban al crear, así que
+**agregar una opción a un catálogo de `hooks.py` no llegaba a QA/prod**: el campo ya existía y el
+sembrador pasaba de largo. Sin arreglar esto, la taxonomía nueva no habría aparecido.
+
+| Helper nuevo | Qué converge |
+|---|---|
+| `_sync_selection(env, modelo, campo, opciones, prune=False)` | opciones de un `selection` existente: agrega las que falten y reordena al orden canónico |
+| `_sync_tag_records(env, modelo, registros, prune=False)` | catálogo de un modelo-etiqueta (m2m): agrega las que falten. `_ensure_tag` ahora lo llama SIEMPRE |
+
+Ambos son **aditivos por defecto** (`prune=False`): no borran, porque el valor almacenado de una
+opción **es la cadena** y el id de una etiqueta vive en los m2m ya capturados. `prune=True` es
+opt-in y solo se usa donde el código manda el contenido. Se aplicaron a los catálogos de las tres
+plantillas (`AREAS`, `PLAGUICIDAS`, `ACCION`, `NIVEL`, `TIPO_SERVICIO`, `ESTADO_EQUIPO`,
+`TIPO_INMUEBLE`, `COMPLEJIDAD`), así que de aquí en adelante editar una lista en `hooks.py` basta.
+
+> ⚠️ **Renombrar** una opción de `selection` NO es un cambio de catálogo: huérfana los registros que
+> la tenían (el valor guardado es la cadena). Eso es una migración de datos aparte.
+
+### 1. Áreas de inspección obligatoria (Cocina / Baño / Área de basura)
+
+Se resolvió **con líneas reales pre-sembradas**, no con tres grupos de campos aparte: así la tabla
+del PDF, el `min_one` y la sincronización o2m siguen funcionando sin tocarse.
+
+- `AREAS_FIJAS` (en `hooks.py`) + dos campos nuevos en `x_visar_area_tratada_v2`:
+  `x_fija` (marca interna, **a propósito fuera del arch**) y `x_cliente_no_permitio`.
+- `_seed_fixed_lines(record)` siembra las que falten **por valor de área, no por conteo** →
+  idempotente, no duplica, y una hoja ya abierta recoge un área nueva del catálogo al re-abrirla.
+  `x_sequence` negativo las deja **antes** de cualquier área que agregue el técnico.
+- Se siembra **solo cuando la hoja es capturable** (`create=True` ⇔ disponible y no bloqueada): las
+  rutas de lectura (servir una foto, pintar una hoja cerrada) **no mutan** la hoja.
+- La tarjeta fija: encabezado con el área + insignia "Obligatoria", **sin "Eliminar"**, y el campo
+  `x_area` viaja en un `hidden` en vez de pintarse como control (ya está decidido).
+- `_sync_one_o2m` **nunca** borra una línea `x_fija`, ni ante un POST manipulado que omita su fila.
+
+### 2. Taxonomía de plagas de 2 niveles + gate de presencia activa
+
+El m2m principal pasó de lista plana de plagas a **CATEGORÍA**; cada categoría revela su lista de
+especies (m2m companion, indentada). Categorías tomadas del wizard de reserva
+(`¿Qué estás viendo en casa?`) para que cotización y campo hablen el mismo idioma.
+
+| Categoría | Especies |
+|---|---|
+| Rastreros | Cucarachas, Alacranes, Hormigas, Arañas |
+| Voladores | Moscas, Mosquitos o zancudos |
+| Roedores | Ratas, Ratones |
+| Otras plagas | Termitas, Chinches de cama, Polilla |
+| Otra plaga no en las opciones | → campo de texto libre |
+
+- `x_infestacion_activa` se reetiquetó a **"¿Se detectó presencia activa de plaga?"** y ahora
+  **abre un bloque**: foto de evidencia (obligatoria) + categorías. Antes la foto era
+  condicional-obligatoria pero siempre visible; se retiró de `WORKSHEET_REQUIRED_IF` porque ahora
+  su `required="1"` vive en el arch y la **visibilidad** hace el trabajo.
+- **`WORKSHEET_CONDITIONAL`** (nuevo): la visibilidad condicional ya no depende solo de la
+  convención `{base}_otro`. Se declara `{campo: (controlador, kind, trigger)}` con
+  `kind ∈ {truthy, many2many, selection}`; para `many2many` el trigger se declara por **NOMBRE de
+  etiqueta** y se resuelve al id vigente (los ids de catálogo no son estables entre BDs).
+- **Por qué la declaración explícita era obligatoria aquí:** la escotilla se llama "Otra plaga no
+  en las opciones" y la categoría "Otras plagas" — la convención (`startswith("otro")`) tenía dos
+  candidatas y habría elegido la equivocada.
+- **`conditional_chain`** — un campo condicional puede traer `required="1"` del arch, así que
+  "oculto ⇒ no obligatorio" tiene que valer también en el **servidor**. Y como la taxonomía anida
+  dos niveles (especies → categoría → presencia activa), se evalúa la condición propia **y las de
+  los ancestros**: un POST viejo con la categoría marcada y la presencia apagada ya no exige un
+  campo que el técnico nunca vio. En el cliente lo resuelve la **cascada del DOM**
+  (`evalCondFields` oculta un campo cuyo controlador está oculto).
+- `evalCondFields` ganó `kind="truthy"` (antes solo `many2many`/`selection`).
+
+### 3. Dispensa por tarjeta — "Cliente NO permitió que se fumigara en esta área"
+
+- **`WORKSHEET_REQUIRED_UNLESS_LINE = {modelo_de_línea: campo_disparador}`** — se declara por
+  MODELO, no campo por campo, para que agregar un campo a la tarjeta quede cubierto solo.
+- Al marcarlo, **ningún** campo de esa área es obligatorio — salvo el que la **identifica**
+  (`x_area`), que si no dejaría una tarjeta anónima.
+- Orden de resolución, idéntico en cliente y servidor: **oculto → no; dispensado → no;** luego
+  `required` / `required_if`. El asterisco de un campo con dispensa pasa a ser condicional (lo
+  alterna `refreshStars`) para que refleje el estado real.
+
+### 4. PDF del cliente
+
+La tabla "Áreas tratadas" saca una columna por `<field>` de la **sublista**. Cuatro columnas de
+especies no caben (el PDF es vertical y la tabla ya lleva 8), así que **no van en la sublista** y en
+su lugar `_visar_fumigacion_areas_table` reescribe la celda de "Tipo de plaga" con
+`Categoría (especie, especie)`; la escotilla se sustituye por el texto que escribió el técnico.
+`_visar_ws_table_descriptor` ahora devuelve también `field_names` para que una maqueta dedicada
+reescriba una columna **sin casar por etiqueta** (que se renombra). `x_cliente_no_permitio` sí es
+columna de la sublista → sale en el PDF solo.
+
+### Archivos tocados
+
+- `hooks.py` — `_sync_selection` / `_sync_tag_records` (nuevos), `_ensure_tag(prune=)`, catálogos
+  `PLAGAS` / `PLAGA_ESPECIES` / `AREAS_FIJAS`, campos nuevos de línea, `FUMIGACION_ARCH`.
+- `controllers/main.py` — `WORKSHEET_CONDITIONAL`, `WORKSHEET_NESTED`,
+  `WORKSHEET_REQUIRED_UNLESS_LINE`, `LINE_FIXED_*`, `_conditional_chain`, `_declared_conditional`,
+  `_seed_fixed_lines`, `_line_fixed_title`, `_field_is_required_now` (orden nuevo), guarda de
+  borrado en `_sync_one_o2m`.
+- `views/field_app_templates.xml` — tarjeta fija (título/insignia/hidden/sin Eliminar), indentación,
+  `data-req-unless`, `req_star` con dispensa.
+- `static/src/js/field_app.js` — `truthy` en `evalCondFields` + cascada, `data-req-unless` en
+  `isActive`, `refreshStars` ampliado.
+- `static/src/css/field_app.css` — `.o_visar_nested`, `.o_visar_o2m_card_fixed`.
+- `models/project_task.py` — `_visar_fumigacion_areas_table`, `_visar_fumigacion_plaga_text`,
+  `field_names` en el descriptor de tabla.
+- `migrations/19.0.1.16.0/post-migrate.py` (**nuevo**), `__manifest__.py` → v19.0.1.16.0.
+
+### Pendiente de esta tanda
+
+- **Verificación en BD**: la lógica de condicional/obligatoriedad/dispensa se probó **aislada**
+  (tabla de casos, incluida la cascada), pero el sembrador y el render **no** se han corrido contra
+  una BD. Probar `-u` en QA antes de prod.
+- **Cámara obligatoria (sin galería) y envío del PDF por WhatsApp** — acordados, aún **no**
+  implementados. Ver "Pendientes" abajo.

@@ -369,7 +369,12 @@
                                             <t t-set="task_id" t-value="task.id"/>
                                             <t t-set="card_rows" t-value="line['rows']"/>
                                             <t t-set="card_disabled" t-value="worksheet_locked"/>
-                                            <t t-set="card_removable" t-value="not worksheet_locked"/>
+                                            <!-- Área OBLIGATORIA: no se puede eliminar. -->
+                                            <t t-set="card_removable"
+                                               t-value="not worksheet_locked and not line.get('fixed')"/>
+                                            <t t-set="card_title" t-value="line.get('title')"/>
+                                            <t t-set="card_title_field"
+                                               t-value="line.get('fixed') and field.get('fixed_title_field') or ''"/>
                                         </t>
                                     </t>
                                 </div>
@@ -384,6 +389,9 @@
                                         <t t-set="card_rows" t-value="field['blank_rows']"/>
                                         <t t-set="card_disabled" t-value="True"/>
                                         <t t-set="card_removable" t-value="True"/>
+                                        <!-- Las tarjetas que agrega el técnico nunca son fijas. -->
+                                        <t t-set="card_title" t-value="''"/>
+                                        <t t-set="card_title_field" t-value="''"/>
                                     </t>
                                 </div>
                                 <button t-if="not worksheet_locked" type="button"
@@ -871,9 +879,12 @@
     <!-- disparador se cumple. Espera la variable `reqf` (descriptor).  -->
     <!-- ============================================================ -->
     <template id="req_star" name="Visar Campo - Asterisco obligatorio">
-        <span t-if="reqf.get('required')" class="text-danger ms-1 o_visar_req"
-              aria-hidden="true">*</span>
-        <span t-elif="reqf.get('required_if')"
+        <!-- Un campo con DISPENSA ("cliente no permitió…") lleva asterisco
+             condicional aunque sea `required`: deja de serlo al dispensarse, y el
+             asterisco tiene que reflejarlo (lo alterna `refreshStars`). -->
+        <span t-if="reqf.get('required') and not reqf.get('required_unless')"
+              class="text-danger ms-1 o_visar_req" aria-hidden="true">*</span>
+        <span t-elif="reqf.get('required') or reqf.get('required_if')"
               class="text-danger ms-1 o_visar_req o_visar_req_cond d-none"
               aria-hidden="true">*</span>
     </template>
@@ -903,15 +914,22 @@
     <!-- Tarjeta de una línea one2many (reutilizada: existentes + clon) -->
     <!-- ============================================================ -->
     <template id="o2m_card" name="Visar Campo - Tarjeta de línea">
-        <div class="o_visar_o2m_card card p-3 mb-3">
+        <div t-attf-class="o_visar_o2m_card card p-3 mb-3#{' o_visar_o2m_card_fixed' if card_title_field else ''}">
             <!-- `card_removable` (default True) permite ocultar "Eliminar" en cartas de
                  SOLO LECTURA (servicio cerrado) sin afectar la carta-plantilla que el
-                 JS clona (esa siempre es removable). -->
+                 JS clona (esa siempre es removable). Las áreas OBLIGATORIAS tampoco
+                 son removables. -->
             <div t-if="card_removable is None or card_removable" class="d-flex justify-content-end">
                 <button type="button"
                         class="btn btn-sm btn-link text-danger p-0 o_visar_o2m_remove">
                     Eliminar
                 </button>
+            </div>
+            <!-- Área obligatoria: el área ya está decidida, así que encabeza la tarjeta
+                 en vez de ser un control más (su valor viaja en el hidden de abajo). -->
+            <div t-if="card_title" class="d-flex align-items-center mb-3">
+                <span class="fw-bold" t-esc="card_title"/>
+                <span class="badge text-bg-secondary ms-2">Obligatoria</span>
             </div>
             <input type="hidden" t-att-name="'o2mline~%s~%s~id' % (o2m, rowidx)"
                    t-att-value="line_id or ''"
@@ -919,15 +937,24 @@
 
             <t t-foreach="card_rows" t-as="crow">
              <div t-attf-class="mb-3#{' row g-2' if len(crow) &gt; 1 else ''}">
-              <div t-foreach="crow" t-as="f"
-                   t-attf-class="#{'col ' if len(crow) &gt; 1 else ''}#{'o_visar_condfield d-none' if f.get('conditional') else ''}"
+              <t t-foreach="crow" t-as="f">
+               <!-- Campo-título de un área obligatoria: no se pinta como control,
+                    solo viaja su valor (ya está en el encabezado de la tarjeta). -->
+               <input t-if="card_title_field and f['name'] == card_title_field"
+                      type="hidden" t-att-name="'o2mline~%s~%s~%s' % (o2m, rowidx, f['name'])"
+                      t-att-value="f['value']"/>
+              <div t-else=""
+                   t-attf-class="#{'col ' if len(crow) &gt; 1 else ''}#{'o_visar_condfield d-none ' if f.get('conditional') else ''}#{'o_visar_nested' if f.get('nested') else ''}"
                    t-att-data-showif="f.get('conditional') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['conditional']['controller'])) or None"
                    t-att-data-showif-kind="f.get('conditional') and f['conditional']['kind'] or None"
                    t-att-data-showif-val="f.get('conditional') and f['conditional']['trigger'] or None"
                    t-att-data-req="f.get('required') and '1' or None"
                    t-att-data-req-if="f.get('required_if') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['required_if']['controller'])) or None"
                    t-att-data-req-if-kind="f.get('required_if') and f['required_if']['kind'] or None"
-                   t-att-data-req-if-val="f.get('required_if') and f['required_if']['trigger'] or None">
+                   t-att-data-req-if-val="f.get('required_if') and f['required_if']['trigger'] or None"
+                   t-att-data-req-unless="f.get('required_unless') and ('o2mline~%s~%s~%s' % (o2m, rowidx, f['required_unless']['controller'])) or None"
+                   t-att-data-req-unless-kind="f.get('required_unless') and f['required_unless']['kind'] or None"
+                   t-att-data-req-unless-val="f.get('required_unless') and f['required_unless']['trigger'] or None">
                 <t t-set="fname" t-value="'o2mline~%s~%s~%s' % (o2m, rowidx, f['name'])"/>
 
                 <!-- Booleano -->
@@ -1030,6 +1057,7 @@
                     </t>
                 </t>
               </div>
+              </t>
              </div>
             </t>
         </div>

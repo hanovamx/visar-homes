@@ -415,14 +415,30 @@
                 return;
             }
             var val = el.getAttribute("data-showif-val");
+            var kind = el.getAttribute("data-showif-kind");
             var show;
-            if (el.getAttribute("data-showif-kind") === "many2many") {
+            if (kind === "many2many") {
                 var cb = document.querySelector(
                     '[name="' + ctrl + '"][value="' + val + '"]');
                 show = !!(cb && cb.checked);
+            } else if (kind === "truthy") {
+                /* Casilla que abre un bloque (p. ej. "¿presencia activa de plaga?"). */
+                var box = document.querySelector('[name="' + ctrl + '"]');
+                show = !!(box && box.checked);
             } else {
                 var sel = document.querySelector('[name="' + ctrl + '"]');
                 show = !!(sel && sel.value === val);
+            }
+            /* Cascada: si el campo QUE CONTROLA está a su vez oculto, este también
+               se oculta. Sin esto, apagar "¿presencia activa?" dejaba la lista de
+               especies visible (su categoría seguía marcada en un DOM oculto).
+               Depende de que el padre se evalúe antes: el arch los declara en ese
+               orden y este recorrido es en orden de DOM. */
+            if (show) {
+                var ctrlEl = document.querySelector('[name="' + ctrl + '"]');
+                if (ctrlEl && ctrlEl.closest(".o_visar_condfield.d-none")) {
+                    show = false;
+                }
             }
             el.classList.toggle("d-none", !show);
         });
@@ -462,13 +478,22 @@
             return !!(sel && sel.value === val);
         }
 
-        /* ¿El campo (su wrapper) es obligatorio AHORA y visible/activo? */
+        /* ¿El campo (su wrapper) es obligatorio AHORA y visible/activo?
+           Mismo orden que el servidor (`_field_is_required_now`): oculto → no;
+           dispensado → no; luego `data-req` / `data-req-if`. */
         function isActive(w) {
             if (w.closest(".o_visar_o2m_template")) {
                 return false;  // tarjeta plantilla inerte
             }
             if (w.classList.contains("d-none")) {
                 return false;  // companion oculto → no obligatorio
+            }
+            /* Dispensa por tarjeta: "Cliente NO permitió que se fumigara en esta
+               área" apaga la obligatoriedad de todos los campos del área. */
+            var unless = w.getAttribute("data-req-unless");
+            if (unless && condMet(unless, w.getAttribute("data-req-unless-kind"),
+                w.getAttribute("data-req-unless-val"))) {
+                return false;
             }
             if (w.hasAttribute("data-req")) {
                 return true;
@@ -539,7 +564,7 @@
         /* Muestra u oculta los asteriscos de los campos condicionales según su
            disparador (para que el técnico vea qué se volvió obligatorio). */
         function refreshStars() {
-            form.querySelectorAll("[data-req-if]").forEach(function (w) {
+            form.querySelectorAll("[data-req-if], [data-req-unless]").forEach(function (w) {
                 var star = w.querySelector(":scope > .o_visar_req_cond");
                 if (star) {
                     star.classList.toggle("d-none", !isActive(w));

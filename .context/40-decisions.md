@@ -195,6 +195,27 @@ Las `worksheet.template` de la app de campo ("Fumigación interior o exterior (A
   (`project.project.worksheet_template_id`) es paso manual deliberado.
 - Detalle en `25-field-app.md` → "🆕 Actualización — 08-jul-2026 (bis)". Cierra backlog I-06.
 
+## [IMPLEMENTADO — 10-ago-2026] Plantillas: se MODIFICAN en código, no se duplican
+
+Para reestructurar "Fumigación interior o exterior (App v2)" (áreas obligatorias + taxonomía de
+plagas de 2 niveles) se **editó la plantilla existente** en `hooks.py` en vez de crear una nueva.
+
+- **Por qué no una plantilla nueva:** el modelo de línea (`x_visar_area_tratada_v2`) ata su FK a UN
+  modelo de worksheet, así que una plantilla nueva obliga a re-declarar los ~12 campos de línea;
+  además la maqueta del PDF despacha por **nombre** de plantilla (haría falta otra rama) y habría
+  que re-apuntar el proyecto, dejando un duplicado permanente en la configuración. El cambio pedido
+  era **aditivo** (ningún campo cambia de tipo) → no había migración de datos que esquivar.
+- **Cuándo SÍ tocaría duplicar:** si hubiera que preservar hojas ya llenadas con la semántica
+  vieja. Hoy no aplica (datos de prueba).
+- **Corolario del sembrador:** editar un catálogo de `hooks.py` ahora **sí** llega a una BD ya
+  instalada (`_sync_selection` / `_sync_tag_records`). Antes no: `_ensure_field` no toca campos
+  existentes, así que la opción nueva se quedaba en el código. Aditivo por defecto; `prune=True`
+  es opt-in porque el valor guardado de un `selection` **es la cadena**.
+- **Corolario de obligatoriedad:** "oculto ⇒ no obligatorio" ahora se aplica **también en el
+  servidor**, y evaluando la cadena de ancestros (la taxonomía anida 2 niveles). Antes el servidor
+  solo miraba `required`/`required_if` y habría exigido campos invisibles.
+- Detalle en `25-field-app.md` → "🆕 Actualización — 10-ago-2026".
+
 ## [PARCIAL — jun-2026] D-07 FSM agrupado por proyecto
 
 - `visar_fsm/models/sale_order_fsm.py`: override generación nativa, una tarea por `project_id`.

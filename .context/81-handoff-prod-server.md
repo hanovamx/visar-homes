@@ -134,8 +134,8 @@ git pull origin main
 - **`visar_appointment`** — runs any pending `migrations/19.0.2.0.*` (legacy catalog
   linking, entry types `visar_flow`, master type "Servicios Visar", question
   detachment, etc.).
-- **`visar_field_app`** — runs `migrations/19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`
-  (**each calls `seed_worksheet_templates(env)`**, idempotent) plus **`19.0.1.7.0`**
+- **`visar_field_app`** — runs `migrations/19.0.1.2.0`, `19.0.1.3.1`, `19.0.1.4.0`,
+  **`19.0.1.16.0`** (**each calls `seed_worksheet_templates(env)`**, idempotent) plus **`19.0.1.7.0`**
   (**`seed_signature_stage(env)`** — unarchives/orders the "Pendiente de firma" stage and
   gives it a stable xmlid). The seeders create/update the three worksheet templates and
   their dynamic models/fields:
@@ -151,6 +151,16 @@ git pull origin main
   >>> seed_worksheet_templates(env); seed_signature_stage(env)
   >>> env.cr.commit()
   ```
+
+> ⚠️ **`19.0.1.16.0` es la ÚNICA migración del módulo que BORRA datos.** Re-estructura la
+> taxonomía de plagas de Fumigación a 2 niveles y siembra el catálogo de categorías con
+> `prune=True`: las etiquetas de nivel 1 que ya no son categorías (**Termitas, Polilla, Chinches,
+> Otros**) **se eliminan** de `x_visar_plaga` — ahora son *especies* bajo "Otras plagas". Eliminar
+> una etiqueta solo quita las filas de relación de los m2m que la tenían capturada (no borra
+> líneas ni hojas), pero **no es reversible**. Es lo deseado mientras los datos sean de prueba; si
+> esa BD ya tuviera hojas reales de fumigación, **mapear los valores antes** de correr el `-u`.
+> Verificar antes: `SELECT x_name FROM x_visar_plaga;` y
+> `SELECT count(*) FROM x_area_plaga_rel;`
 
 ### 3.3 Install vs upgrade (why it matters)
 

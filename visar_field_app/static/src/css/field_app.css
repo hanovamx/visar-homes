@@ -267,3 +267,18 @@
     padding: 6px;
     background: #fff;
 }
+
+/* Taxonomía de plagas: la lista de especies se pinta indentada bajo su
+   categoría, con una guía a la izquierda, para que se lea como una jerarquía y
+   no como un campo más de la tarjeta. */
+.o_visar_field .o_visar_nested {
+    margin-left: 1rem;
+    padding-left: .75rem;
+    border-left: 2px solid #dee2e6;
+}
+
+/* Área de inspección OBLIGATORIA (Cocina / Baño / Área de basura): se distingue
+   de las que agrega el técnico, y no trae "Eliminar". */
+.o_visar_field .o_visar_o2m_card_fixed {
+    border-left: 3px solid #0d6efd;
+}
