@@ -619,6 +619,18 @@ class VisarFieldApp(http.Controller):
         return self._field_photo_atts(res_model, res_id, key).ids
 
     @staticmethod
+    def _camera_fallback_allowed():
+        """¿Se permite elegir fotos de la galería? (parámetro de sistema, def. NO).
+
+        La regla es cámara en vivo. Esta escotilla existe para no dejar a una
+        cuadrilla sin poder trabajar por un dispositivo donde getUserMedia falle,
+        sin necesidad de un cambio de código: `visar_field.allow_gallery_fallback`.
+        """
+        value = request.env['ir.config_parameter'].sudo().get_param(
+            'visar_field.allow_gallery_fallback', '')
+        return str(value).strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+
+    @staticmethod
     def _is_ajax():
         """True si la petición viene por fetch (galería sin recargar la página)."""
         return (request.httprequest.headers.get('X-Requested-With')
@@ -628,6 +640,16 @@ class VisarFieldApp(http.Controller):
     def _json_ok(**payload):
         """Respuesta JSON para las galerías AJAX (upload/delete sin recarga)."""
         payload.setdefault('ok', True)
+        return request.make_response(
+            json.dumps(payload), [('Content-Type', 'application/json')])
+
+    @staticmethod
+    def _json_err(message, **payload):
+        """Respuesta JSON de fallo ESPERADO (sin teléfono, WhatsApp caído, …).
+
+        Se contesta 200 con `ok: false` a propósito: el JS distingue "falló y aquí
+        está el motivo para mostrárselo al técnico" de un 5xx, que recarga la página."""
+        payload.update(ok=False, message=message)
         return request.make_response(
             json.dumps(payload), [('Content-Type', 'application/json')])
 
@@ -1568,6 +1590,13 @@ class VisarFieldApp(http.Controller):
             'worksheet_locked': self._worksheet_locked(task, flow_state),
             'reopen_action': '/visar/field/task/%s/worksheet/reopen' % task.id,
             'ws_error': kw.get('ws_error'),
+            # Resultado del envío del reporte por WhatsApp (camino sin JS).
+            'wa_sent': kw.get('wa_sent'),
+            'wa_error': kw.get('wa_error'),
+            # Escotilla de ops: permite elegir del carrete en un dispositivo donde la
+            # cámara del navegador no funcione. Por defecto NO (la evidencia debe ser
+            # del servicio, ver `photo_capture`); se enciende por parámetro de sistema.
+            'camera_fallback': self._camera_fallback_allowed(),
             'signature_available': self._signature_available(task, flow_state),
             'track_action': '/visar/field/task/%s/track' % task.id,
             'is_signed': bool(task.worksheet_signature),
@@ -2086,14 +2115,11 @@ class VisarFieldApp(http.Controller):
         enviar: en sitio no hay tiempo de redactar."""
         if not link:
             return ''
-        phone = task._visar_client_phone()
-        if not phone:
-            return ''
-        digits = ''.join(ch for ch in phone if ch.isdigit())
+        # `_visar_client_phone` devuelve (display, e164) — la lada de país y el
+        # saneo los resuelve ella, no este método.
+        _display, digits = task._visar_client_phone()
         if not digits:
             return ''
-        if len(digits) == 10:  # nacional sin lada de país
-            digits = '52' + digits
         order = task._visar_upsell_order()
         text = (
             "Hola %s, le comparto el enlace para pagar los productos adicionales "
@@ -2120,6 +2146,28 @@ class VisarFieldApp(http.Controller):
             ('Content-Type', 'application/pdf'),
             ('Content-Disposition', 'inline; filename="reporte-servicio.pdf"'),
         ])
+
+    @http.route('/visar/field/task/<int:task_id>/report/whatsapp', type='http',
+                auth='public', website=True, sitemap=False, methods=['POST'],
+                csrf=True)
+    def field_task_report_whatsapp(self, task_id, **post):
+        """Manda el reporte firmado al cliente por WhatsApp (botón del técnico).
+
+        El envío real lo hace el runtime del agente (ahí vive el token de Meta);
+        aquí solo se valida el acceso y se traduce el resultado a la UI. Nunca
+        revienta la pantalla del técnico: un fallo vuelve como aviso.
+        """
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._task_for_employee(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/tasks')
+        ok, message = task._visar_send_report_whatsapp(employee)
+        if self._is_ajax():
+            return self._json_ok(sent=ok, message=message) if ok else self._json_err(message)
+        return request.redirect('/visar/field/task/%s?%s' % (
+            task.id, urlencode({'wa_sent' if ok else 'wa_error': message})))
 
     # ==================================================================
     # Reporte nativo (PDF) — previsualización EN LÍNEA desde el backend

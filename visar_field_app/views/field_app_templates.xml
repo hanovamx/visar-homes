@@ -510,9 +510,15 @@
                                         </div>
                                     </div>
                                     <t t-if="not worksheet_locked">
-                                        <input type="file" accept="image/*" capture="environment"
-                                               multiple="multiple" class="form-control mb-2 o_visar_ws_photo_input"/>
-                                        <button type="button" class="btn btn-outline-primary w-100 o_visar_ws_photo_upload"
+                                        <t t-call="visar_field_app.photo_capture">
+                                            <t t-set="input_class" t-value="'o_visar_ws_photo_input'"/>
+                                            <t t-set="input_name" t-value="''"/>
+                                            <t t-set="capture_disabled" t-value="False"/>
+                                        </t>
+                                        <!-- La galería principal sube por AJAX: el widget de
+                                             cámara dispara este botón al cerrar, así que aquí
+                                             solo queda como reintento manual. -->
+                                        <button type="button" class="btn btn-outline-primary w-100 mt-2 o_visar_ws_photo_upload"
                                                 t-att-data-action="'/visar/field/task/%s/ws-photo/%s' % (task.id, field['name'])">
                                             Subir fotos
                                         </button>
@@ -577,6 +583,24 @@
 
                     <a t-att-href="'/visar/field/task/%s/report' % task.id"
                        target="_blank" class="btn btn-link w-100 mt-3">Ver reporte (PDF)</a>
+
+                    <!-- Enviar el reporte al cliente por WhatsApp. Solo tras la firma:
+                         antes de firmar el PDF no es el documento que espera recibir
+                         (el servidor lo revalida). El envío real lo hace el runtime del
+                         agente; aquí se responde por AJAX para no perder la pantalla. -->
+                    <div t-if="is_signed" class="o_visar_wa_report mt-2"
+                         t-att-data-action="'/visar/field/task/%s/report/whatsapp' % task.id">
+                        <button type="button" class="btn btn-outline-success w-100 o_visar_wa_report_btn">
+                            💬 Enviar reporte al cliente por WhatsApp
+                        </button>
+                        <div class="o_visar_wa_report_msg small mt-1 d-none"></div>
+                    </div>
+                    <div t-if="wa_sent" class="alert alert-success py-2 mt-2">
+                        <t t-esc="wa_sent"/>
+                    </div>
+                    <div t-if="wa_error" class="alert alert-warning py-2 mt-2">
+                        <t t-esc="wa_error"/>
+                    </div>
                 </div>
             </div>
         </t>
@@ -878,6 +902,50 @@
     <!-- de uno condicional arranca oculto y lo revela el JS cuando su -->
     <!-- disparador se cumple. Espera la variable `reqf` (descriptor).  -->
     <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Captura por CÁMARA (no galería)                               -->
+    <!-- ============================================================ -->
+    <!-- Toda foto de la hoja de trabajo se toma en vivo: la evidencia pierde valor
+         si el técnico puede subir una imagen vieja del carrete. El `<input
+         type="file">` se conserva —oculto— para NO cambiar nada del servidor: el
+         widget de cámara lo rellena con los archivos capturados (DataTransfer) y el
+         POST viaja igual que antes (multipart, `files.getlist`).
+
+         `capture="environment"` por sí solo NO basta: es una PISTA que Android
+         respeta y iOS Safari ignora (más aún junto a `multiple`), así que seguiría
+         ofreciendo "Fototeca". La cámara real se abre con getUserMedia.
+
+         Parámetros: `input_name` (sin nombre = lo lee el JS de la galería AJAX),
+         `input_class`, `capture_disabled`, `camera_fallback`. -->
+    <template id="photo_capture" name="Visar Campo - Captura por cámara">
+        <div class="o_visar_capture">
+            <input type="file" accept="image/*" capture="environment"
+                   multiple="multiple"
+                   t-attf-class="o_visar_capture_input d-none #{input_class or ''}"
+                   t-att-name="input_name or None"
+                   t-att-disabled="capture_disabled and 'disabled' or None"/>
+            <!-- Los botones se RENDERIZAN siempre y se deshabilitan, nunca se omiten:
+                 la tarjeta-plantilla que el JS clona se pinta con `card_disabled` y el
+                 clon solo quita `disabled` (`initO2M`). Omitirlos dejaría las tarjetas
+                 que agrega el técnico sin botón de cámara. -->
+            <button type="button"
+                    class="btn btn-outline-primary w-100 o_visar_capture_open"
+                    t-att-disabled="capture_disabled and 'disabled' or None">
+                📷 Tomar foto
+            </button>
+            <!-- Miniaturas de lo capturado y aún no guardado/subido. -->
+            <div class="o_visar_capture_pending row g-2 mt-2"></div>
+            <div class="o_visar_capture_err small text-danger mt-1 d-none"></div>
+            <!-- Escotilla de ops: solo aparece si negocio la habilita en un
+                 parámetro de sistema (por defecto NO existe). -->
+            <button t-if="camera_fallback" type="button"
+                    class="btn btn-link btn-sm p-0 mt-1 o_visar_capture_fallback"
+                    t-att-disabled="capture_disabled and 'disabled' or None">
+                Usar la galería (excepción autorizada)
+            </button>
+        </div>
+    </template>
+
     <template id="req_star" name="Visar Campo - Asterisco obligatorio">
         <!-- Un campo con DISPENSA ("cliente no permitió…") lleva asterisco
              condicional aunque sea `required`: deja de serlo al dispensarse, y el
@@ -1042,9 +1110,11 @@
                                 </div>
                             </div>
                         </div>
-                        <input type="file" accept="image/*" capture="environment"
-                               multiple="multiple" class="form-control" t-att-name="fname"
-                               t-att-disabled="card_disabled and 'disabled' or None"/>
+                        <t t-call="visar_field_app.photo_capture">
+                            <t t-set="input_class" t-value="''"/>
+                            <t t-set="input_name" t-value="fname"/>
+                            <t t-set="capture_disabled" t-value="card_disabled"/>
+                        </t>
                         <small class="text-muted d-block mt-1">Se agregan al guardar la hoja de trabajo.</small>
                     </div>
 

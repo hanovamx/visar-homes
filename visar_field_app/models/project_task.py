@@ -47,6 +47,13 @@ _MAPBOX_DIRECTIONS_URL = (
 _ENROUTE_ETA_PARAM = 'visar_field.enroute_eta_minutes'
 _ENROUTE_ETA_DEFAULT = 30
 
+# --- Envío del reporte por WhatsApp (runtime del agente) ---
+# Reporte nativo de la worksheet FSM (el mismo que sirve la app y el backend).
+_FSM_REPORT = 'industry_fsm.worksheet_custom'
+# El runtime sube el PDF a Meta antes de contestar, así que el timeout cubre esa
+# subida — pero acotado: el técnico está esperando en pantalla.
+_WA_SEND_TIMEOUT = 30
+
 # Reglas para leer la worksheet dinámica al construir el reporte PDF (espejo de
 # las del controlador de la app, pero orientadas a MOSTRAR, no a editar):
 #   - campos técnicos que nunca se muestran (enlace a la tarea, nombre interno);
@@ -487,8 +494,123 @@ class ProjectTask(models.Model):
         phone = source.phone or ''
         if not phone:
             return '', ''
-        e164 = ''.join(ch for ch in (source.phone_sanitized or phone) if ch.isdigit())
+        e164 = self._visar_phone_e164(source.phone_sanitized or phone)
         return phone, e164
+
+    @staticmethod
+    def _visar_phone_e164(raw):
+        """Dígitos con lada de país, listos para `wa.me` / la Cloud API.
+
+        `phone_sanitized` puede venir vacío o sin lada si el contacto se capturó a
+        mano; un número de 10 dígitos en México es nacional, así que se le antepone
+        el 52. Devuelve '' si no hay suficientes dígitos para ser un teléfono.
+        """
+        digits = ''.join(ch for ch in (raw or '') if ch.isdigit())
+        if len(digits) == 10:  # nacional sin lada de país
+            digits = '52' + digits
+        return digits if len(digits) >= 11 else ''
+
+    # ==================================================================
+    # Envío del reporte firmado por WhatsApp (Odoo → runtime del agente)
+    # ==================================================================
+    # El envío NO se hace desde Odoo: el access token de Meta vive en el `.env` del
+    # runtime (`visar_fastapi`), no en la BD (misma decisión que `visar.llm.config`).
+    # Odoo renderiza el PDF y se lo pasa al runtime por LOOPBACK — ambos corren en el
+    # mismo servidor y `/internal/*` no está expuesto en nginx.
+    def _visar_report_whatsapp_config(self):
+        """`(base_url, token)` del runtime del agente. Token vacío ⇒ no configurado."""
+        params = self.env['ir.config_parameter'].sudo()
+        base = (params.get_param('visar_field.agent_base_url')
+                or 'http://127.0.0.1:8000').rstrip('/')
+        return base, (params.get_param('visar_field.agent_token') or '').strip()
+
+    def _visar_report_whatsapp_caption(self):
+        """Texto que acompaña al PDF (y rellena el cuerpo de la plantilla)."""
+        self.ensure_one()
+        nombre = self.partner_id.commercial_partner_id.name or self.partner_id.name or ''
+        saludo = ("Hola %s, " % nombre) if nombre else "Hola, "
+        return (saludo + "le compartimos el reporte de su servicio de hoy. "
+                "Gracias por confiar en Visar.")
+
+    def _visar_send_report_whatsapp(self, employee=None):
+        """Manda el PDF de la hoja firmada al cliente por WhatsApp.
+
+        Devuelve `(ok, mensaje_para_el_técnico)`. **Nunca lanza**: el técnico está en
+        campo y un fallo de red no debe romperle la pantalla — se le informa y queda
+        la nota en el chatter para que oficina lo reintente.
+        """
+        self.ensure_one()
+        _display, e164 = self._visar_client_phone()
+        if not e164:
+            return False, "El cliente no tiene teléfono registrado."
+        if not self.worksheet_signature:
+            # El reporte sin firma no es el documento que el cliente espera recibir.
+            return False, "Primero hay que capturar la firma del cliente."
+        base, token = self._visar_report_whatsapp_config()
+        if not token:
+            return False, ("Falta configurar el envío por WhatsApp "
+                           "(parámetro visar_field.agent_token).")
+        try:
+            pdf, _ctype = self.env['ir.actions.report'].sudo()._render_qweb_pdf(
+                _FSM_REPORT, [self.id])
+        except Exception:  # noqa: BLE001 - wkhtmltopdf / plantilla
+            _logger.exception("No se pudo renderizar el reporte de la tarea %s", self.id)
+            return False, "No se pudo generar el PDF del reporte."
+
+        payload = {
+            'phone': e164,
+            'filename': self._visar_report_filename(),
+            'caption': self._visar_report_whatsapp_caption(),
+            'pdf_base64': base64.b64encode(pdf).decode(),
+            'task_id': self.id,
+        }
+        try:
+            response = requests.post(
+                '%s/internal/send-report' % base, json=payload,
+                headers={'X-Visar-Token': token}, timeout=_WA_SEND_TIMEOUT)
+        except requests.RequestException as exc:
+            _logger.warning("Runtime del agente inalcanzable: %s", exc)
+            self._visar_log_report_sent(False, employee, str(exc))
+            return False, "No se pudo contactar el servicio de WhatsApp."
+        if response.status_code != 200:
+            detail = self._visar_http_detail(response)
+            _logger.warning("Envío del reporte rechazado (%s): %s",
+                            response.status_code, detail)
+            self._visar_log_report_sent(False, employee, detail)
+            return False, "WhatsApp rechazó el envío: %s" % detail
+        self._visar_log_report_sent(True, employee, '')
+        return True, "Reporte enviado al cliente por WhatsApp."
+
+    @staticmethod
+    def _visar_http_detail(response):
+        """Mensaje legible del error del runtime (FastAPI lo pone en `detail`)."""
+        try:
+            data = response.json()
+        except ValueError:
+            return (response.text or '')[:200] or 'error desconocido'
+        detail = data.get('detail') if isinstance(data, dict) else None
+        if isinstance(detail, list) and detail:  # error de validación de pydantic
+            detail = detail[0].get('msg', detail[0])
+        return str(detail or data)[:200]
+
+    def _visar_report_filename(self):
+        self.ensure_one()
+        return 'reporte-servicio-%s.pdf' % (self.id,)
+
+    def _visar_log_report_sent(self, ok, employee, detail):
+        """Traza en el chatter: a qué número se mandó el reporte y si salió."""
+        self.ensure_one()
+        display, _e164 = self._visar_client_phone()
+        who = (employee.name if employee else '') or 'El técnico'
+        if ok:
+            body = Markup(
+                "📄 <b>%s</b> envió el reporte del servicio por WhatsApp a %s."
+            ) % (who, display or '—')
+        else:
+            body = Markup(
+                "⚠️ <b>%s</b> intentó enviar el reporte por WhatsApp a %s y falló: %s"
+            ) % (who, display or '—', detail or 'sin detalle')
+        self.message_post(body=body, subtype_xmlid='mail.mt_note')
 
     def _visar_notify_client(self, body, event=''):
         """Único punto de envío de avisos al cliente.

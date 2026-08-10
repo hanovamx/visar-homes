@@ -195,6 +195,41 @@ Las `worksheet.template` de la app de campo ("Fumigación interior o exterior (A
   (`project.project.worksheet_template_id`) es paso manual deliberado.
 - Detalle en `25-field-app.md` → "🆕 Actualización — 08-jul-2026 (bis)". Cierra backlog I-06.
 
+## [IMPLEMENTADO — 10-ago-2026] Foto solo por cámara, y el WhatsApp saliente lo manda el runtime
+
+Dos decisiones de la tanda v19.0.1.17.0 (app de campo).
+
+**1. La foto se toma con `getUserMedia`, no con `<input capture>`.**
+- **Por qué:** `capture="environment"` es una PISTA. Android la respeta; **iOS Safari la ignora**
+  (más aún junto a `multiple`) y sigue ofreciendo el carrete. La evidencia de un servicio pierde su
+  valor si puede ser una foto vieja.
+- **Cómo, sin tocar el servidor:** el `<input type="file">` se conserva **oculto** y el widget lo
+  rellena con los `File` capturados vía `DataTransfer`. El POST sigue siendo el mismo multipart, así
+  que ninguna ruta ni validación cambió. Alternativa descartada: subir por una ruta nueva (duplicaba
+  el camino de adjuntos y la validación de obligatoriedad).
+- **Límite consciente:** cierra el camino fácil, **no** vuelve imposible falsificar (cámara
+  virtual). Garantizarlo pide verificación en servidor — tarea aparte, no se finge resuelta.
+- **Costes aceptados:** exige **HTTPS** (contexto seguro) y navegador moderno para `DataTransfer`.
+  Escotilla `visar_field.allow_gallery_fallback` (def. NO) para desbloquear un dispositivo sin
+  cambio de código.
+
+**2. El WhatsApp saliente lo manda `visar_fastapi`, no Odoo.**
+- **Por qué:** el access token de Meta está en el `.env` del runtime y **no debe entrar a la BD de
+  Odoo** (misma razón que `visar.llm.config`); pywa ya resuelve subida de media y formato; el
+  runtime ya es el único que habla con la Cloud API. Alternativa descartada: el módulo Enterprise
+  `whatsapp` (metía credenciales de Meta en la BD, contra la decisión vigente).
+- **Primera dependencia Odoo → runtime.** Va por **loopback** (`127.0.0.1:8000`, mismo servidor);
+  nginx solo proxea `/whatsapp/webhook`, así que `/internal/*` no está en internet. Token
+  compartido `X-Visar-Token` como segunda capa. **NO exponer `/internal/` en nginx**: convertiría
+  el número verificado de Visar en un relay.
+- **Se manda el PDF en base64, no un enlace.** Evita publicar el reporte en una URL con token y
+  hace que llegue **adjunto**.
+- **Restricción de negocio que el código no puede resolver:** fuera de la ventana de 24 h Meta solo
+  entrega **plantillas aprobadas**; el cliente que agendó por web nunca escribió, así que en
+  producción `WA_REPORT_TEMPLATE` (cabecera DOCUMENT) es **obligatoria**. Es tiempo de aprobación de
+  Meta, no trabajo pendiente.
+- Detalle en `25-field-app.md` → "🆕 Actualización — 10-ago-2026 (v19.0.1.17.0)".
+
 ## [IMPLEMENTADO — 10-ago-2026] Plantillas: se MODIFICAN en código, no se duplican
 
 Para reestructurar "Fumigación interior o exterior (App v2)" (áreas obligatorias + taxonomía de

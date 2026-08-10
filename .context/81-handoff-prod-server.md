@@ -197,6 +197,59 @@ Verify the templates exist first:
 SELECT id, name FROM worksheet_template WHERE name ILIKE '%(App v2)%';
 ```
 
+### 4.1b Wire the WhatsApp report sending (REQUIRED for the "send report" button)
+
+The button is inert until both sides share a secret. The send itself happens in the
+**`visar_fastapi` runtime** (that is where Meta's token lives); Odoo only hands it the PDF
+over **loopback**.
+
+1. Generate a secret: `openssl rand -hex 32`.
+2. **Runtime** (`/opt/visar_fastapi/.env`): set `INTERNAL_TOKEN=<secret>` and restart
+   `visar-fastapi`. Verify: `curl -s 127.0.0.1:8000/health`, and the startup log line
+   `API interna montada en /internal`.
+3. **Odoo** (Ajustes → Técnico → Parámetros del sistema):
+   - `visar_field.agent_token` = the **same** secret.
+   - `visar_field.agent_base_url` = `http://127.0.0.1:8000` (only if the runtime is elsewhere).
+4. ⚠️ **Do NOT add an nginx `location` for `/internal/`.** It must stay loopback-only — exposing
+   it turns Visar's verified number into a relay for sending documents to anyone.
+
+⚠️ **Meta's 24-hour window — this is the part that will bite.** A free-form document is only
+delivered if the customer messaged you in the last 24 h, and a customer who booked through the
+web wizard **never messaged**. For production you need an **approved template with a DOCUMENT
+header**, then set in the runtime `.env`:
+
+```
+WA_REPORT_TEMPLATE=<approved template name>
+WA_REPORT_TEMPLATE_LANG=es_MX
+```
+
+Template approval is **Meta lead time**, not a code task — start it early. With the variable
+empty the runtime sends free-form, which is fine to test the transport (message the business
+number from the test phone first to open the window) but fails in the field.
+
+Smoke test from the server:
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST 127.0.0.1:8000/internal/send-report \
+  -H "X-Visar-Token: <secret>" -H 'Content-Type: application/json' \
+  -d '{"phone":"5281XXXXXXXX","pdf_base64":"JVBERi0xLjQK"}'
+# 200 = enviado · 401 = token mal · 503 = falta INTERNAL_TOKEN o WHATSAPP_ENABLED=false
+# 422 = payload invalido · 502 = Meta rechazo (p. ej. fuera de la ventana de 24 h)
+```
+
+### 4.1c Camera-only photos — what ops needs to know
+
+Field photos are now taken **live with the device camera**; the gallery path is closed.
+
+- **HTTPS is mandatory** (`getUserMedia` only exists in a secure context). The prod domain is
+  fine; a technician hitting the app over plain HTTP or an IP will see "La cámara requiere una
+  conexión segura" and be unable to add photos.
+- The browser will ask for camera permission once per device. If a technician denies it, they
+  must re-enable it in browser settings — the app cannot re-prompt.
+- Escape hatch, **off by default**: set the system parameter
+  `visar_field.allow_gallery_fallback` = `True` to reveal a "Usar la galería (excepción
+  autorizada)" link. Use it to unblock a device whose camera does not work, not for convenience —
+  it lets any old photo in as service evidence.
+
 ### 4.2 Geocode service addresses (for the map)
 
 Run once after deploy: menu **App de Campo Visar → "Geolocalizar direcciones de

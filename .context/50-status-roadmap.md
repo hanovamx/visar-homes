@@ -129,8 +129,14 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
       plagas de 2 niveles** (categoría → especies, indentadas) tras el gate "¿presencia activa?";
       el sembrador ahora **converge catálogos** (`_sync_selection` / `_sync_tag_records`) y la
       obligatoriedad respeta la visibilidad **también en servidor**. Ver `25-field-app.md`.
-      Pendiente de esa tanda: **cámara obligatoria sin galería** (widget `getUserMedia`) y
-      **envío del PDF firmado por WhatsApp** (endpoint saliente en `visar_fastapi`).
+      **10-ago-2026 (v19.0.1.17.0):** **cámara obligatoria** — toda foto se toma en vivo con
+      `getUserMedia` (el `<input capture>` era solo una pista que iOS ignora); el input oculto se
+      rellena por `DataTransfer` así que el servidor no cambió. Multi-foto ya funcionaba.
+      **Reporte firmado por WhatsApp** desde la app: Odoo renderiza el PDF y el runtime
+      (`visar_fastapi`, `POST /internal/send-report` por loopback) lo entrega con pywa — primer
+      camino Odoo → runtime. Ver `25-field-app.md`.
+      Pendiente: verificar en **teléfono real** y **extremo a extremo con Meta** (requiere plantilla
+      aprobada con cabecera DOCUMENT: fuera de la ventana de 24 h el mensaje libre no se entrega).
 - [ ] Reporte dual interno vs cliente.
 - [ ] Cross-link explícito cita ↔ tarea en agenda (hoy vía SO compartida + `visar_sale_order_id` en tarea).
 - [ ] E2E: confirmar pago → verificar N tareas FSM correctas en UI técnico.

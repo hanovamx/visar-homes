@@ -282,3 +282,90 @@
 .o_visar_field .o_visar_o2m_card_fixed {
     border-left: 3px solid #0d6efd;
 }
+
+/* ================= Captura por cámara ================= */
+/* Panel a pantalla completa: en campo, con sol y guantes, la vista previa tiene
+   que ser lo más grande posible y el obturador alcanzable con el pulgar. */
+.o_visar_cam_overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+}
+
+.o_visar_cam_overlay.d-none {
+    display: none !important;
+}
+
+/* Bloquea el scroll del documento mientras la cámara está abierta. */
+body.o_visar_cam_open {
+    overflow: hidden;
+}
+
+.o_visar_cam_stage {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.o_visar_cam_video {
+    width: 100%;
+    height: 100%;
+    /* `contain` y no `cover`: recortar la vista previa engañaría sobre lo que
+       realmente queda en la foto. */
+    object-fit: contain;
+    background: #000;
+}
+
+.o_visar_cam_count {
+    position: absolute;
+    top: .75rem;
+    right: .75rem;
+}
+
+/* Tira de lo capturado en esta sesión. */
+.o_visar_cam_strip {
+    display: flex;
+    gap: .375rem;
+    overflow-x: auto;
+    padding: .375rem .75rem 0;
+    min-height: 0;
+}
+
+.o_visar_cam_thumb {
+    height: 54px;
+    width: auto;
+    border-radius: .25rem;
+    border: 1px solid rgba(255, 255, 255, .4);
+}
+
+.o_visar_cam_bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .75rem;
+    padding-bottom: max(.75rem, env(safe-area-inset-bottom));
+}
+
+/* Obturador: círculo grande, centrado, sin texto (se reconoce por forma). */
+.o_visar_cam_shoot {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    border: 4px solid rgba(255, 255, 255, .65);
+    flex: 0 0 auto;
+}
+
+.o_visar_cam_bar .btn:not(.o_visar_cam_shoot) {
+    flex: 0 0 auto;
+}
+
+/* Foto capturada y AÚN NO guardada: su "×" se ve siempre (a diferencia de las ya
+   guardadas, que lo revelan al tocar la imagen). Descartar antes de subir debe ser
+   evidente, y aquí no hay nada que confirmar contra el servidor. */
+.o_visar_field .o_visar_capture_drop {
+    display: inline-flex;
+}

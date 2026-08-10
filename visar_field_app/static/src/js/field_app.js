@@ -340,7 +340,14 @@
                     return;
                 }
                 if (!input.files || !input.files.length) {
-                    input.click();
+                    /* NO se abre el selector de archivos: la foto se toma con la
+                       cámara (ver field_app_camera.js). Abrirlo aquí reintroduciría
+                       el acceso al carrete que justamente se cerró. */
+                    var err = box.querySelector(".o_visar_capture_err");
+                    if (err) {
+                        err.textContent = "Tome al menos una foto con la cámara.";
+                        err.classList.remove("d-none");
+                    }
                     return;
                 }
                 var taskId = box.getAttribute("data-task");
@@ -364,6 +371,11 @@
                             grid.appendChild(mainThumb(taskId, field, id));
                         });
                     }
+                    /* Las fotos ya están guardadas en el servidor: el widget de
+                       cámara limpia sus miniaturas "pendientes" para no mostrarlas
+                       dos veces. */
+                    box.dispatchEvent(new CustomEvent("visar:photos-uploaded",
+                        { bubbles: true }));
                 });
             });
         });
@@ -729,11 +741,54 @@
         });
     }
 
+    /* "Enviar reporte al cliente por WhatsApp": el envío lo hace el runtime del
+       agente (puede tardar — sube el PDF a Meta), así que se bloquea el botón, se
+       avisa en línea y NO se recarga (no se pierde nada de la pantalla). Un fallo
+       esperado llega como {ok:false, message} y se muestra tal cual. */
+    function initWaReport() {
+        document.querySelectorAll(".o_visar_wa_report").forEach(function (box) {
+            var btn = box.querySelector(".o_visar_wa_report_btn");
+            var msg = box.querySelector(".o_visar_wa_report_msg");
+            if (!btn) {
+                return;
+            }
+            btn.addEventListener("click", function () {
+                var original = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = "Enviando…";
+                if (msg) {
+                    msg.classList.add("d-none");
+                }
+                postForm(box.getAttribute("data-action"), new FormData())
+                    .then(function (data) {
+                        btn.disabled = false;
+                        btn.innerHTML = original;
+                        if (!msg) {
+                            return;
+                        }
+                        var ok = !!(data && data.ok);
+                        msg.textContent = (data && data.message)
+                            || "No se pudo enviar el reporte. Intente de nuevo.";
+                        msg.classList.remove("d-none", "text-success", "text-danger");
+                        msg.classList.add(ok ? "text-success" : "text-danger");
+                        if (ok) {
+                            /* Enviado: se deja el botón para reenviar (el cliente
+                               pudo borrarlo), pero se marca que ya salió. */
+                            btn.classList.remove("btn-outline-success");
+                            btn.classList.add("btn-outline-secondary");
+                            btn.innerHTML = "💬 Reenviar reporte por WhatsApp";
+                        }
+                    });
+            });
+        });
+    }
+
     function init() {
         initSignaturePad();
         initO2M();
         initHelp();
         initWsPhotos();
+        initWaReport();
         initPhotoActions();
         initWaiting();
         initEnroute();

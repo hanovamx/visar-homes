@@ -1161,3 +1161,116 @@ columna de la sublista → sale en el PDF solo.
   una BD. Probar `-u` en QA antes de prod.
 - **Cámara obligatoria (sin galería) y envío del PDF por WhatsApp** — acordados, aún **no**
   implementados. Ver "Pendientes" abajo.
+
+---
+
+## 🆕 Actualización — 10-ago-2026 (v19.0.1.17.0) — cámara obligatoria + reporte por WhatsApp
+
+> Dos cosas que NO son de las plantillas: (3) toda foto se toma **en vivo**, y (4) el reporte
+> firmado se le manda al cliente **por WhatsApp** desde la app. Requiere `-u` (cambia `views/` y
+> assets) + reinicio. **No** hay migración: no se agregan campos.
+
+### 3. Captura por cámara (no galería) — `field_app_camera.js`
+
+**El punto de partida ya estaba a medias:** los dos inputs de foto ya eran `multiple` y el servidor
+ya leía `files.getlist(...)` en ambos caminos (galería principal y tarjetas o2m), así que **subir
+varias fotos ya funcionaba** — no había nada que hacer ahí.
+
+Lo que **no** funcionaba es "solo cámara": `capture="environment"` es una **pista**, no una
+garantía. Android Chrome abre la cámara; **iOS Safari la ignora** (más aún junto a `multiple`) y
+sigue ofreciendo "Fototeca". Por eso la foto ahora se toma con **`getUserMedia`**:
+
+- Panel a pantalla completa (vista previa + obturador + tira de lo capturado + Listo/Cancelar).
+  Se pueden tomar **varias** fotos por sesión y se **acumulan** con lo capturado antes.
+- El `<input type="file">` **se conserva, oculto**, y el widget lo rellena con los `File`
+  capturados vía **`DataTransfer`**. Así el servidor **no cambia**: mismo multipart, mismo
+  `files.getlist`. Es lo que permitió que esto no toque ni una ruta.
+- El frame de vídeo **no trae EXIF**, así que no hay orientación que corregir (a diferencia de las
+  fotos del carrete, que sí la traían — ver el fix de `_visar_ws_report_image`).
+- Se reescala a **1920 px** de lado mayor y se comprime JPEG 0.85 antes de subir.
+- Miniaturas "pendientes" con "×" **siempre visible** (lo no guardado se descarta sin confirmar
+  nada contra el servidor, a diferencia de las fotos ya guardadas).
+- `initWsPhotos` **ya no abre el selector de archivos** cuando no hay fotos: eso reintroducía el
+  carrete por la puerta de atrás. Ahora avisa "Tome al menos una foto con la cámara".
+
+**Límites, dichos claramente:** esto cierra el **camino fácil**, no vuelve imposible falsificar una
+foto (una cámara virtual seguiría pasando). Garantizarlo de verdad pide verificación del lado del
+servidor (sello de tiempo/geo contra la ventana del servicio), que es otra tarea.
+
+**Requisitos y escotilla:**
+- **HTTPS obligatorio** (`getUserMedia` solo existe en contexto seguro). En HTTP se avisa en
+  pantalla en vez de fallar en silencio. Probar en local por HTTP **no** ejercita este camino.
+- `DataTransfer` + asignar `input.files` pide navegador moderno (iOS Safari ≥ 14.5, Chrome, Firefox).
+- **`visar_field.allow_gallery_fallback`** (parámetro de sistema, por defecto **NO**) revela un
+  enlace "Usar la galería (excepción autorizada)" que quita `capture` y abre el carrete. Existe
+  para no dejar a una cuadrilla sin trabajar por un dispositivo donde la cámara falle, sin un
+  cambio de código. **No** encenderlo por comodidad: la evidencia pierde su valor.
+
+> ⚠️ **Trampa resuelta:** los botones del widget se **renderizan siempre y se deshabilitan**, nunca
+> se omiten con `t-if`. La tarjeta-plantilla que clona `initO2M` se pinta con `card_disabled` y el
+> clon solo hace `removeAttribute("disabled")` — omitir el botón dejaba las áreas que **agrega** el
+> técnico sin cámara.
+
+### 4. Enviar el reporte firmado por WhatsApp
+
+Botón **"💬 Enviar reporte al cliente por WhatsApp"** bajo la firma (solo `t-if="is_signed"`; el
+servidor lo revalida). Envía por AJAX para no perder la pantalla, y deja el resultado en línea.
+
+**El envío NO lo hace Odoo.** El access token de Meta vive en el `.env` del runtime
+(`visar_fastapi`), no en la BD — misma decisión que `visar.llm.config` / `visar.whatsapp.config`.
+Odoo renderiza el PDF y se lo pasa al runtime:
+
+```
+Técnico → Odoo (/report/whatsapp) → loopback 127.0.0.1:8000/internal/send-report
+        → pywa → Cloud API → cliente
+```
+
+- **Dirección invertida:** hasta ahora el runtime era cliente de Odoo (RPC de solo lectura). Este es
+  el **primer** camino Odoo → runtime. Config en Odoo: `visar_field.agent_base_url`
+  (def. `http://127.0.0.1:8000`) y `visar_field.agent_token`.
+- **Se manda el PDF en base64, no un enlace público.** Así no hay que exponer el reporte en una URL
+  con token ni confiar en que Meta lo descargue — y el documento llega **adjunto**, que es lo pedido.
+- **Seguridad en tres capas** (detalle en `visar_fastapi/.context/`): loopback (nginx solo proxea
+  `/whatsapp/webhook`), token compartido `X-Visar-Token` con `compare_digest`, y superficie mínima
+  (el tipo de mensaje y la plantilla los fija la config del runtime, no el llamador).
+- **Nunca revienta la pantalla:** sin teléfono, sin firma, sin token, runtime caído o rechazo de
+  Meta vuelven como aviso al técnico, y **todo intento queda en el chatter** (`_visar_log_report_sent`)
+  para que oficina pueda reintentar.
+
+> ⚠️ **Ventana de 24 h de Meta.** Un mensaje LIBRE con documento solo se entrega si el cliente
+> escribió en las últimas 24 h — y el cliente que agendó por la web **nunca escribió**. En
+> producción hay que configurar `WA_REPORT_TEMPLATE` (plantilla **aprobada** con cabecera de tipo
+> DOCUMENT) en el runtime; sin ella se manda libre, que sirve para probar y falla en campo. La
+> aprobación de la plantilla es **tiempo de Meta**, no trabajo de código.
+
+**Bug corregido de paso:** `_upsell_whatsapp_url` trataba el **2-tuple** `(display, e164)` de
+`_visar_client_phone()` como si fuera un string, así que el enlace de cobro del upsell armaba un
+número basura cuando el teléfono venía sin espacios. La lada la resuelve ahora
+`_visar_phone_e164` (10 dígitos ⇒ prefijo 52), y `_visar_client_phone` la usa.
+
+### Archivos tocados
+
+- `static/src/js/field_app_camera.js` (**nuevo**) + alta en `__manifest__.py`.
+- `views/field_app_templates.xml` — plantilla compartida `photo_capture` (reemplaza los dos inputs
+  de archivo), botón de WhatsApp + avisos.
+- `static/src/js/field_app.js` — `initWaReport`, `initWsPhotos` ya no abre el selector, evento
+  `visar:photos-uploaded`.
+- `controllers/main.py` — ruta `POST …/report/whatsapp`, `_json_err`, `_camera_fallback_allowed`,
+  contexto `wa_sent`/`wa_error`/`camera_fallback`, fix del teléfono del upsell.
+- `models/project_task.py` — `_visar_send_report_whatsapp`, `_visar_report_whatsapp_config/caption`,
+  `_visar_log_report_sent`, `_visar_http_detail`, `_visar_phone_e164`.
+- `static/src/css/field_app.css` — panel de cámara, "×" de pendientes.
+- **`visar_fastapi`**: `app/outbound.py` (**nuevo**, `/internal/send-report`), alta en `app/main.py`,
+  `INTERNAL_TOKEN` / `WA_REPORT_TEMPLATE*` en `config.py` + `.env.example`, aviso en
+  `deploy/nginx-whatsapp-location.conf`, `tests/test_outbound.py` (13 pruebas).
+
+### Pendiente / cómo verificar
+
+- **Nada de esto se ha probado en dispositivo ni contra Meta.** El runtime sí: 13 pruebas nuevas
+  (puerta, saneo, modo libre vs plantilla, error → 502) y las 153 de la suite pasan; los helpers
+  puros de Odoo se probaron extraídos por AST.
+- En **teléfono real**: que el panel abra la cámara **trasera**, que iOS **no** ofrezca Fototeca,
+  varias fotos por sesión, y las miniaturas pendientes.
+- **Extremo a extremo de WhatsApp**: pide `INTERNAL_TOKEN` en ambos lados, `WHATSAPP_ENABLED=true`
+  y la plantilla aprobada. Probar primero dentro de la ventana de 24 h (mensaje libre) para aislar
+  el transporte de la aprobación de la plantilla.
