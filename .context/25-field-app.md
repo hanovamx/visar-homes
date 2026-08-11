@@ -1408,24 +1408,45 @@ acepta un subconjunto de líneas con el nuevo parámetro `lines`) y van al bloqu
 - La galería "Evidencia final (por área tratada)" también filtra las no autorizadas: la sección
   dice "por área tratada" y no debe aportar evidencia de un tratamiento que no ocurrió.
 
-### Lo que el PDF del cliente sigue NO mostrando (deliberado, no olvido)
+### 3. Diagnóstico y observaciones finales (añadidas el 11-ago tras confirmarlo con negocio)
 
-La maqueta de Fumigación es una lista **cerrada** de secciones pedida por el cliente (servicios →
-horario → áreas → evidencia → plaguicidas). Quedan fuera, y **no se agregaron sin pedirlo**:
-`x_nivel_infestacion`, `x_factores_riesgo` (+ su "otro"), `x_descripcion_zona` y `x_comments`
-("Observaciones finales del técnico"). Varias serían valiosas para el cliente —sobre todo las
-observaciones finales— así que **conviene confirmarlo con negocio**; añadir cada una es una
-entrada más en `_visar_fumigacion_report_sections`.
+Dos secciones más, que antes no llegaban al cliente:
+
+- **(4b) "Diagnóstico de la inspección"**, *antes* de las áreas: enmarca lo que sigue (esto
+  encontramos → esto hicimos → esto no se pudo hacer).
+  - **Nivel de infestación con su glosa**: el cliente ve "Moderado" y no sabe si eso es bueno o
+    malo, así que se imprime *"Moderado — presencia ocasional"*. La glosa es la misma que el `help`
+    del arch (donde la lee el técnico); un nivel que no esté en el mapa sale sin glosa, no revienta.
+  - **Factores de riesgo** en caja **informativa** (tono `info`, no ámbar: ese queda reservado para
+    las áreas no autorizadas, para que no compitan dos cajas por la atención). El texto explica el
+    *porqué*: corregir esas condiciones es lo que evita que la plaga regrese. Es la parte accionable
+    del reporte y la que explica una reaparición.
+  - El companion "Otro" se **sustituye** por lo que escribió el técnico (si no, el reporte diría
+    literalmente "Otro"), y si escribió el companion sin marcar "Otro" el dato tampoco se pierde.
+- **(6b) "Observaciones finales del técnico"** (`x_comments`), después de la evidencia que las
+  respalda. Se arma con el descriptor **genérico** (nodo sintético) en vez de leer el campo a mano:
+  así hereda el manejo de `html` vs `text` —el campo nativo de la worksheet puede ser cualquiera de
+  los dos— y la regla de omitir lo vacío.
+
+> **Bug evitado:** los factores se devuelven como **lista**, no como cadena unida por comas. El
+> texto libre del técnico puede traer comas ("Nido en el techo, junto al tinaco") y unir-y-volver-a-
+> partir rompía ese factor en dos.
+
+Sigue fuera, y **no se agregó sin pedirlo**: `x_descripcion_zona`.
+`_visar_report_plaguicidas_section` sigue devolviendo None (necesita un catálogo de plaguicidas).
 
 `_visar_report_plaguicidas_section` sigue devolviendo None: necesita un catálogo de plaguicidas
 (nombre, principio activo, descripción) que no existe.
 
 ### Archivos tocados
 
-- `models/project_task.py` — `_visar_fumigacion_refused_section` (nuevo), `_visar_report_table_drop`
+- `models/project_task.py` — `_visar_fumigacion_refused_section` / `_visar_fumigacion_diagnostico_section`
+  / `_visar_fumigacion_observaciones_section` / `_visar_fumigacion_factores_list` (nuevos),
+  `_VISAR_NIVEL_GLOSA`, `_visar_report_table_drop`
   / `_visar_report_table_relabel` (nuevos), `_visar_ws_table_descriptor(lines=…)`,
   `_visar_fumigacion_areas_table` filtra tratadas, evidencia final filtrada, orden (5b).
-- `report/worksheet_report_templates.xml` — rama `kind == 'notice'` + estilos.
+- `report/worksheet_report_templates.xml` — rama `kind == 'notice'` (con variante `tone='info'`)
+  + estilos.
 - `__manifest__.py` → v19.0.1.19.0.
 
 ### Cómo verificar

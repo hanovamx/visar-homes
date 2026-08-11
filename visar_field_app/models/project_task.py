@@ -1520,6 +1520,11 @@ class ProjectTask(models.Model):
                 {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
             ]})
 
+        # (4b) Diagnóstico — qué se encontró, antes de qué se hizo.
+        diagnostico = self._visar_fumigacion_diagnostico_section(record)
+        if diagnostico:
+            sections.append(diagnostico)
+
         # (5) Áreas tratadas — subficha one2many como tabla (columnas de la vista).
         table = self._visar_fumigacion_areas_table(record)
         if table:
@@ -1536,6 +1541,12 @@ class ProjectTask(models.Model):
         evidence = self._visar_report_evidence_section(record)
         if evidence:
             sections.append(evidence)
+
+        # (6b) Observaciones finales del técnico — cierre en palabras del técnico,
+        # después de la evidencia que las respalda.
+        observaciones = self._visar_fumigacion_observaciones_section(record)
+        if observaciones:
+            sections.append(observaciones)
 
         # (7) Plaguicidas utilizados — PENDIENTE (ver método stub).
         plaguicidas = self._visar_report_plaguicidas_section(record)
@@ -1616,6 +1627,89 @@ class ProjectTask(models.Model):
         self._visar_report_table_drop(table, self._VISAR_FUM_TABLE_SKIP)
         self._visar_report_table_relabel(table, self._VISAR_FUM_TABLE_HEADERS)
         return table
+
+    # Qué significa cada nivel, PARA EL CLIENTE. Es la misma glosa que el `help` del
+    # arch (donde la lee el técnico): sin ella el cliente ve "Moderado" en su reporte
+    # y no sabe si eso es bueno o malo.
+    _VISAR_NIVEL_GLOSA = {
+        'Preventivo': "sin infestación visible",
+        'Moderado': "presencia ocasional",
+        'Alto': "infestación activa o problema complejo",
+    }
+
+    def _visar_fumigacion_factores_list(self, record):
+        """Factores de riesgo como LISTA, con "Otro" sustituido por lo que escribió el
+        técnico (si no, el reporte del cliente diría literalmente "Otro").
+
+        Devuelve lista y no una cadena a propósito: el texto libre del técnico puede
+        traer comas ("Nido en el techo, junto al tinaco"), así que unir-y-volver-a-
+        partir rompería ese factor en dos."""
+        self.ensure_one()
+        names = [f.x_name for f in record.x_factores_riesgo if f.x_name]
+        otro = (record.x_factores_riesgo_otro or '').strip()
+        out = []
+        for name in names:
+            if name.strip().lower().startswith('otro'):
+                if otro:
+                    out.append(otro)
+                continue
+            out.append(name.strip())
+        # Companion escrito sin marcar "Otro": el dato no se pierde.
+        if otro and not any(n.strip().lower().startswith('otro') for n in names):
+            out.append(otro)
+        return out
+
+    def _visar_fumigacion_diagnostico_section(self, record):
+        """(4b) Qué se ENCONTRÓ: nivel de infestación + condiciones que favorecen la plaga.
+
+        Va **antes** de las áreas tratadas porque enmarca lo que sigue: esto
+        encontramos → esto hicimos → esto no se pudo hacer. Los factores de riesgo son
+        la parte accionable para el cliente y la que explica por qué una plaga
+        reaparece a pesar del tratamiento; se pintan en caja **informativa** (no ámbar:
+        ese tono queda reservado para las áreas no autorizadas, que es la advertencia
+        de verdad)."""
+        self.ensure_one()
+        fields_out = []
+        nivel = record.x_nivel_infestacion
+        if nivel:
+            glosa = self._VISAR_NIVEL_GLOSA.get(nivel)
+            fields_out.append({
+                'kind': 'scalar', 'label': "Nivel de infestación",
+                'text': ("%s — %s" % (nivel, glosa)) if glosa else nivel,
+            })
+        factores = self._visar_fumigacion_factores_list(record)
+        if factores:
+            fields_out.append({
+                'kind': 'notice', 'tone': 'info',
+                'label': "Condiciones detectadas que favorecen la presencia de plaga",
+                'items': factores,
+                'text': ("Corregir estas condiciones es lo que evita que la plaga "
+                         "regrese: el tratamiento elimina lo que hay hoy, pero si la "
+                         "condición sigue, el problema puede reaparecer."),
+            })
+        if not fields_out:
+            return None
+        return {'title': "Diagnóstico de la inspección", 'fields': fields_out}
+
+    def _visar_fumigacion_observaciones_section(self, record):
+        """(6b) Observaciones finales del técnico (`x_comments`).
+
+        Se arma con el descriptor GENÉRICO (nodo sintético) en vez de leer el campo a
+        mano: así hereda el manejo de `html` vs `text` —el campo nativo de la worksheet
+        puede ser cualquiera de los dos según la plantilla— y la regla de omitir lo
+        vacío. Sin valor no se imprime la sección."""
+        self.ensure_one()
+        meta = self.env[record._name].sudo().fields_get(['x_comments'])
+        if 'x_comments' not in meta:
+            return None
+        node = etree.Element('field', name='x_comments')
+        desc = self._visar_ws_field_descriptor(node, meta, record)
+        if not desc:
+            return None
+        # La etiqueta del campo ("Observaciones finales del técnico") ya es el título
+        # de la sección; repetirla como etiqueta de la fila sería redundante.
+        desc['label'] = ''
+        return {'title': "Observaciones finales del técnico", 'fields': [desc]}
 
     def _visar_fumigacion_refused_section(self, record):
         """Bloque destacado de las áreas que el CLIENTE no autorizó tratar.
