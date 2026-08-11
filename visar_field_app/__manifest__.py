@@ -20,7 +20,7 @@ citas), sin tocar el frontend OWL nativo.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.20.0',
+    'version': '19.0.1.21.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_fsm',

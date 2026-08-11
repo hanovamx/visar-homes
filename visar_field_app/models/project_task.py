@@ -1320,6 +1320,72 @@ class ProjectTask(models.Model):
     # del Cliente y la Firma) lo pinta la plantilla nativa; aquí se preparan los
     # bloques que faltaban o que Visar reordena para el cliente.
 
+    # Verde de marca de Visar. El acento REAL del documento sale de
+    # `company_id.primary_color` (el mismo que pinta la cabecera del
+    # external_layout); esto es solo el respaldo cuando la compañía no lo tiene
+    # puesto. Es la hoja del icono/favicon (#6fcd3b) bajada de tono: el lima
+    # puro sobre blanco no se lee como TEXTO ni aguanta una impresión pobre.
+    _VISAR_BRAND_GREEN = '#5faf33'
+
+    @staticmethod
+    def _visar_hex_rgb(value):
+        """'#5faf33' | '5faf33' | '#5a3' → (r, g, b); None si no es un hex válido."""
+        raw = (value or '').strip().lstrip('#')
+        if len(raw) == 3:
+            raw = ''.join(c * 2 for c in raw)
+        if len(raw) != 6:
+            return None
+        try:
+            return tuple(int(raw[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _visar_mix_hex(rgb, ratio, towards=(255, 255, 255)):
+        """Mezcla `rgb` con `towards` (blanco por defecto) y devuelve el hex.
+
+        `ratio` es cuánto queda del color original: 1 lo deja intacto, 0 devuelve
+        `towards` puro."""
+        ratio = max(0.0, min(1.0, ratio))
+        return '#%02x%02x%02x' % tuple(
+            int(round(c * ratio + t * (1 - ratio))) for c, t in zip(rgb, towards))
+
+    def _visar_report_palette(self):
+        """Paleta del reporte del cliente, DERIVADA del color de marca.
+
+        El PDF no puede usar `var()` ni `color-mix()` —el WebKit de wkhtmltopdf es
+        de 2012—, así que los tonos se calculan aquí y la plantilla los interpola en
+        su `<style>`. Derivarlos en vez de escribirlos a mano tiene un motivo
+        concreto: los avisos que se agregaron para Fumigación traían tonos AJENOS
+        (ámbar, gris azulado) y eran el único color del documento que no seguía a la
+        marca; si mañana cambia `primary_color`, ahora los sigue todo.
+
+        · `accent` — el color de marca tal cual (títulos de sección, encabezados de
+          tabla): ya se usaba así.
+        · `dark` / `deep` — el mismo verde oscurecido, para TEXTO y marcos. El verde
+          de marca es un lima: como texto sobre blanco no tiene contraste.
+        · `line` / `soft` / `tint` / `pale` — el verde aclarado hacia blanco, para
+          bordes suaves, fondos de panel y el rayado de las tablas.
+        """
+        self.ensure_one()
+        accent = (self.company_id.primary_color or '').strip() or self._VISAR_BRAND_GREEN
+        rgb = self._visar_hex_rgb(accent)
+        if not rgb:
+            # `primary_color` con basura (o un formato que no es hex): mejor el verde
+            # de marca que un documento a medio pintar.
+            accent = self._VISAR_BRAND_GREEN
+            rgb = self._visar_hex_rgb(accent)
+        mix = self._visar_mix_hex
+        return {
+            'accent': accent,
+            'deep': mix(rgb, 0.50, towards=(0, 0, 0)),
+            'dark': mix(rgb, 0.72, towards=(0, 0, 0)),
+            'line': mix(rgb, 0.45),
+            'soft': mix(rgb, 0.30),
+            'tint': mix(rgb, 0.12),
+            'pale': mix(rgb, 0.07),
+        }
+
     def _visar_report_technicians(self):
         """[{'name', 'phone'}] de los técnicos que realizaron el servicio.
 
@@ -1672,9 +1738,10 @@ class ProjectTask(models.Model):
         Va **antes** de las áreas tratadas porque enmarca lo que sigue: esto
         encontramos → esto hicimos → esto no se pudo hacer. Los factores de riesgo son
         la parte accionable para el cliente y la que explica por qué una plaga
-        reaparece a pesar del tratamiento; se pintan en caja **informativa** (no ámbar:
-        ese tono queda reservado para las áreas no autorizadas, que es la advertencia
-        de verdad)."""
+        reaparece a pesar del tratamiento; se pintan en caja **informativa** (`tone`
+        `info`): mismo verde de marca que el aviso de las áreas no autorizadas, pero en
+        panel suave. La advertencia de verdad es esa otra, y se distingue por peso
+        —marco cerrado y etiquetas en negativo—, no por un color distinto."""
         self.ensure_one()
         fields_out = []
         nivel = record.x_nivel_infestacion
@@ -1714,8 +1781,12 @@ class ProjectTask(models.Model):
         if not desc:
             return None
         # La etiqueta del campo ("Observaciones finales del técnico") ya es el título
-        # de la sección; repetirla como etiqueta de la fila sería redundante.
+        # de la sección; repetirla como etiqueta de la fila sería redundante. Sin
+        # etiqueta, la maqueta le da el ancho completo (si no, el texto se estruja en
+        # dos tercios) y `panel` lo saca en caja verde tenue: es texto libre, y en
+        # panel se lee como la nota de cierre del técnico.
         desc['label'] = ''
+        desc['panel'] = True
         return {'title': "Observaciones finales del técnico", 'fields': [desc]}
 
     def _visar_fumigacion_refused_section(self, record):

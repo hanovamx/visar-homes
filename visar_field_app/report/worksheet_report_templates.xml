@@ -103,9 +103,12 @@
         <xpath expr="//t[div[@name='worksheet_map']]" position="replace">
             <t t-if="visar_worksheet_map and visar_worksheet_map.get(doc.id)">
                 <!-- Acento = color de marca de la empresa (mismo que la cabecera del
-                     external_layout), para que TODO el documento sea coherente. Se
-                     interpola aquí porque el WebKit de wkhtmltopdf no soporta var(). -->
-                <t t-set="visar_accent" t-value="doc.company_id.primary_color or '#5faf33'"/>
+                     external_layout), para que TODO el documento sea coherente. La
+                     paleta (verde oscurecido para texto/marcos, aclarado para fondos)
+                     se deriva de ese acento en Python y se interpola aquí: el WebKit
+                     de wkhtmltopdf no soporta var() ni color-mix(). -->
+                <t t-set="visar_pal" t-value="doc._visar_report_palette()"/>
+                <t t-set="visar_accent" t-value="visar_pal['accent']"/>
                 <div class="o_visar_ws">
                     <style>
                         .o_visar_ws { margin-top: 12px; font-size: 14px; color: #202020; }
@@ -153,7 +156,9 @@
                             padding: 4px 7px; border-bottom: 1px solid #e6e9ef;
                             vertical-align: top;
                         }
-                        table.o_visar_ws_table tr:nth-child(even) td { background: #f4f8ee; }
+                        table.o_visar_ws_table tr:nth-child(even) td {
+                            background: <t t-esc="visar_pal['pale']"/>;
+                        }
                         table.o_visar_ws_table tr { page-break-inside: avoid; }
                         .o_visar_ws_thumb {
                             max-height: 54px; max-width: 90px;
@@ -169,41 +174,75 @@
                         }
                         /* Aviso destacado (áreas que el cliente no autorizó). El
                            cliente FIRMA este documento, así que tiene que verse.
-                           Se apoya en borde grueso + negritas, no solo en color:
-                           el reporte se imprime en blanco y negro a menudo. */
+
+                           Lo hace con el VERDE OSCURO de la marca, no con ámbar: era
+                           el único color ajeno a la paleta en todo el documento. La
+                           jerarquía la carga el armazón —marco cerrado, filo grueso y
+                           etiquetas en negativo—, no el tono; así sigue funcionando
+                           impreso en blanco y negro, que es como acaba muchas veces
+                           este reporte. */
                         .o_visar_ws_notice {
-                            border: 1px solid #e6a23c;
-                            border-left: 5px solid #e6a23c;
-                            background: #fdf6ec;
+                            border: 1px solid <t t-esc="visar_pal['deep']"/>;
+                            border-left: 6px solid <t t-esc="visar_pal['deep']"/>;
+                            background: #fff;
                             padding: 9px 12px;
                             margin: 6px 0;
                             page-break-inside: avoid;
                         }
+                        /* En caja alta NO: es la frase más importante del documento y
+                           mide una línea entera; en versalitas se lee peor. El título
+                           de la sección ("ÁREAS NO TRATADAS", que sí va en caja alta)
+                           ya hace de antetítulo. */
                         .o_visar_ws_notice_title {
-                            font-weight: 700; color: #8a5200;
-                            text-transform: none; margin-bottom: 5px;
+                            font-weight: 700; color: <t t-esc="visar_pal['deep']"/>;
+                            font-size: 14.5px; margin-bottom: 6px;
                         }
                         /* Lista de áreas: `inline-block` en vez de flex — el WebKit
-                           viejo de wkhtmltopdf rompe el wrap de flex con gap. */
+                           viejo de wkhtmltopdf rompe el wrap de flex con gap.
+                           En NEGATIVO (verde sólido, texto blanco): es lo que hace
+                           que el ojo caiga aquí antes de firmar. */
                         .o_visar_ws_notice_items { margin: 0 0 6px 0; }
                         .o_visar_ws_notice_item {
-                            display: inline-block; background: #fff;
-                            border: 1px solid #e6a23c; border-radius: 3px;
+                            display: inline-block;
+                            background: <t t-esc="visar_pal['deep']"/>; color: #fff;
+                            border: 1px solid <t t-esc="visar_pal['deep']"/>;
+                            border-radius: 3px;
                             padding: 1px 8px; margin: 0 5px 4px 0;
                             font-weight: 700; font-size: 13px;
                         }
                         .o_visar_ws_notice_text { font-size: 12.5px; color: #4b4b4b; }
                         /* Variante INFORMATIVA (condiciones de riesgo detectadas):
-                           misma estructura, tono neutro. El ámbar queda reservado
-                           para la advertencia de verdad —las áreas que el cliente no
-                           autorizó— para que no compitan dos cajas por la atención. */
+                           el mismo verde, en panel suave. Las dos cajas se distinguen
+                           por PESO y no por color —marco cerrado + etiquetas en
+                           negativo arriba, fondo teñido y filo fino aquí—, para que
+                           no compitan dos tonos por la atención del cliente. */
                         .o_visar_ws_notice.is-info {
-                            border-color: #c8d3e0; border-left-color: #6b7f99;
-                            background: #f5f8fb;
+                            border: 1px solid <t t-esc="visar_pal['soft']"/>;
+                            border-left: 4px solid <t t-esc="visar_accent"/>;
+                            background: <t t-esc="visar_pal['tint']"/>;
                         }
-                        .o_visar_ws_notice.is-info .o_visar_ws_notice_title { color: #33475b; }
+                        .o_visar_ws_notice.is-info .o_visar_ws_notice_title {
+                            color: <t t-esc="visar_pal['dark']"/>; font-size: 14px;
+                        }
                         .o_visar_ws_notice.is-info .o_visar_ws_notice_item {
-                            border-color: #c8d3e0;
+                            background: #fff; color: <t t-esc="visar_pal['dark']"/>;
+                            border-color: <t t-esc="visar_pal['line']"/>;
+                        }
+                        /* Fila SIN etiqueta (hoy, las observaciones del técnico: el
+                           título de la sección ya dice qué es). Sin esto el valor
+                           quedaba estrujado en dos tercios del ancho, con un hueco
+                           del 34% a la izquierda. Va en panel teñido para que el
+                           texto libre se lea como una nota y no como un párrafo
+                           suelto al final del documento. */
+                        .o_visar_ws_row_full {
+                            display: block; border-bottom: none; padding: 0;
+                        }
+                        .o_visar_ws_row_full > .o_visar_ws_label { display: none; }
+                        .o_visar_ws_panel > .o_visar_ws_value {
+                            background: <t t-esc="visar_pal['tint']"/>;
+                            border-left: 3px solid <t t-esc="visar_accent"/>;
+                            padding: 8px 11px;
+                            page-break-inside: avoid;
                         }
                     </style>
                     <t t-foreach="visar_worksheet_map.get(doc.id)" t-as="section"
@@ -270,8 +309,13 @@
                                     <div><img class="o_visar_ws_img"
                                               t-att-src="image_data_uri(f['image'])"/></div>
                                 </div>
-                                <!-- Texto enriquecido (html) -->
-                                <div t-elif="f['kind'] == 'html'" class="o_visar_ws_row">
+                                <!-- Texto enriquecido (html). Sin etiqueta ocupa todo
+                                     el ancho; con `panel` sale en caja teñida (las
+                                     observaciones del técnico llegan como html o como
+                                     texto según la plantilla, así que la misma regla
+                                     se repite en la rama escalar de abajo). -->
+                                <div t-elif="f['kind'] == 'html'"
+                                     t-attf-class="o_visar_ws_row#{'' if f.get('label') else ' o_visar_ws_row_full'}#{' o_visar_ws_panel' if f.get('panel') else ''}">
                                     <span class="o_visar_ws_label" t-out="f['label']"/>
                                     <div class="o_visar_ws_value" t-out="f['html']"/>
                                 </div>
@@ -284,7 +328,8 @@
                                     </div>
                                 </div>
                                 <!-- Escalar / relacional simple -->
-                                <div t-else="" class="o_visar_ws_row">
+                                <div t-else=""
+                                     t-attf-class="o_visar_ws_row#{'' if f.get('label') else ' o_visar_ws_row_full'}#{' o_visar_ws_panel' if f.get('panel') else ''}">
                                     <span class="o_visar_ws_label" t-out="f['label']"/>
                                     <div class="o_visar_ws_value" t-out="f['text']"/>
                                 </div>

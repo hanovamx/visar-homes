@@ -1417,9 +1417,10 @@ Dos secciones más, que antes no llegaban al cliente:
   - **Nivel de infestación con su glosa**: el cliente ve "Moderado" y no sabe si eso es bueno o
     malo, así que se imprime *"Moderado — presencia ocasional"*. La glosa es la misma que el `help`
     del arch (donde la lee el técnico); un nivel que no esté en el mapa sale sin glosa, no revienta.
-  - **Factores de riesgo** en caja **informativa** (tono `info`, no ámbar: ese queda reservado para
-    las áreas no autorizadas, para que no compitan dos cajas por la atención). El texto explica el
-    *porqué*: corregir esas condiciones es lo que evita que la plaga regrese. Es la parte accionable
+  - **Factores de riesgo** en caja **informativa** (tono `info`: mismo verde de marca que el aviso
+    de las áreas no autorizadas, pero en panel suave — las dos cajas se distinguen por **peso** y no
+    por color, para que no compitan dos tonos por la atención). El texto explica el *porqué*:
+    corregir esas condiciones es lo que evita que la plaga regrese. Es la parte accionable
     del reporte y la que explica una reaparición.
   - El companion "Otro" se **sustituye** por lo que escribió el técnico (si no, el reporte diría
     literalmente "Otro"), y si escribió el companion sin marcar "Otro" el dato tampoco se pierde.
@@ -1550,3 +1551,72 @@ El botón de borrador también se salta la validación del **cliente**: el liste
   hora local del técnico. Luego completar y guardar de verdad → el aviso desaparece y la firma se
   habilita. Probar también el back-swipe con cambios sin guardar (debe avisar) y cerrar el servicio
   (no debe avisar).
+
+---
+
+## 🆕 Actualización — 11-ago-2026 (v19.0.1.21.0) — el reporte, todo en verde de marca
+
+> Solo **diseño** del PDF del cliente: los bloques que se agregaron para Fumigación (áreas no
+> autorizadas, diagnóstico, observaciones) traían tonos **ajenos a la marca** —ámbar y gris
+> azulado—; eran el único color del documento que no seguía al verde de Visar. Requiere `-u`
+> (es una vista QWeb) — sin datos que migrar.
+
+### Paleta derivada, no escrita a mano (`_visar_report_palette`)
+
+El acento del documento ya salía de `company_id.primary_color` (el mismo que pinta la cabecera del
+`external_layout`), con respaldo `#5faf33` — el verde de la hoja del icono/favicon (`#6fcd3b`)
+bajado de tono, porque el lima puro **como texto sobre blanco no se lee**. Lo que faltaba eran los
+tonos derivados, así que se calculan en Python y la plantilla los interpola en su `<style>`:
+
+| clave | mezcla | para qué |
+| --- | --- | --- |
+| `accent` | el color tal cual | títulos de sección, encabezados de tabla, filos |
+| `dark` / `deep` | 72 % / 50 % hacia **negro** | TEXTO y marcos (el verde de marca no contrasta) |
+| `line` / `soft` | 45 % / 30 % hacia blanco | bordes suaves |
+| `tint` / `pale` | 12 % / 7 % hacia blanco | fondo de panel y rayado de tablas |
+
+- **Por qué en Python:** el WebKit de wkhtmltopdf (2012) no soporta `var()` ni `color-mix()`.
+- **Por qué derivada:** si mañana cambia `primary_color`, ahora la siguen **también los avisos**.
+  `primary_color` con basura (o un formato que no es hex) → cae al verde de marca, no a un documento
+  a medio pintar.
+
+### Jerarquía por PESO, no por color
+
+Las dos cajas son del mismo verde; lo que las separa es el armazón:
+
+- **Aviso "Áreas no tratadas"** (la advertencia de verdad): marco cerrado en `deep`, filo de 6 px,
+  fondo blanco y **etiquetas en negativo** (verde sólido, texto blanco). Es lo que hace que el ojo
+  caiga ahí antes de firmar. En **escala de grises** sigue siendo el elemento más pesado de la
+  página — mejor que el ámbar anterior, que al imprimirse en B/N quedaba en un beige pálido.
+- **Panel informativo** (condiciones de riesgo): fondo `tint`, filo fino de 4 px en `accent`,
+  etiquetas en blanco con borde `line`.
+- El título del aviso **no** va en caja alta: es la frase más importante del documento y mide una
+  línea entera. El título de la sección ("ÁREAS NO TRATADAS", que sí va en versalitas) ya hace de
+  antetítulo.
+
+### Fila sin etiqueta (`o_visar_ws_row_full` + `o_visar_ws_panel`)
+
+Las **observaciones del técnico** se imprimen sin etiqueta (el título de la sección ya dice qué
+son), y la maqueta reservaba el 34 % del ancho a esa etiqueta vacía: el texto libre salía estrujado
+en dos tercios con un hueco a la izquierda. Ahora ocupa el ancho completo y va en panel verde tenue,
+para que se lea como la nota de cierre del técnico. `desc['panel'] = True` viaja desde
+`_visar_fumigacion_observaciones_section`; la regla se aplica en las **dos** ramas de texto de la
+maqueta (`html` y escalar) porque `x_comments` puede ser cualquiera de los dos según la plantilla.
+
+### Archivos tocados
+
+- `models/project_task.py` — `_VISAR_BRAND_GREEN`, `_visar_hex_rgb`, `_visar_mix_hex`,
+  `_visar_report_palette` (nuevos); `desc['panel']` en las observaciones.
+- `report/worksheet_report_templates.xml` — `<style>` interpolado con la paleta, avisos en verde,
+  `o_visar_ws_row_full` / `o_visar_ws_panel`, rayado de tabla desde `pale`.
+- `__manifest__.py` → v19.0.1.21.0.
+
+### Cómo verificar
+
+- La aritmética de la paleta se probó **aislada** (~40 aserciones): hex válido/inválido, extremos de
+  la mezcla, orden de luminancia `deep < dark < accent < line < soft < tint < pale`, **contraste**
+  (texto `deep` sobre blanco 8.3:1; negativo blanco sobre `deep` 8.3:1; título `dark` sobre `tint`
+  4.4:1) y que la plantilla no deje interpolaciones sin resolver ni hex a mano fuera de la paleta.
+- Se revisó la maqueta con la **previsualización HTML** (CSS real del reporte), en color y en escala
+  de grises. **No se ha renderizado un PDF real:** al hacer `-u`, comprobar en wkhtmltopdf que el
+  panel de observaciones no se corte entre páginas y que los filos gruesos no se coman el ancho.
