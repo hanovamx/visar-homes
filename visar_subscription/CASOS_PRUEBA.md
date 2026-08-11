@@ -52,6 +52,18 @@ sistema **lo bloquea**.
 **Esperado:** la póliza pasa a **"Cancelada"**; los pagos **no son reembolsables**;
 deja de facturar.
 
+## CP-9 · Visitas incluidas en el plan (un solo pago, varias visitas)
+**Preparación:** plan anual con **periodo de facturación 1 año**, **periodos cobrados
+por adelantado = 1** y **visitas incluidas = 12**.
+**Pasos:** cotización con ese plan y un servicio de póliza → confirmar → facturar →
+registrar el pago.
+**Esperado:** el campo "Visitas incluidas" se llena solo en 12 al elegir el plan; el
+total es el de **un solo año** (idéntico a si el campo fuera 0) y **no** aparece línea de
+mensualidad adelantada; al pagar se crean **12 visitas** en el tablero del servicio,
+numeradas `(1/12)`…`(12/12)`; la próxima fecha de facturación sigue **a un año**.
+Con dos servicios en la póliza salen **24** visitas, 12 en cada tablero.
+Editar el valor a 10 en la póliza persiste y **no** modifica el plan.
+
 ## Pendiente de configuración/desarrollo
 - **Stripe**: link de pago + tokenización de tarjeta para cobros automáticos
   (requiere llaves del cliente).

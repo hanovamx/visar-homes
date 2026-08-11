@@ -16,6 +16,12 @@
                         invisible="not is_subscription"
                         string="Visita de garantía"/>
             </xpath>
+            <!-- Visitas incluidas: junto al plan recurrente, editable por póliza.
+                 Se ancla en el div nombrado que sale_subscription inserta antes de la
+                 lista de precios; ese módulo aplica su vista antes que esta. -->
+            <xpath expr="//div[@name='plan_block']" position="after">
+                <field name="visar_included_visits" invisible="not is_subscription"/>
+            </xpath>
             <!-- Fase 4: previsualizar descuento de combo antes de confirmar -->
             <xpath expr="//header" position="inside">
                 <button name="action_visar_apply_combo_discount" type="object"

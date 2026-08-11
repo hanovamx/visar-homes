@@ -30,6 +30,15 @@ class TestPoliza(TransactionCase):
             'name': 'Plan Bimestral Test',
             'billing_period_value': 2, 'billing_period_unit': 'month',
             'visar_first_invoice_periods': 1, 'visar_commitment_months': 0})
+        # Plan anual de un SOLO pago con visitas incluidas: una factura al año, pero
+        # el cliente tiene derecho a 12 visitas. La unidad 'year' es la del plan real
+        # que motivó el campo, y la que el guardia de la migración 19.0.1.3.0 (que
+        # filtra por unidad 'month') no alcanza.
+        cls.plan_anual = cls.env['sale.subscription.plan'].create({
+            'name': 'Plan Anual Test',
+            'billing_period_value': 1, 'billing_period_unit': 'year',
+            'visar_first_invoice_periods': 1, 'visar_commitment_months': 0,
+            'visar_included_visits': 12})
         cls.service = cls._make_service('Servicio Póliza Test', cls.project, 100.0)
 
     @classmethod
@@ -300,3 +309,89 @@ class TestPoliza(TransactionCase):
         service.unlink()
         self.assertFalse(self.env['sale.order.line'].browse(anticipo_ids).exists(),
                          "el anticipo huérfano no debe sobrevivir al servicio")
+
+    # ------------------------------------------------------------------
+    # Visitas incluidas en el plan (REQ-2732): el nº de visitas deja de derivarse
+    # del nº de periodos cobrados por adelantado.
+    # ------------------------------------------------------------------
+    def test_16_included_visits_single_payment(self):
+        """Plan anual de un pago: 12 visitas sin cobrar 12 años."""
+        order = self._make_poliza([self.service], plan=self.plan_anual)
+        self.assertEqual(order.visar_included_visits, 12,
+                         "la orden hereda las visitas incluidas del plan")
+        self.assertFalse(self._anticipo_lines(order),
+                         "las visitas incluidas no cobran periodos extra")
+        self.assertAlmostEqual(order.amount_total, 100.0, places=2,
+                               msg="se cobra un solo periodo")
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 12, "12 visitas contra una única factura")
+        self.assertEqual(order.next_invoice_date, date(2027, 1, 1),
+                         "no se adelantaron periodos de facturación")
+
+    def test_17_included_visits_do_not_change_total(self):
+        """El importe es idéntico con y sin visitas incluidas (RF-03)."""
+        plan_sin = self.env['sale.subscription.plan'].create({
+            'name': 'Plan Anual Sin Visitas Test',
+            'billing_period_value': 1, 'billing_period_unit': 'year',
+            'visar_first_invoice_periods': 1, 'visar_commitment_months': 0,
+            'visar_included_visits': 0})
+        con = self._make_poliza([self.service], plan=self.plan_anual)
+        sin = self._make_poliza([self.service], plan=plan_sin)
+        self.assertAlmostEqual(con.amount_total, sin.amount_total, places=2)
+        self.assertAlmostEqual(con.recurring_monthly, sin.recurring_monthly, places=2,
+                               msg="el MRR tampoco se mueve")
+
+    def test_18_included_visits_manual_override(self):
+        """El valor puesto a mano en la póliza manda y no altera el plan (RF-04)."""
+        order = self._make_poliza([self.service], plan=self.plan_anual)
+        order.visar_included_visits = 10
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 10, "manda el valor de la póliza, no el del plan")
+        self.assertEqual(self.plan_anual.visar_included_visits, 12,
+                         "el plan no se modifica desde la orden")
+
+    def test_19_included_visits_per_service_line(self):
+        """Con 2 servicios salen 2 lotes, uno por tablero (RF-10)."""
+        service2 = self._make_service('Servicio Anual Test 2', self.project2, 200.0)
+        order = self._make_poliza([self.service, service2], plan=self.plan_anual)
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 24, "12 visitas por cada línea de servicio")
+        self.assertEqual(len(visits.filtered(lambda t: t.project_id == self.project)), 12)
+        self.assertEqual(len(visits.filtered(lambda t: t.project_id == self.project2)), 12)
+        # Sin consecutivo quedarían 12 tareas de título idéntico en el tablero.
+        self.assertEqual(len(set(visits.mapped('name'))), 24,
+                         "cada visita del lote se distingue por su consecutivo")
+
+    def test_20_included_visits_on_every_invoice(self):
+        """Cada factura genera su propio lote y no toca los anteriores (RF-12)."""
+        order = self._make_poliza([self.service], plan=self.plan_anual)
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        first_visits = order.visar_visit_ids.filtered(
+            lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(first_visits), 12)
+
+        # Traer la próxima fecha al pasado para poder facturar el periodo siguiente
+        # dentro del test; es el mismo camino que recorre el cron de suscripciones.
+        order.next_invoice_date = date(2026, 2, 1)
+        inv2 = order._create_invoices()
+        inv2.action_post()
+        self._pay(inv2)
+
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 24, "la 2ª factura genera otro lote de 12")
+        self.assertEqual(first_visits.exists(), first_visits,
+                         "las visitas del periodo anterior no se borran")

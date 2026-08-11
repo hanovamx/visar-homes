@@ -8,6 +8,7 @@
             <xpath expr="//field[@name='billing_period_unit']" position="after">
                 <field name="visar_commitment_months"/>
                 <field name="visar_first_invoice_periods"/>
+                <field name="visar_included_visits"/>
             </xpath>
         </field>
     </record>

@@ -17,6 +17,15 @@ class SaleOrder(models.Model):
     visar_is_poliza = fields.Boolean(
         string="Es póliza (genera visitas)", compute='_compute_visar_is_poliza',
     )
+    visar_included_visits = fields.Integer(
+        string="Visitas incluidas",
+        compute='_compute_visar_included_visits', store=True, readonly=False,
+        copy=True,
+        help="Visitas que genera cada factura de esta póliza. Se hereda del plan y "
+             "se puede ajustar aquí sin tocar el plan. No afecta el precio ni el "
+             "calendario de facturación.\n\n"
+             "0 = derivar el nº de visitas de los periodos cobrados por adelantado.",
+    )
     # Siniestralidad (Fase 5): consumo de garantía para ajustar renovación.
     visar_service_visit_count = fields.Integer(
         string="Servicios ejecutados", compute='_compute_visar_siniestralidad',
@@ -53,6 +62,19 @@ class SaleOrder(models.Model):
         return bool(self.is_subscription and any(
             l.product_id.product_tmpl_id.visar_generates_visit
             for l in self.order_line))
+
+    @api.depends('plan_id')
+    def _compute_visar_included_visits(self):
+        """Hereda las visitas incluidas del plan, dejándolas editables en la orden.
+
+        Es compute y no onchange a propósito: en el flujo web la orden es el carrito y
+        el plan se asigna con `write` desde el controlador y desde `_cart_add`, donde
+        los onchange no corren. Al ser `readonly=False`, un valor puesto a mano en la
+        póliza se respeta hasta que alguien cambie el plan.
+        """
+        for order in self:
+            order.visar_included_visits = (
+                order.plan_id.visar_included_visits if order.plan_id else 0)
 
     @api.depends('visar_visit_ids', 'visar_visit_ids.visar_is_warranty')
     def _compute_visar_siniestralidad(self):
@@ -264,6 +286,22 @@ class SaleOrder(models.Model):
     # Generación de visitas — gatada al PAGO de la factura (Fase 1)
     # (disparada desde account.move._invoice_paid_hook)
     # ------------------------------------------------------------------
+    def _visar_visits_for_line(self, line, is_first):
+        """Nº de visitas que esta factura genera para esta línea de servicio.
+
+        Con visitas incluidas > 0 el número lo fija la póliza y es el mismo en cada
+        factura: es lo que permite vender un plan anual de un solo pago con 12 visitas
+        sin cobrar 12 años. Con 0 se conserva el comportamiento histórico, donde las
+        visitas del primer ciclo se derivan de los periodos realmente cobrados por
+        adelantado.
+
+        Se lee de la ORDEN y no del plan para respetar el ajuste manual por póliza.
+        """
+        self.ensure_one()
+        if self.visar_included_visits > 0:
+            return self.visar_included_visits
+        return self._visar_prepaid_periods_for_line(line) if is_first else 1
+
     def _visar_generate_period_visit(self, invoice):
         self.ensure_one()
         if not self.is_subscription or self.subscription_state != '3_progress':
@@ -278,8 +316,7 @@ class SaleOrder(models.Model):
             tmpl = line.product_id.product_tmpl_id
             if not tmpl.visar_generates_visit or not tmpl.visar_fsm_project_id:
                 continue
-            # 1ª factura → tantas visitas como periodos pagados de entrada; luego 1.
-            n = self._visar_prepaid_periods_for_line(line) if is_first else 1
+            n = self._visar_visits_for_line(line, is_first)
             # Idempotencia por (orden, factura, línea): crear las que falten.
             existing = Task.search_count([
                 ('visar_subscription_order_id', '=', self.id),
@@ -287,9 +324,13 @@ class SaleOrder(models.Model):
                 ('visar_source_line_id', '=', line.id),
                 ('visar_is_warranty', '=', False),
             ])
-            for _i in range(max(0, n - existing)):
+            # Se arranca el rango en las que ya existen (y no en 0) para que el
+            # consecutivo del título siga la numeración cuando una corrida anterior
+            # dejó el lote a medias.
+            for seq in range(existing, n):
                 Task.create(self._visar_visit_vals(
-                    line, tmpl.visar_fsm_project_id, invoice))
+                    line, tmpl.visar_fsm_project_id, invoice,
+                    seq=seq + 1, total=n))
             if is_first:
                 self._visar_enrich_first_visit(line)
 
@@ -315,13 +356,18 @@ class SaleOrder(models.Model):
         if first and not first.planned_date_begin:
             self._visar_enrich_fsm_tasks(first)
 
-    def _visar_visit_vals(self, line, project, invoice, warranty=False):
+    def _visar_visit_vals(self, line, project, invoice, warranty=False, seq=0, total=0):
         self.ensure_one()
         period = invoice.invoice_date if invoice else fields.Date.context_today(self)
         label = _("Garantía") if warranty else _("Visita")
+        name = _("%(label)s póliza %(period)s — %(product)s",
+                 label=label, period=period, product=line.product_id.name)
+        # Un lote de N visitas nace con la misma fecha y el mismo servicio, así que sin
+        # consecutivo quedarían N tareas de título idéntico en el tablero.
+        if total > 1:
+            name = _("%(name)s (%(seq)s/%(total)s)", name=name, seq=seq, total=total)
         return {
-            'name': _("%(label)s póliza %(period)s — %(product)s",
-                      label=label, period=period, product=line.product_id.name),
+            'name': name,
             'project_id': project.id,
             'partner_id': self.partner_id.id,
             'company_id': self.company_id.id,

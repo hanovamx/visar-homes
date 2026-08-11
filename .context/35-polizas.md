@@ -18,7 +18,30 @@ Se configura por plan en `sale.subscription.plan.visar_first_invoice_periods`:
 | Póliza Trimestral | 3 meses | 1 | igual |
 
 ⚠️ En planes **anuales** nunca pongas 2: cobraría **dos años** por adelantado. La
-migración `19.0.1.3.0` bajó a 1 los planes anuales que lo tenían mal.
+migración `19.0.1.3.0` bajó a 1 los planes anuales que lo tenían mal, pero su filtro es
+`billing_period_unit = 'month' AND billing_period_value >= 12`: **no alcanza a un plan
+configurado como "1 año"** (`unit='year'`, `value=1`), que hay que revisar a mano.
+
+## Visitas incluidas (independientes del cobro)
+
+`sale.subscription.plan.visar_included_visits` declara **cuántas visitas incluye el plan
+por factura**, sin tocar precio, impuestos, totales ni el calendario de facturación. Se
+propaga a `sale.order.visar_included_visits`, que es editable por póliza (compute con
+`store=True, readonly=False`) para poder ajustarlo sin cambiar el plan.
+
+Existe porque antes las dos cosas iban atadas: el nº de visitas se derivaba de los
+periodos cobrados por adelantado, así que la única forma de dar más visitas era cobrar
+más de entrada. Con esto se puede vender un **plan anual de un solo pago con 12 visitas**:
+periodos adelantados en 1, visitas incluidas en 12.
+
+| valor | efecto |
+|---|---|
+| `0` (default) | comportamiento histórico: 1ª factura → tantas visitas como periodos pagados de entrada; siguientes → 1 |
+| `N > 0` | **cada** factura genera N visitas por línea de servicio, sin importar los periodos cobrados |
+
+Las N visitas del lote nacen sin fecha (salvo la primera, que hereda la cita del wizard)
+y se numeran en el título — `Visita póliza 2026-08-10 — Fumigación (3/12)` — porque si no
+quedarían N tareas idénticas en el tablero.
 
 ## Cómo está implementado (y por qué cambió)
 
@@ -47,9 +70,13 @@ Piezas clave:
   recálculo de precios. `_recompute_prices()` se dispara al escribir la dirección en el
   checkout y pone `price_unit` desde la lista y `discount` a 0; sin este filtro el
   anticipo caía a 0 y el cliente pagaba de menos **sin ningún aviso**.
-- `sale.order._visar_prepaid_periods_for_line()` — el nº de visitas del primer ciclo
-  sale de las líneas de anticipo reales (lo que se vendió), no de la config del plan,
-  que pudo cambiar después de firmar.
+- `sale.order._visar_visits_for_line()` — decide cuántas visitas genera una factura para
+  una línea de servicio. Si la póliza declara visitas incluidas manda ese número; si no,
+  cae al comportamiento histórico de la línea siguiente.
+- `sale.order._visar_prepaid_periods_for_line()` — comportamiento por defecto (sin
+  visitas incluidas): el nº de visitas del primer ciclo sale de las líneas de anticipo
+  reales (lo que se vendió), no de la config del plan, que pudo cambiar después de
+  firmar.
 
 Se eliminaron `_get_invoice_line_parameters`, `_visar_should_extend_first_invoice` y
 `_visar_is_first_poliza_invoice`. Este último dependía de `last_invoice_date`, que **no

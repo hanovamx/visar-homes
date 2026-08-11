@@ -1,4 +1,5 @@
-from odoo import fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import ValidationError
 
 
 class SaleSubscriptionPlan(models.Model):
@@ -23,3 +24,23 @@ class SaleSubscriptionPlan(models.Model):
              "bimestral/trimestral van en 1: su propio periodo ya cubre dos meses o "
              "más. En planes anuales NO pongas 2: cobraría dos años de entrada.",
     )
+    visar_included_visits = fields.Integer(
+        string="Visitas incluidas",
+        default=0,
+        help="Nº de visitas que incluye el plan por cada factura, independiente de "
+             "cuántos periodos se cobren por adelantado. No afecta el precio ni "
+             "genera cargos adicionales.\n\n"
+             "Es la forma de vender un plan anual de un SOLO pago con 12 visitas: "
+             "periodos cobrados por adelantado en 1 (una factura al año) y visitas "
+             "incluidas en 12.\n\n"
+             "0 = derivar el nº de visitas de los periodos realmente cobrados por "
+             "adelantado (comportamiento por defecto: 1 visita por periodo facturado).",
+    )
+
+    @api.constrains('visar_included_visits')
+    def _check_visar_included_visits(self):
+        for plan in self:
+            if plan.visar_included_visits < 0:
+                raise ValidationError(_(
+                    "Las visitas incluidas del plan '%s' no pueden ser negativas.",
+                    plan.display_name))
