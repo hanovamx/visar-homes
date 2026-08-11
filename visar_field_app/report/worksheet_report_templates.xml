@@ -167,6 +167,32 @@
                             border: 1px solid #e0e0e0; border-radius: 4px;
                             page-break-inside: avoid;
                         }
+                        /* Aviso destacado (áreas que el cliente no autorizó). El
+                           cliente FIRMA este documento, así que tiene que verse.
+                           Se apoya en borde grueso + negritas, no solo en color:
+                           el reporte se imprime en blanco y negro a menudo. */
+                        .o_visar_ws_notice {
+                            border: 1px solid #e6a23c;
+                            border-left: 5px solid #e6a23c;
+                            background: #fdf6ec;
+                            padding: 9px 12px;
+                            margin: 6px 0;
+                            page-break-inside: avoid;
+                        }
+                        .o_visar_ws_notice_title {
+                            font-weight: 700; color: #8a5200;
+                            text-transform: none; margin-bottom: 5px;
+                        }
+                        /* Lista de áreas: `inline-block` en vez de flex — el WebKit
+                           viejo de wkhtmltopdf rompe el wrap de flex con gap. */
+                        .o_visar_ws_notice_items { margin: 0 0 6px 0; }
+                        .o_visar_ws_notice_item {
+                            display: inline-block; background: #fff;
+                            border: 1px solid #e6a23c; border-radius: 3px;
+                            padding: 1px 8px; margin: 0 5px 4px 0;
+                            font-weight: 700; font-size: 13px;
+                        }
+                        .o_visar_ws_notice_text { font-size: 12.5px; color: #4b4b4b; }
                     </style>
                     <t t-foreach="visar_worksheet_map.get(doc.id)" t-as="section"
                        t-key="section_index">
@@ -201,6 +227,20 @@
                                             </tr>
                                         </tbody>
                                     </table>
+                                </div>
+                                <!-- Aviso destacado: hoy, las áreas que el cliente
+                                     no autorizó tratar. Va en caja para que no se
+                                     pase por alto al revisar antes de firmar. -->
+                                <div t-elif="f['kind'] == 'notice'" class="o_visar_ws_notice">
+                                    <div t-if="f['label']" class="o_visar_ws_notice_title"
+                                         t-out="f['label']"/>
+                                    <div t-if="f.get('items')" class="o_visar_ws_notice_items">
+                                        <span t-foreach="f['items']" t-as="item"
+                                              t-key="item_index"
+                                              class="o_visar_ws_notice_item" t-out="item"/>
+                                    </div>
+                                    <div t-if="f.get('text')" class="o_visar_ws_notice_text"
+                                         t-out="f['text']"/>
                                 </div>
                                 <!-- Galería de fotos (evidencia) -->
                                 <div t-elif="f['kind'] == 'gallery'" class="o_visar_ws_block">

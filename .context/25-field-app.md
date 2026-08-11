@@ -1362,3 +1362,78 @@ funciona"**. Las tres plantillas son prerrequisito de negocio.
   `visar_wa_outbox_cron` existe y está activo, y que al pulsar "Voy en camino" se crea un
   `visar.wa.message` en `pending` que pasa a `sent`/`failed` en segundos.
 - Con plantillas aprobadas, comprobar que el buzón registra `mode = template`.
+
+---
+
+## 🆕 Actualización — 11-ago-2026 (v19.0.1.19.0) — el PDF del cliente muestra la reestructura de Fumigación
+
+> Cierra el hueco de la tanda del 10-ago: la plantilla se reestructuró y el PDF solo
+> se adaptó **a medias**. Requiere `-u` (cambia `report/`) + reinicio. Sin migración.
+
+### Qué faltaba de verdad (y qué sí estaba)
+
+La tanda de v19.0.1.16.0 **sí** tocó el reporte: `_visar_fumigacion_areas_table` condensa la
+taxonomía en la celda de plaga, y `x_cliente_no_permitio` se metió en la sublista, así que salía
+como columna. Lo que no servía era **la forma**: en un documento que el cliente **firma** y se
+lleva por WhatsApp, "el cliente no autorizó esta área" no puede ser un `Sí` en una celda de una
+tabla de 8 columnas en vertical.
+
+### 1. Bloque destacado "Áreas no tratadas" (`kind='notice'`, nuevo)
+
+Sección propia justo **debajo** de "Áreas tratadas", en caja con borde grueso, las áreas como
+etiquetas y una explicación. Es el punto importante del cambio: el reporte es donde queda
+**constancia** de que el área no se trató por decisión del cliente y no por una omisión del
+técnico — enterrado en una celda no cumplía esa función.
+
+- El texto explica la **consecuencia** (un área sin tratar puede seguir siendo origen o refugio
+  de plaga y afectar el resultado del resto), que es lo que hace útil el aviso para el cliente
+  y protege a Visar si luego reclama que "siguen saliendo".
+- Si no hubo ninguna, la sección **no se imprime** (nada de advertencias vacías).
+- Se apoya en **borde + negritas**, no solo en color: este reporte se imprime en blanco y negro
+  a menudo. La lista usa `inline-block`, no flex con `gap` — el WebKit viejo de wkhtmltopdf
+  rompe el wrap de flex (misma familia de problemas que el WebP de las fotos).
+
+### 2. La tabla "Áreas tratadas" ahora solo trae áreas TRATADAS
+
+Antes las áreas no autorizadas salían como filas con casi todo vacío, que **se lee como trabajo
+mal hecho** en vez de como una restricción del cliente. Se filtran (`_visar_ws_table_descriptor`
+acepta un subconjunto de líneas con el nuevo parámetro `lines`) y van al bloque de arriba.
+
+- Si TODAS las áreas fueron rechazadas no hay tabla, solo el aviso.
+- **Menos una columna**: `x_cliente_no_permitio` sale del reporte (en esa tabla vale siempre "No"),
+  pero **se queda en la sublista** para quien revisa la subficha en el backend.
+- **Encabezados acortados** solo al imprimir (`_VISAR_FUM_TABLE_HEADERS`): la etiqueta del campo
+  está redactada para el técnico que captura ("¿Se detectó presencia activa de plaga?") y como
+  encabezado no cabe → "Plaga activa". No se toca el campo.
+- La galería "Evidencia final (por área tratada)" también filtra las no autorizadas: la sección
+  dice "por área tratada" y no debe aportar evidencia de un tratamiento que no ocurrió.
+
+### Lo que el PDF del cliente sigue NO mostrando (deliberado, no olvido)
+
+La maqueta de Fumigación es una lista **cerrada** de secciones pedida por el cliente (servicios →
+horario → áreas → evidencia → plaguicidas). Quedan fuera, y **no se agregaron sin pedirlo**:
+`x_nivel_infestacion`, `x_factores_riesgo` (+ su "otro"), `x_descripcion_zona` y `x_comments`
+("Observaciones finales del técnico"). Varias serían valiosas para el cliente —sobre todo las
+observaciones finales— así que **conviene confirmarlo con negocio**; añadir cada una es una
+entrada más en `_visar_fumigacion_report_sections`.
+
+`_visar_report_plaguicidas_section` sigue devolviendo None: necesita un catálogo de plaguicidas
+(nombre, principio activo, descripción) que no existe.
+
+### Archivos tocados
+
+- `models/project_task.py` — `_visar_fumigacion_refused_section` (nuevo), `_visar_report_table_drop`
+  / `_visar_report_table_relabel` (nuevos), `_visar_ws_table_descriptor(lines=…)`,
+  `_visar_fumigacion_areas_table` filtra tratadas, evidencia final filtrada, orden (5b).
+- `report/worksheet_report_templates.xml` — rama `kind == 'notice'` + estilos.
+- `__manifest__.py` → v19.0.1.19.0.
+
+### Cómo verificar
+
+- Lo puro se probó **aislado**: recorte y reetiquetado de columnas (incluida idempotencia y que
+  filas y encabezados queden alineados) y la condensación de la taxonomía en la celda. Se generó
+  además una **previsualización HTML** con el CSS real del reporte para revisar la maqueta.
+- **No se ha renderizado un PDF real.** Al hacer `-u`: un servicio con "Cliente NO permitió…"
+  marcado en un área debe mostrar la caja "Áreas no tratadas" con esa área, esa fila **ausente**
+  de "Áreas tratadas", y la tabla con 7 columnas y encabezados cortos. Probar también el caso de
+  **todas** las áreas rechazadas.

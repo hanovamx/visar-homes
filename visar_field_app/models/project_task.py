@@ -1223,14 +1223,19 @@ class ProjectTask(models.Model):
             return ('%g' % value) if value else ''
         return str(value)
 
-    def _visar_ws_table_descriptor(self, name, info, label, help_text, record):
+    def _visar_ws_table_descriptor(self, name, info, label, help_text, record,
+                                   lines=None):
         """Descriptor de una subficha one2many como TABLA (columnas = campos de
         línea visibles en la vista lista; filas = líneas). None si no hay líneas
-        (no se pinta una tabla vacía)."""
+        (no se pinta una tabla vacía).
+
+        `lines` permite pintar un SUBCONJUNTO de la subficha (misma vista, mismas
+        columnas). Lo usa Fumigación para separar las áreas tratadas de las que el
+        cliente no autorizó, que van en su propio bloque destacado."""
         relation = info.get('relation')
         if not relation or relation not in self.env:
             return None
-        lines = record[name]
+        lines = record[name] if lines is None else lines
         if not lines:
             return None
         LineModel = self.env[relation].sudo()
@@ -1465,7 +1470,11 @@ class ProjectTask(models.Model):
             fields_out.append(
                 {'kind': 'gallery', 'label': "Durante el tratamiento", 'images': durante})
         final = []
-        for line in record.x_areas_tratadas:
+        # Solo áreas TRATADAS: la sección se titula "por área tratada", y un área que
+        # el cliente no autorizó no debería aportar evidencia de un tratamiento que no
+        # ocurrió (en la práctica no tiene foto, pero el filtro lo hace explícito).
+        for line in record.x_areas_tratadas.filtered(
+                lambda l: not l.x_cliente_no_permitio):
             final += self._visar_report_gallery(
                 line._name, line.id, 'x_foto_evidencia', line.x_foto_evidencia)
             if len(final) >= _WS_REPORT_GALLERY_MAX:
@@ -1490,7 +1499,8 @@ class ProjectTask(models.Model):
     def _visar_fumigacion_report_sections(self, record):
         """Secciones del reporte de Fumigación, en el orden pedido por el cliente:
         (3) Servicios agregados → (4) Horario del servicio → (5) Áreas tratadas →
-        (6) Evidencia → (7) Plaguicidas [pendiente].
+        (5b) Áreas no tratadas (aviso destacado) → (6) Evidencia →
+        (7) Plaguicidas [pendiente].
 
         Cliente (1), Técnico (2) y Firma (8) los pinta el cascarón compartido del
         reporte (fila superior y bloque de firma), no esta lista."""
@@ -1515,6 +1525,13 @@ class ProjectTask(models.Model):
         if table:
             sections.append({'title': "Áreas tratadas", 'fields': [table]})
 
+        # (5b) Áreas que el cliente no autorizó — bloque destacado, justo DEBAJO de
+        # las tratadas: se lee como el complemento de la tabla anterior ("esto sí,
+        # esto no") antes de pasar a la evidencia fotográfica.
+        refused = self._visar_fumigacion_refused_section(record)
+        if refused:
+            sections.append(refused)
+
         # (6) Evidencia — galerías inicial / durante / final.
         evidence = self._visar_report_evidence_section(record)
         if evidence:
@@ -1527,30 +1544,113 @@ class ProjectTask(models.Model):
 
         return sections
 
-    def _visar_fumigacion_areas_table(self, record):
-        """Tabla de "Áreas tratadas" con la taxonomía de plaga ya condensada.
+    # Encabezados de la tabla de áreas EN EL REPORTE. La etiqueta del campo está
+    # redactada para el técnico que captura ("¿Se detectó presencia activa de
+    # plaga?"); como encabezado de una tabla de 7 columnas en vertical no cabe.
+    # Solo cambia lo que se imprime, no el campo.
+    _VISAR_FUM_TABLE_HEADERS = {
+        'x_infestacion_activa': "Plaga activa",
+        'x_plaga_ids': "Plaga detectada",
+        'x_plaguicida_nombre': "Plaguicida",
+        'x_plaguicida_dosis': "Dosis (ml)",
+        'x_trampa_monitoreo': "Trampa",
+        'x_accion_correctiva': "Acción correctiva",
+    }
+    # Columnas que NO van en el reporte del cliente. `x_cliente_no_permitio` se
+    # excluye porque en esta tabla vale siempre "No" (las áreas no autorizadas
+    # tienen su propio bloque destacado); se mantiene en la sublista para quien
+    # revisa la subficha en el backend.
+    _VISAR_FUM_TABLE_SKIP = ('x_cliente_no_permitio',)
 
-        La tabla genérica saca una columna por `<field>` de la sublista. Las cuatro
-        listas de especies no caben ahí (el PDF del cliente es vertical y la tabla
-        ya lleva 8 columnas), así que NO van en la sublista y en su lugar se
-        reescribe la celda de "Tipo de plaga" con `Categoría (especie, especie)`.
+    @staticmethod
+    def _visar_report_table_drop(table, field_names):
+        """Quita columnas de un descriptor de tabla, por nombre técnico."""
+        drop = {i for i, name in enumerate(table['field_names'])
+                if name in field_names}
+        if not drop:
+            return table
+        keep = lambda seq: [v for i, v in enumerate(seq) if i not in drop]  # noqa: E731
+        table['columns'] = keep(table['columns'])
+        table['field_names'] = keep(table['field_names'])
+        table['rows'] = [keep(row) for row in table['rows']]
+        return table
+
+    @staticmethod
+    def _visar_report_table_relabel(table, headers):
+        """Reetiqueta encabezados por nombre técnico (no toca el campo)."""
+        table['columns'] = [headers.get(name, label) for name, label
+                            in zip(table['field_names'], table['columns'])]
+        return table
+
+    def _visar_fumigacion_areas_table(self, record):
+        """Tabla de "Áreas tratadas": SOLO las áreas que sí se trataron.
+
+        Dos ajustes respecto a la tabla genérica:
+
+        * **Solo áreas tratadas.** Las que el cliente no autorizó saldrían con casi
+          todas las celdas vacías, que se lee como trabajo mal hecho en vez de como
+          una restricción del cliente. Van en `_visar_fumigacion_refused_section`.
+        * **La plaga se condensa.** La tabla genérica saca una columna por `<field>`
+          de la sublista; las cuatro listas de especies no caben (el PDF es vertical),
+          así que no van en la sublista y la celda de "Tipo de plaga" se reescribe
+          como `Categoría (especie, especie)`.
         """
         info = self.env[record._name].sudo().fields_get(
             ['x_areas_tratadas']).get('x_areas_tratadas')
         if not info:
             return None
+        treated = record['x_areas_tratadas'].filtered(
+            lambda l: not l.x_cliente_no_permitio)
         table = self._visar_ws_table_descriptor(
-            'x_areas_tratadas', info, '', '', record)
+            'x_areas_tratadas', info, '', '', record, lines=treated)
         if not table:
             return None
         try:
             col = table['field_names'].index('x_plaga_ids')
         except ValueError:
-            return table  # la sublista ya no trae la columna: nada que reescribir
-        for line, cells in zip(record['x_areas_tratadas'], table['rows']):
-            cells[col] = {'kind': 'scalar',
-                          'text': self._visar_fumigacion_plaga_text(line)}
+            col = None  # la sublista ya no trae la columna: nada que reescribir
+        if col is not None:
+            for line, cells in zip(treated, table['rows']):
+                cells[col] = {'kind': 'scalar',
+                              'text': self._visar_fumigacion_plaga_text(line)}
+        self._visar_report_table_drop(table, self._VISAR_FUM_TABLE_SKIP)
+        self._visar_report_table_relabel(table, self._VISAR_FUM_TABLE_HEADERS)
         return table
+
+    def _visar_fumigacion_refused_section(self, record):
+        """Bloque destacado de las áreas que el CLIENTE no autorizó tratar.
+
+        Va en el PDF a propósito y de forma visible: el cliente **firma** este
+        reporte y se lo lleva por WhatsApp, así que es el documento donde queda
+        constancia de que el área no se trató por decisión suya y no por una omisión
+        del técnico. Enterrado como un "Sí" en una celda de la tabla no cumple esa
+        función.
+
+        Devuelve None si no hubo ninguna (no se imprime una advertencia vacía)."""
+        self.ensure_one()
+        refused = record['x_areas_tratadas'].filtered('x_cliente_no_permitio')
+        if not refused:
+            return None
+        line_meta = self.env[refused._name].sudo().fields_get(['x_area'])
+        labels = dict(line_meta.get('x_area', {}).get('selection') or [])
+        areas = []
+        for line in refused:
+            name = labels.get(line.x_area, line.x_area or '')
+            # Área "Otros": el nombre real lo escribió el técnico en el companion.
+            if line.x_area_otro:
+                name = ("%s (%s)" % (name, line.x_area_otro)) if name else line.x_area_otro
+            if name:
+                areas.append(name)
+        return {'title': "Áreas no tratadas", 'fields': [{
+            'kind': 'notice',
+            'label': "El cliente no autorizó el tratamiento en estas áreas",
+            'items': areas,
+            'text': ("Estas áreas se incluyeron en la inspección, pero no se aplicó "
+                     "tratamiento porque no se autorizó el acceso durante la visita. "
+                     "Al no tratarse, pueden seguir siendo un punto de origen o "
+                     "refugio de plaga y afectar el resultado en el resto del "
+                     "inmueble. Si desea programar su tratamiento, contáctenos."),
+        }]}
 
     @staticmethod
     def _visar_fumigacion_plaga_text(line):
