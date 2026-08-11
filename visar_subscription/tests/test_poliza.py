@@ -395,3 +395,51 @@ class TestPoliza(TransactionCase):
         self.assertEqual(len(visits), 24, "la 2ª factura genera otro lote de 12")
         self.assertEqual(first_visits.exists(), first_visits,
                          "las visitas del periodo anterior no se borran")
+
+    def test_21_included_visits_from_web_cart(self):
+        """Contratación desde el sitio web: la orden hereda las visitas del plan.
+
+        El carrito **no** crea la orden con el plan: nace sin él y `_cart_add` lo
+        resuelve después, a partir del pricing recurrente de la lista, con un `write`
+        (`self.plan_id = pricing.plan_id`). Por eso el campo es un compute almacenado
+        y no un onchange: los onchange no corren en el flujo web. Este test recorre ese
+        camino real, no una simulación.
+        """
+        SaleOrder = self.env['sale.order']
+        if not hasattr(SaleOrder, '_cart_add'):
+            self.skipTest("website_sale no está instalado")
+        company = self.env.company
+        pricelist = self.env['product.pricelist'].create({
+            'name': 'Lista Póliza Anual Test', 'company_id': company.id,
+            'currency_id': company.currency_id.id})
+        self.env['product.pricelist.item'].create({
+            'pricelist_id': pricelist.id, 'applied_on': '1_product',
+            'product_tmpl_id': self.service.id, 'compute_price': 'fixed',
+            'fixed_price': 1200.0, 'plan_id': self.plan_anual.id})
+
+        vals = {'partner_id': self.partner.id, 'pricelist_id': pricelist.id}
+        website = self.env['website'].search([], limit=1)
+        if website:
+            vals['website_id'] = website.id
+        order = SaleOrder.create(vals)
+        self.assertEqual(order.visar_included_visits, 0, "el carrito nace sin plan")
+
+        order.plan_id = False
+        order._cart_add(product_id=self.service.product_variant_id.id, quantity=1,
+                        plan_id=self.plan_anual.id, allow_one_time_sale=False)
+        order.invalidate_recordset()
+
+        self.assertEqual(order.plan_id, self.plan_anual, "el carrito resolvió el plan")
+        self.assertEqual(order.visar_included_visits, 12,
+                         "hereda las visitas aunque el plan llegue por write, no en create")
+        self.assertFalse(order.order_line.filtered('visar_anticipo_for_line_id'),
+                         "un solo pago: sin mensualidad adelantada")
+
+        order.require_payment = False
+        order.action_confirm()
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        self.assertEqual(len(order.invoice_ids), 1, "una sola factura")
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 12, "12 visitas contra esa única factura")
