@@ -327,6 +327,18 @@
                         <div t-if="ws_error" class="alert alert-danger py-2 o_visar_ws_error_banner">
                             Faltan campos obligatorios. Revisa los marcados en rojo abajo.
                         </div>
+                        <div t-if="ws_draft" class="alert alert-success py-2 mb-2">
+                            Borrador guardado. Puede cerrar y volver: lo capturado
+                            —incluidas las fotos— ya está en el servidor.
+                        </div>
+                        <!-- Recordatorio persistente: hay borrador pero la hoja aún no
+                             se ha guardado completa (y por tanto la firma sigue
+                             bloqueada). Desaparece en cuanto se guarda de verdad. -->
+                        <div t-if="ws_draft_at and not ws_draft" class="alert alert-warning py-2 mb-2">
+                            Hoja <b>en borrador</b> (último guardado
+                            <t t-esc="ws_draft_at"/>). Falta guardarla completa para
+                            habilitar la firma.
+                        </div>
                         <p t-if="not worksheet_locked" class="small text-muted mb-3">
                             Los campos con <span class="text-danger fw-bold">*</span> son obligatorios.
                         </p>
@@ -536,8 +548,23 @@
                             </t>
                         </div>
 
+                        <!-- Dos submits del MISMO form: el borrador viaja por el mismo
+                             multipart (mismos campos, mismas fotos) y solo añade
+                             `draft=1`, que el servidor usa para saltarse la validación
+                             y el sello de "guardada". Sin JS de por medio: el navegador
+                             solo incluye el `name` del botón que envió. -->
                         <button t-if="not worksheet_locked" type="submit"
                                 class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
+                        <button t-if="not worksheet_locked" type="submit"
+                                name="draft" value="1" formnovalidate="formnovalidate"
+                                class="btn btn-outline-secondary w-100 mt-2 o_visar_ws_draft_btn">
+                            Guardar borrador (sin validar)
+                        </button>
+                        <div t-if="not worksheet_locked" class="form-text mt-1">
+                            El borrador guarda lo que ya capturó —incluidas las fotos—
+                            sin exigir los campos obligatorios. La firma sigue
+                            habilitándose solo al guardar la hoja completa.
+                        </div>
                     </form>
 
                     <!-- Firma del cliente (campos nativos) + cierre.

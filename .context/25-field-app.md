@@ -1458,3 +1458,95 @@ Sigue fuera, y **no se agregó sin pedirlo**: `x_descripcion_zona`.
   marcado en un área debe mostrar la caja "Áreas no tratadas" con esa área, esa fila **ausente**
   de "Áreas tratadas", y la tabla con 7 columnas y encabezados cortos. Probar también el caso de
   **todas** las áreas rechazadas.
+
+---
+
+## 🆕 Actualización — 11-ago-2026 (v19.0.1.20.0) — borrador de la hoja de trabajo
+
+> Resuelve una contradicción real del flujo: la validación (Req 7) impide guardar una hoja
+> incompleta, pero **guardar era la única persistencia**, así que una recarga a media captura
+> borraba todo — y "media captura" es el estado normal durante casi todo el servicio.
+> Requiere `-u` (campo nuevo + vistas + assets) + reinicio.
+
+### Por qué se pudo hacer sin migración ni riesgo
+
+**Ningún campo capturado es `required` a nivel de MODELO.** El `required="1"` vive en el arch y lo
+aplica la app (cliente + servidor). Los únicos requeridos de modelo son `x_name` y el FK de línea,
+que `_sync_one_o2m` ya rellena. Por tanto **una hoja a medias es un registro perfectamente válido**:
+el borrador no necesitó columnas nullable, ni un modelo espejo, ni un formato de serialización.
+
+### Cómo funciona
+
+**Dos submits del MISMO formulario.** "Guardar borrador (sin validar)" es un
+`<button type="submit" name="draft" value="1" formnovalidate>` dentro del form de la hoja, así que
+el navegador manda **el mismo multipart** —todos los campos, todas las fotos, todas las subfichas—
+y solo añade `draft=1`. El servidor reutiliza el camino completo (`_worksheet_write_values` +
+`_sync_worksheet_lines` + `_attach_line_photos`) y solo **se salta dos cosas**:
+
+1. la validación;
+2. ⚠️ **el sello `visar_worksheet_saved_at`** — que es el que habilita la FIRMA (Req 6). Si un
+   borrador lo pusiera, se podría firmar y cerrar con la hoja incompleta, justo lo que la
+   validación existe para evitar. Tampoco toca `_last_saved_at`, que junto con la llegada define el
+   "tiempo en sitio" del PDF.
+
+Sella su propia marca, `visar_worksheet_draft_at`, que **no** habilita nada: sirve para el aviso
+persistente en la app ("Hoja en borrador, último guardado 14:32 — falta guardarla completa") y para
+que oficina vea en la tarea una hoja a medias (el campo solo se muestra si hay borrador **y** no hay
+guardado completo).
+
+### Por qué POST/redirect y no autoguardado por AJAX
+
+Se eligió el botón con recarga, en línea con el principio del módulo (QWeb + POST/redirect, sin
+SPA), y porque **esquiva dos problemas reales** del autoguardado sin recarga:
+
+- **Fotos duplicadas:** sin recarga, el `<input type="file">` de una tarjeta sigue conteniendo sus
+  archivos, así que el siguiente autoguardado los volvería a adjuntar.
+- **Líneas duplicadas:** un borrador crea líneas o2m con ids nuevos que el cliente no conoce (sus
+  `id` ocultos siguen vacíos), así que el siguiente envío crearía **otro** juego. Resolverlo exige
+  devolver un mapa fila→id y parchear el DOM.
+
+Con recarga, el servidor re-renderiza con los ids reales y los inputs vacíos: ambos problemas
+desaparecen sin código. El coste es que **depende de que el técnico lo pulse**, mitigado con el
+aviso al salir.
+
+> Si algún día se quiere autoguardado, el trabajo pendiente está identificado: mapa fila→id en la
+> respuesta + limpiar los inputs de archivo + guardar contra el guardado real en curso.
+
+### Aviso de cambios sin guardar
+
+`beforeunload` cuando el formulario está sucio: el back-swipe accidental y el cierre de pestaña son
+la forma más común de perder la captura, y ahí no hay botón que pulsar. Detalles:
+
+- El texto lo pone el navegador (no se puede personalizar); aquí solo se decide **cuándo** avisar.
+- La marca vive en `form.dataset.visarDirty` y **no** en una variable global, para que el flujo de
+  cierre pueda limpiarla cuando ya guardó la hoja por AJAX (si no, cerrar el servicio avisaba).
+- **La galería principal NO marca sucio**: sube por AJAX en el momento, así que su input se vacía y
+  la foto ya está en el servidor — avisar ahí sería un falso positivo. Las fotos de **tarjeta o2m**
+  sí marcan: esas se adjuntan al guardar.
+- `ev.returnValue` está deprecado pero es lo que dispara el aviso en Safari/Firefox
+  (`preventDefault()` solo basta en Chrome). **No quitarlo.**
+
+El botón de borrador también se salta la validación del **cliente**: el listener de submit mira
+`ev.submitter` (con respaldo al último submit pulsado, porque Safari viejo no lo trae).
+
+### Archivos tocados
+
+- `controllers/main.py` — rama `is_draft` en `field_task_worksheet`, `_format_local_time` (nuevo),
+  contexto `ws_draft` / `ws_draft_at`.
+- `models/project_task.py` — campo `visar_worksheet_draft_at`.
+- `views/field_app_templates.xml` — botón de borrador + avisos.
+- `views/project_task_views.xml` — el campo en "Cierre en campo", visible solo si aplica.
+- `static/src/js/field_app.js` — `initWorksheetDirtyGuard`, salto de validación del borrador,
+  limpieza de la marca en el flujo de cierre.
+- `__manifest__.py` → v19.0.1.20.0.
+
+### Cómo verificar
+
+- Se comprobó por inspección del código la **invariante crítica**: el `return` del borrador ocurre
+  dentro de `if is_draft:` y **antes** de asignar `visar_worksheet_saved_at` / `_last_saved_at`,
+  pero **después** de escribir valores y sincronizar subfichas (17 aserciones).
+- **En BD, tras `-u`:** llenar media hoja → "Guardar borrador" → **recargar** → los datos y las
+  fotos siguen ahí; la sección de firma sigue **oculta**; el aviso "Hoja en borrador" aparece con la
+  hora local del técnico. Luego completar y guardar de verdad → el aviso desaparece y la firma se
+  habilita. Probar también el back-swipe con cambios sin guardar (debe avisar) y cerrar el servicio
+  (no debe avisar).

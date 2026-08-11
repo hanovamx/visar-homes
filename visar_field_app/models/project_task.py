@@ -140,6 +140,13 @@ class ProjectTask(models.Model):
         string="Hoja de trabajo — última guarda", readonly=True,
         help="ÚLTIMA vez que se guardó la hoja de trabajo (se actualiza en cada "
              "guardado). Con 'Llegada del técnico' define el tiempo en sitio.")
+    visar_worksheet_draft_at = fields.Datetime(
+        string="Hoja de trabajo — último borrador", readonly=True,
+        help="Última vez que el técnico guardó un BORRADOR (sin validar) desde la "
+             "app. Existe para que una recarga a media captura no borre lo escrito. "
+             "NO habilita la firma: eso sigue dependiendo de 'Hoja de trabajo "
+             "guardada en'. Si esta fecha tiene valor y la de guardado no, la hoja "
+             "está a medias.")
     visar_onsite_minutes = fields.Float(
         string="Tiempo en sitio (min)", readonly=True,
         compute='_compute_visar_onsite_minutes', store=True,

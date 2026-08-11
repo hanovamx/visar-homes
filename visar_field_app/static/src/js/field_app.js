@@ -103,6 +103,10 @@
                     }
                     var closeAndSubmit = function () {
                         form.dataset.wsSaved = "1";
+                        // La hoja ya se envió por AJAX: no queda nada pendiente, así
+                        // que se limpia la marca para no disparar el aviso de
+                        // "cambios sin guardar" al navegar tras el cierre.
+                        wsForm.dataset.visarDirty = "";
                         form.submit();
                     };
                     fetch(wsForm.getAttribute("action"), {
@@ -617,7 +621,29 @@
             return first;
         }
 
+        /* Qué botón envió el form. `ev.submitter` no existe en Safari viejo, así que
+           se recuerda el último submit pulsado como respaldo. */
+        var lastSubmitter = null;
+        form.addEventListener("click", function (ev) {
+            var btn = ev.target.closest('button[type="submit"], input[type="submit"]');
+            if (btn && form.contains(btn)) {
+                lastSubmitter = btn;
+            }
+        });
+
+        function isDraftSubmit(ev) {
+            var btn = ev.submitter || lastSubmitter;
+            return !!(btn && btn.name === "draft");
+        }
+
         form.addEventListener("submit", function (ev) {
+            /* "Guardar borrador" se salta la validación A PROPÓSITO: existe justo
+               para persistir una hoja incompleta a media captura. El servidor hace lo
+               mismo con `draft=1` y, sobre todo, NO sella la hoja como guardada, así
+               que la firma sigue bloqueada hasta el guardado completo. */
+            if (isDraftSubmit(ev)) {
+                return;
+            }
             validated = true;
             var first = validate(true);
             if (first) {
@@ -783,8 +809,56 @@
         });
     }
 
+    /* Aviso de cambios sin guardar al salir de la página.
+       Es el complemento del borrador: el back-swipe accidental y el cierre de pestaña
+       son la forma más común de perder la captura, y ahí no hay botón que pulsar.
+       El texto lo pone el navegador (no se puede personalizar); lo único que se
+       decide aquí es CUÁNDO avisar.
+       El estado vive en `dataset` y no en una variable global para que el flujo de
+       cierre pueda limpiarlo cuando ya guardó la hoja por AJAX. */
+    function initWorksheetDirtyGuard() {
+        var form = document.getElementById("visar-worksheet-form");
+        if (!form) {
+            return;
+        }
+
+        function markDirty(ev) {
+            var el = ev.target;
+            if (!el || !form.contains(el)) {
+                return;
+            }
+            /* La galería principal sube por AJAX en el momento: su input se vacía y
+               la foto ya quedó en el servidor, así que tocarla NO deja nada
+               pendiente. Avisar ahí sería un falso positivo molesto. Las fotos de
+               tarjeta o2m sí cuentan: esas se adjuntan al guardar. */
+            if (el.classList && el.classList.contains("o_visar_ws_photo_input")) {
+                return;
+            }
+            form.dataset.visarDirty = "1";
+        }
+
+        form.addEventListener("input", markDirty);
+        form.addEventListener("change", markDirty);
+        // Cualquiera de los dos submits (completo o borrador) persiste lo capturado.
+        form.addEventListener("submit", function () {
+            form.dataset.visarDirty = "";
+        });
+
+        window.addEventListener("beforeunload", function (ev) {
+            if (!form.dataset.visarDirty) {
+                return;
+            }
+            ev.preventDefault();
+            // `returnValue` está deprecado pero SIGUE siendo lo que dispara el aviso
+            // en Safari/Firefox; `preventDefault()` solo basta en Chrome. No quitarlo.
+            ev.returnValue = "";  // el navegador muestra su propio texto
+            return "";
+        });
+    }
+
     function init() {
         initSignaturePad();
+        initWorksheetDirtyGuard();
         initO2M();
         initHelp();
         initWsPhotos();

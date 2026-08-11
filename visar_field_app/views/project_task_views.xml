@@ -44,6 +44,11 @@
                             <field name="visar_onsite_minutes" readonly="1"/>
                         </group>
                         <group string="Cierre en campo">
+                            <!-- Borrador sin guardado completo = hoja a medias: el
+                                 técnico capturó algo pero no cerró la hoja. Se muestra
+                                 solo en ese caso, que es cuando informa. -->
+                            <field name="visar_worksheet_draft_at" readonly="1"
+                                   invisible="not visar_worksheet_draft_at or visar_worksheet_saved_at"/>
                             <field name="visar_worksheet_saved_at" readonly="1"/>
                             <field name="visar_worksheet_saved_by_id" readonly="1"/>
                             <field name="visar_field_closed_by_id" readonly="1"/>

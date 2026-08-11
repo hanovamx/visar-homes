@@ -289,6 +289,17 @@ class VisarFieldApp(http.Controller):
                               else local.strftime('%d/%m/%Y %H:%M'))
         return times
 
+    def _format_local_time(self, employee, value, fmt='%H:%M'):
+        """`HH:MM` en el huso del TÉCNICO de un datetime naive-UTC de Odoo.
+
+        La página es pública (el usuario público no tiene huso), así que sin esta
+        conversión una hora local de 14:00 se imprimiría como 20:00 — el mismo
+        problema que ya se corrigió en la lista de servicios."""
+        if not value:
+            return ''
+        local = pytz.utc.localize(value).astimezone(self._employee_tz(employee))
+        return local.strftime(fmt)
+
     def _task_for_employee(self, task_id, employee):
         task = request.env['project.task'].sudo().browse(int(task_id)).exists()
         if task and employee and employee in task.visar_technician_ids:
@@ -1590,6 +1601,14 @@ class VisarFieldApp(http.Controller):
             'worksheet_locked': self._worksheet_locked(task, flow_state),
             'reopen_action': '/visar/field/task/%s/worksheet/reopen' % task.id,
             'ws_error': kw.get('ws_error'),
+            'ws_draft': kw.get('draft'),
+            # Fecha del último borrador, en la hora LOCAL del técnico (el campo es
+            # naive-UTC). Solo se muestra si la hoja aún NO se ha guardado completa:
+            # después deja de ser información útil y solo haría ruido.
+            'ws_draft_at': (
+                self._format_local_time(employee, task.visar_worksheet_draft_at)
+                if task.visar_worksheet_draft_at and not task.visar_worksheet_saved_at
+                else ''),
             # Resultado del envío del reporte por WhatsApp (camino sin JS).
             'wa_sent': kw.get('wa_sent'),
             'wa_error': kw.get('wa_error'),
@@ -1764,12 +1783,22 @@ class VisarFieldApp(http.Controller):
         if self._worksheet_locked(task, flow_state):
             return request.redirect('/visar/field/task/%s' % task.id)
 
+        # BORRADOR: mismo formulario y mismo camino de escritura, pero sin validar y
+        # sin sellar. Existe porque la hoja completa no se puede guardar hasta el
+        # final del servicio (la validación lo impide, y con razón), así que sin esto
+        # una recarga a media captura borraba todo lo escrito.
+        #
+        # Es seguro a nivel de BD: NINGÚN campo capturado es `required` en el modelo
+        # —`required="1"` vive en el arch y lo aplica la app—, así que una hoja a
+        # medias es un registro perfectamente válido. Los únicos requeridos de modelo
+        # son `x_name` y el FK de línea, que `_sync_one_o2m` ya rellena.
+        is_draft = bool(post.get('draft'))
         record = self._worksheet_record(task, create=True)
         if record is not None:
             # Req 7: no se guarda una hoja incompleta. El cliente ya valida campo a
             # campo (misma lógica); aquí es defensa en profundidad. Si algo falta NO
             # se escribe nada (ni se avanza la etapa) y se vuelve con ?ws_error=1.
-            if self._worksheet_validation_errors(
+            if not is_draft and self._worksheet_validation_errors(
                     task, record, post, request.httprequest.files):
                 return request.redirect(
                     '/visar/field/task/%s?ws_error=1' % task.id)
@@ -1779,6 +1808,15 @@ class VisarFieldApp(http.Controller):
                 record.write(vals)
             self._sync_worksheet_lines(
                 task, record, post, request.httprequest.files)
+            if is_draft:
+                # ⚠️ NO se toca `visar_worksheet_saved_at`: ese sello es el que
+                # habilita la FIRMA (Req 6). Si un borrador lo pusiera, se podría
+                # firmar y cerrar con la hoja incompleta — justo lo que la validación
+                # existe para evitar. Tampoco `_last_saved_at`, que junto con la
+                # llegada define el "tiempo en sitio" del PDF.
+                task.visar_worksheet_draft_at = fields.Datetime.now()
+                return request.redirect(
+                    '/visar/field/task/%s?draft=1' % task.id)
             # Req 6: guardar la hoja habilita la firma (sello _saved_at). La etapa
             # FSM se queda en En ejecución — "Pendiente de firma" se retiró del
             # flujo (el tramo hoja→firma es de segundos/minutos y no aporta a
