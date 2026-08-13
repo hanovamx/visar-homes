@@ -285,6 +285,46 @@ pendientes") must exist and be active. It runs every 5 minutes as a retry safety
 happy path fires immediately because enqueueing triggers it — if notifications only ever go out
 in 5-minute clumps, `_trigger()` is not working and that is worth investigating.
 
+### 4.1b-ter ⚠️ The current number is NOT the definitive one — what survives the move
+
+Estado a **11-ago-2026**: el canal vive en el número **+1 920-315-1656** ("Hanova"), bajo la
+**WABA `885347933974535`** y la **app de Meta `910743188049390`, que se llama `poledancepassion`**
+(una app personal reaprovechada). Ese número es de PRUEBAS: Visar saldrá a producción con otro.
+
+Por eso **no vale la pena pelearse hoy con la aprobación de plantillas**. A las ~20 h de enviadas
+las seis seguían en `PENDING`, y la cuenta reporta:
+
+```
+account_review_status:        APPROVED
+business_verification_status: rejected    <-- verificación de negocio RECHAZADA
+```
+
+Lo que decide cuánto trabajo se repite **no es el número, es la WABA**:
+
+| Se cambia… | Las plantillas… | Hay que rehacer |
+|---|---|---|
+| El **número** dentro de la MISMA WABA | **se conservan** (las plantillas cuelgan de la WABA, no del teléfono) | solo `WA_PHONE_ID` y volver a apuntar el webhook |
+| A una **WABA/negocio nuevos** (lo esperable si se verifica bien a Hanova/Visar) | **NO se conservan** | crear y aprobar las 4 plantillas otra vez, `WA_*` completo y webhook |
+
+**Lo que NO se toca en ninguno de los dos casos** (ya está hecho y probado): `INTERNAL_TOKEN` y
+`visar_field.agent_token`, los dos endpoints `/internal/*`, el buzón `visar.wa.message` con su
+cron, y el aislamiento loopback. Todo eso es agnóstico del número.
+
+**Lo que sí cambia** al migrar: `WA_PHONE_ID`, `WA_TOKEN`, `WA_APP_ID`, `WA_APP_SECRET`,
+`WA_VERIFY_TOKEN`, el Callback URL en el dashboard de Meta y —si cambia la WABA— los nombres en
+`WA_REPORT_TEMPLATE` / `WA_TEMPLATE_*`.
+
+La redacción de las plantillas sí se conserva como texto: vive en
+`project_task._visar_msg_enroute` / `_arrived` / `_reschedule` y en `_visar_report_whatsapp_caption`,
+y las plantillas aprobadas deben copiarla literal (ver §4.1b-bis).
+
+> Deuda conocida en la WABA actual, que se va sola al migrar: hay **tres plantillas huérfanas sin
+> acentos** (`visar_tecnico_en_camino`, `visar_tecnico_llego`, `visar_reagendar_cita`), sustituidas
+> por `visar_aviso_en_camino` / `visar_aviso_llegada` / `visar_aviso_reagenda`. El token de sistema
+> **no tiene permiso para borrarlas** (`Need permission on either WhatsApp Business Account or
+> owner/shared business`) y Meta solo deja editar plantillas RECHAZADAS: se borran desde la UI o
+> se ignoran hasta que se abandone esta WABA.
+
 ### 4.1c Camera-only photos — what ops needs to know
 
 Field photos are now taken **live with the device camera**; the gallery path is closed.
