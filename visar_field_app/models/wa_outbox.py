@@ -33,7 +33,7 @@ import logging
 import requests
 from markupsafe import Markup
 
-from odoo import api, fields, models
+from odoo import api, fields, models, modules
 
 _logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class VisarWaMessage(models.Model):
         # Un commit por aviso: si el runtime falla a media tanda, lo ya enviado no se
         # revierte (ni se reenvía en la pasada siguiente). En pruebas NO se commitea
         # —cerraría la transacción del test— igual que hace la cola de correo nativa.
-        auto_commit = not self.env.registry.in_test_mode()
+        auto_commit = not modules.module.current_test
         for message in batch:
             message._visar_attempt_send()
             if auto_commit:

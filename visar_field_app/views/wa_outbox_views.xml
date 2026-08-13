@@ -80,7 +80,7 @@
                         domain="[('state', '=', 'pending')]"/>
                 <filter name="visar_wa_sent" string="Enviados"
                         domain="[('state', '=', 'sent')]"/>
-                <group expand="0" string="Agrupar por">
+                <group>
                     <filter name="visar_wa_group_state" string="Estado"
                             context="{'group_by': 'state'}"/>
                     <filter name="visar_wa_group_key" string="Aviso"
