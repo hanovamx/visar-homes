@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Consolidación de servicios externos: se configura en el proyecto, junto al
+         resto de ajustes de Field Service (incluida la plantilla de hoja de trabajo,
+         que es lo que hereda la tarea consolidada). -->
+    <record id="project_view_form_visar_combined" model="ir.ui.view">
+        <field name="name">project.project.form.visar.combined</field>
+        <field name="model">project.project</field>
+        <field name="inherit_id" ref="industry_fsm.project_view_form_inherit"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='group_field_service']/div" position="inside">
+                <setting class="col-lg-12" id="visar_fsm_combined"
+                         help="Cuando una misma cita trae servicios de este proyecto y de otro que apunta al mismo proyecto combinado, todo se agenda como UN solo servicio externo: una hoja de trabajo, una firma y un reporte.">
+                    <field name="visar_fsm_combined_project_id"
+                           options="{'no_quick_create': True}"
+                           placeholder="Ej. Servicios combinados"/>
+                </setting>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

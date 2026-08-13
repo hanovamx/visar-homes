@@ -109,10 +109,36 @@
                         wsForm.dataset.visarDirty = "";
                         form.submit();
                     };
+                    // El guardado NO cierra si falla. El servidor, ante una hoja
+                    // incompleta, no escribe nada y redirige con `?ws_error=1`; si
+                    // aquí se cerrara igual (como se hacía), lo capturado desde el
+                    // último guardado se perdía en silencio. Se manda al técnico de
+                    // vuelta a la hoja, que es donde están los campos marcados.
+                    var abortClose = function (target) {
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.textContent = "Cerrar servicio";
+                        }
+                        form.dataset.wsSaved = "";
+                        window.location.href = target;
+                    };
                     fetch(wsForm.getAttribute("action"), {
                         method: "POST",
                         body: new FormData(wsForm),
-                    }).then(closeAndSubmit, closeAndSubmit);
+                    }).then(function (response) {
+                        var url = response && response.url ? response.url : "";
+                        if (!response || !response.ok || url.indexOf("ws_error=") >= 0) {
+                            abortClose(url && url.indexOf("ws_error=") >= 0
+                                ? url
+                                : wsForm.getAttribute("action").replace(
+                                    /\/worksheet$/, "?ws_error=1"));
+                            return;
+                        }
+                        closeAndSubmit();
+                    }, function () {
+                        // Sin red / servidor caído: tampoco se cierra a ciegas.
+                        abortClose(window.location.href);
+                    });
                 }
             });
         }

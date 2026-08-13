@@ -369,3 +369,22 @@ body.o_visar_cam_open {
 .o_visar_field .o_visar_capture_drop {
     display: inline-flex;
 }
+
+/* Encabezado de sección de la hoja de trabajo (una página del arch). Lo que corta
+   el scroll continuo cuando la hoja trae dos servicios: en el combo el técnico pasa
+   de "Fumigación — Ejecución" a "Áreas verdes — Inspección inicial" sin más pista
+   que este renglón. Se queda pegado arriba al hacer scroll para no perder de vista
+   en qué mitad del servicio se está capturando. */
+.o_visar_field .o_visar_ws_section {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #fff;
+    border-bottom: 2px solid #0d6efd;
+    font-weight: 600;
+}
+
+/* El primero no necesita separación: ya lo antecede el título del formulario. */
+.o_visar_field .o_visar_ws_section:first-of-type {
+    margin-top: 0 !important;
+}

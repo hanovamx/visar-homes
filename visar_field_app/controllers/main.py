@@ -13,7 +13,7 @@ from odoo import fields, http
 from odoo.http import request
 from odoo.tools import html2plaintext, plaintext2html
 
-from ..hooks import AREAS_FIJAS, FUM_LINE
+from ..hooks import AREAS_FIJAS, FUM_LINE, FUM_LINE_COMBO
 
 _logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ LINE_FIXED_FLAG = 'x_fija'
 LINE_FIXED_TITLE_FIELD = 'x_area'
 # Áreas de inspección obligatoria por modelo de línea. El catálogo vive en
 # `hooks.py` (fuente de verdad de la plantilla) y aquí solo se mapea al modelo.
-LINE_FIXED_AREAS = {FUM_LINE: AREAS_FIJAS}
+LINE_FIXED_AREAS = {FUM_LINE: AREAS_FIJAS, FUM_LINE_COMBO: AREAS_FIJAS}
 # Prefijos de los inputs de las tarjetas one2many (una sola submission).
 #   o2mline~{campo_o2m}~{fila}~{campo_linea} = valor
 #   o2mline~{campo_o2m}~{fila}~id            = id de la línea existente (o vacío)
@@ -98,7 +98,10 @@ WORKSHEET_MIN_ONE = {'x_areas_tratadas', 'x_labores', 'x_zonas_evidencia'}
 WORKSHEET_REQUIRED_UNLESS_LINE = {
     # "Cliente NO permitió que se fumigara en esta área": el área es obligatoria,
     # pero si no se dejó tratar no se le puede exigir foto, plaga ni plaguicida.
-    'x_visar_area_tratada_v2': 'x_cliente_no_permitio',
+    # Las dos plantillas que capturan áreas tratadas (fumigación suelta y combo)
+    # tienen su propio modelo de línea, con los mismos campos.
+    FUM_LINE: 'x_cliente_no_permitio',
+    FUM_LINE_COMBO: 'x_cliente_no_permitio',
 }
 
 # ------------------------------------------------------------------
@@ -708,29 +711,35 @@ class VisarFieldApp(http.Controller):
         """
         return node.get('invisible') in ('1', 'True', 'true')
 
-    def _collect_field_nodes(self, node, out, ancestor_hidden):
+    def _collect_field_nodes(self, node, out, ancestor_hidden, section=''):
         """Recolecta los nodos <field> visibles del arch, en orden de documento.
 
         A diferencia de un `iter('field')` plano, esto:
           - salta el subárbol <header> (barra de estado, botones: no son captura);
           - oculta los campos cuyo <page>/<group> ancestro esté invisible;
           - NO desciende dentro de un <field> (los subcampos de list/form de un
-            one2many pertenecen a otro modelo; se procesan aparte por subficha).
-        El filtrado por widget/nombre/tipo se aplica luego en el constructor de
-        descriptores, que ya tiene la metadata del modelo.
+            one2many pertenecen a otro modelo; se procesan aparte por subficha);
+          - arrastra el título del <page> que lo contiene, para poder pintar
+            encabezados de sección (la hoja del combo trae ~20 controles y dos
+            subfichas: sin cortes visuales es un scroll indistinguible).
+        Devuelve pares `(nodo, sección)`. El filtrado por widget/nombre/tipo se
+        aplica luego en el constructor de descriptores, que ya tiene la metadata
+        del modelo.
         """
         if node.tag == 'header':
             return
         hidden = ancestor_hidden or self._node_is_invisible(node)
+        if node.tag == 'page':
+            section = (node.get('string') or '').strip()
         if node.tag == 'field':
             if not hidden:
-                out.append(node)
+                out.append((node, section))
             return
         for child in node:
-            self._collect_field_nodes(child, out, hidden)
+            self._collect_field_nodes(child, out, hidden, section)
 
     def _worksheet_field_nodes(self, Model):
-        """Nodos <field> visibles del formulario nativo, en orden."""
+        """Pares `(nodo <field> visible, título de su página)`, en orden."""
         nodes = []
         try:
             arch = etree.fromstring(Model.get_view(view_type='form')['arch'])
@@ -773,6 +782,10 @@ class VisarFieldApp(http.Controller):
             'conditional': None,
             # Condición propia + las de los ancestros (ver `_conditional_chain`).
             'conditional_chain': [],
+            # Página del arch en la que vive (encabezado de sección del formulario);
+            # los campos de LÍNEA no la usan: van dentro de su tarjeta.
+            'section': '',
+            'section_start': False,
         }
         if ftype == 'many2one' and info.get('relation'):
             comodel = request.env[info['relation']].sudo()
@@ -1043,7 +1056,34 @@ class VisarFieldApp(http.Controller):
         }
 
     def _worksheet_descriptors(self, task, record):
-        """Lista ordenada de descriptores (escalares y subfichas one2many)."""
+        """Lista ordenada de descriptores (escalares y subfichas one2many).
+
+        Cada descriptor lleva `section` = título de la página del arch en la que
+        vive; la plantilla pinta un encabezado cuando cambia respecto al anterior.
+        Se hace con una CLAVE en el descriptor y no con un pseudo-descriptor de
+        tipo "sección" a propósito: esta lista la recorren cuatro bucles del
+        servidor (validación, valores a escribir, sincronía de subfichas y campos-
+        foto) y un elemento que no fuera un campo real obligaría a filtrarlo en
+        todos.
+
+        MEMOIZADO por petición: un POST de guardado lo pide tres veces (validar,
+        coaccionar valores, sincronizar subfichas) y cada construcción lee
+        `fields_get()` + `get_view()` y hace un `search_read` por cada m2o/m2m —
+        también por cada campo de línea de CADA tarjeta. En la hoja del combo
+        (dos subfichas, la de áreas con cinco m2m por tarjeta) eso se notaba en el
+        teléfono del técnico. El caché vive en el objeto de la petición, así que no
+        sobrevive al request ni cruza usuarios.
+        """
+        cache = getattr(request, 'visar_ws_descriptors', None)
+        if cache is None:
+            cache = {}
+            request.visar_ws_descriptors = cache
+        key = (task.id, record.id if record is not None else False)
+        if key not in cache:
+            cache[key] = self._build_worksheet_descriptors(task, record)
+        return cache[key]
+
+    def _build_worksheet_descriptors(self, task, record):
         Model = self._worksheet_model(task)
         if Model is None:
             return []
@@ -1051,7 +1091,7 @@ class VisarFieldApp(http.Controller):
         nodes = self._worksheet_field_nodes(Model)
         descriptors = []
         seen = set()
-        for node in nodes:
+        for node, section in nodes:
             name = node.get('name')
             widget = node.get('widget')
             if (not name or name in WORKSHEET_OMIT or name in seen
@@ -1068,6 +1108,7 @@ class VisarFieldApp(http.Controller):
             if ftype == 'one2many':
                 desc = self._o2m_descriptor(Model, info, name, record, help_text)
                 if desc:
+                    desc['section'] = section
                     descriptors.append(desc)
             else:
                 sdesc = self._scalar_descriptor(
@@ -1077,6 +1118,7 @@ class VisarFieldApp(http.Controller):
                 sdesc['conditional'] = (sdesc['conditional_chain'][0]
                                         if sdesc['conditional_chain'] else None)
                 sdesc['required_if'] = self._required_if(name, sdesc['conditional'])
+                sdesc['section'] = section
                 if sdesc['type'] == 'binary':
                     # Galería viva sobre la tarea (existe siempre), etiquetada por campo.
                     sdesc['photos'] = self._field_photo_ids(
@@ -1088,7 +1130,26 @@ class VisarFieldApp(http.Controller):
                         and info['type'] not in WORKSHEET_SKIP_TYPES):
                     descriptors.append(self._scalar_descriptor(
                         info, name, record[name] if record else False))
+        self._mark_section_starts(descriptors)
         return descriptors
+
+    @staticmethod
+    def _mark_section_starts(descriptors):
+        """Marca el primer descriptor de cada sección (encabezado a pintar).
+
+        Se resuelve aquí y no en la plantilla porque QWeb no tiene forma limpia de
+        comparar con el elemento anterior de un `t-foreach`. Con una sola sección no
+        se marca nada: un encabezado único sería ruido bajo el "Hoja de trabajo" que
+        ya encabeza el formulario.
+        """
+        sections = [d.get('section') or '' for d in descriptors]
+        if len(set(s for s in sections if s)) < 2:
+            return
+        current = None
+        for desc, section in zip(descriptors, sections):
+            if section and section != current:
+                desc['section_start'] = True
+            current = section
 
     @staticmethod
     def _coerce_scalar(ftype, raw):

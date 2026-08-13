@@ -176,7 +176,11 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
 - [ ] Verificar add-ons obligatorios en sidebar y checkout (cantidades sumadas).
 - [ ] Wizard → tramo `is_valuation` → aviso → valoración → checkout.
 - [ ] Combinaciones combo (interior + exterior + corte) y totales vs tabulador.
-- [ ] Confirmar pago → tareas FSM agrupadas (1 Fumigación + 1 Corte para combo triple).
+- [ ] Confirmar pago → tareas FSM agrupadas. 🆕 **13-ago-2026:** el combo fumigación +
+      áreas verdes cae en **UNA** tarea de "Servicios combinados" (hoja, firma y PDF
+      únicos); un combo triple con interior + exterior + corte sigue siendo 1 tarea.
+      Cubierto por `visar_fsm/tests/test_fsm_grouping.py`. **Pendiente: pólizas** (fase 2,
+      su generación de visitas es por línea y por periodo, ver `40-decisions.md`).
 
 ### Datos / operación
 

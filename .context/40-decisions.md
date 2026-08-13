@@ -2,6 +2,52 @@
 
 Cada decisión con su porqué. Las marcadas **[RESUELTA]** ya están reflejadas en el código.
 
+## [IMPLEMENTADO — 13-ago-2026] El combo se presta como UN servicio externo
+
+Cuando una cita trae **fumigación + mantenimiento de áreas verdes**, el pedido generaba **dos
+tareas FSM** (una por proyecto) y el técnico veía **dos tarjetas y dos formularios** para una
+sola visita: llegada, espera, hoja, firma, PDF y WhatsApp, todo dos veces. El cliente recibía
+dos reportes de un mismo servicio.
+
+**Qué se hace:** una visita = una tarea = una hoja = una firma = un PDF, en un proyecto FSM
+anfitrión (**Servicios combinados**) con una plantilla de hoja que trae los dos juegos de
+campos.
+
+- **La regla de consolidación es CONFIGURACIÓN, no código** (requisito duro de D-07). Cada
+  proyecto declara con quién comparte visita en `project.project.visar_fsm_combined_project_id`
+  (`visar_fsm/models/project_project.py`). `_visar_create_grouped_tasks` agrupa por proyecto
+  **efectivo**, y solo colapsa cuando la cita trae trabajo de **dos o más** proyectos distintos
+  que apuntan al mismo combinado: una fumigación sola nunca cae ahí. Dar de alta un tercer
+  servicio combinable es marcar un campo, no tocar código. Un combinado archivado, no-FSM o de
+  otra compañía **no** consolida (fallo seguro: mejor dos servicios externos que uno roto).
+- **Descartado: subtareas espejo** en los proyectos de origen para conservar el conteo. Serían
+  tres registros por visita, dos de ellos cascarones que nadie llena y cuyo estado habría que
+  espejear de por vida — todo para que cuadrara un reporte.
+- **El conteo por línea de negocio vive en la TAREA, no en el proyecto:**
+  `project.task.visar_service_group_ids` (m2m calculado y almacenado) sale de las líneas de la
+  orden vía `product.template._visar_service_groups()`, el mismo primitivo del fan-out de CRM.
+  Una tarea combo lleva los dos grupos y **cuenta en ambos** al agrupar (como las etiquetas
+  nativas). El doble conteo es el requisito, no un bug: la suma por grupo es mayor que el número
+  de tareas. Se agregó "Agrupar por > Servicio" a la vista de búsqueda de FSM.
+  - Depende de `visar_sale_line_ids` (o2m técnico a `sale.order.line.task_id`, que el core no
+    define). **No es la pestaña** descartada el 26-jun-2026: no se muestra en ninguna vista.
+- **La tarea consolidada se renombra** con los servicios que cubre: el nombre nativo sale del
+  producto de la línea representante y nombraría solo una mitad, que es lo que el técnico lee
+  en su tarjeta.
+- **Excepción deliberada a "la asignación de plantilla no se automatiza":** el proyecto
+  combinado lo crea el código y nadie eligió su plantilla; además Odoo le pone la genérica
+  nativa al nacer (`_compute_worksheet_template_id`), así que un guardia "solo si está vacío"
+  nunca dispararía. `wire_combined_project` la escribe si está vacía **o** si sigue en la
+  nativa, y respeta cualquier elección hecha a mano.
+- **Pólizas: fase 2.** `_visar_generate_period_visit` es otro camino (una visita por línea y
+  por factura pagada, idempotencia por `(orden, factura, línea)`), y consolidar ahí exige una
+  regla nueva para una visita que pertenece a dos líneas, un guardia para conteos de visitas
+  distintos, y aceptar que se **reduce a la mitad** el conteo que alimenta la siniestralidad.
+- **Datos existentes:** las parejas de tareas combo que ya existan se quedan como están; la
+  consolidación aplica a pedidos nuevos. Mezclar hojas ya capturadas no tiene respuesta limpia.
+- **Módulos:** `visar_fsm` v19.0.1.1.0 (+ su primera migración), `visar_field_app` v19.0.1.24.0.
+  Detalle en `25-field-app.md` → "🆕 Actualización — 13-ago-2026".
+
 ## [RESUELTA] Técnicos = recursos, no usuarios
 `appointment.type.schedule_based_on = 'resources'`. Cada técnico es un `appointment.resource`
 ligado a un `hr.employee` (`visar_employee_id`).

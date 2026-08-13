@@ -12,6 +12,72 @@
 
 ---
 
+## 🆕 Actualización — 13-ago-2026 (v19.0.1.24.0) — el COMBO en una sola hoja
+
+Una cita con **fumigación + mantenimiento de áreas verdes** ya no se parte en dos servicios
+externos: `visar_fsm` genera **una sola tarea** en el proyecto "Servicios combinados" (ver
+`40-decisions.md`), y esa tarea necesita una hoja con los dos juegos de campos.
+
+### Cuarta plantilla: "Fumigación + Mantenimiento de áreas verdes (App v2)"
+
+`hooks.py` se reorganizó para que la plantilla del combo sea una **composición**, no una copia:
+
+- **Los cuerpos de las páginas del notebook viven una sola vez** (`_FUM_BODY_*`, `_JAR_BODY_*`)
+  y `_arch(pages)` los ensambla para las tres plantillas que los usan. Agregar un campo a
+  fumigación llega al combo solo. Se verificó que el arch resultante de Fumigación y de Áreas
+  verdes es **XML idéntico** al anterior: las hojas ya capturadas no cambian.
+- **Los juegos de campos se siembran con la misma función** (`_seed_fumigacion_fields`,
+  `_seed_jardineria_fields`), parametrizada por plantilla. Los **nombres `x_` son los mismos**
+  en la hoja suelta y en el combo — de eso depende que `WORKSHEET_CONDITIONAL`,
+  `WORKSHEET_REQUIRED_IF`, `WORKSHEET_MIN_ONE`, la convención `{base}_otro` y las maquetas del
+  reporte sirvan igual en ambas sin tocar nada.
+- Lo único que no puede repetirse en la BD son los **modelos de línea** (su m2o apunta a UNA
+  hoja) y las **tablas de relación m2m**. De ahí `x_visar_area_tratada_combo` /
+  `x_visar_labor_combo` y los prefijos `x_cmb_*` / `x_wsc_*`, todos con nombre explícito y
+  corto (el autogenerado se pasa del límite de Postgres y el m2m desaparece sin error).
+- `LINE_FIXED_AREAS` y `WORKSHEET_REQUIRED_UNLESS_LINE` (`controllers/main.py`) ganaron la
+  entrada del modelo de línea del combo; el sembrado de áreas obligatorias y la dispensa de
+  "cliente no permitió" funcionan ahí sin más cambios.
+- `wire_combined_project` apunta el proyecto combinado a esta plantilla. **No basta con "solo
+  si está vacío"**: Odoo le pone la plantilla genérica nativa a todo proyecto FSM al nacer, así
+  que se reescribe también en ese caso (una elección hecha a mano se respeta).
+
+### Encabezados de sección en el formulario
+
+La hoja del combo son ~20 controles de primer nivel más dos subfichas; con las tres áreas
+obligatorias sembradas, ~70 controles en un scroll sin cortes. `_collect_field_nodes` ahora
+arrastra el título del `<page>` y cada descriptor lleva `section`; `_mark_section_starts` marca
+el primero de cada una y la plantilla pinta un `<h6>` pegajoso.
+
+- Es una **clave del descriptor**, no un pseudo-descriptor de tipo "sección": cuatro bucles del
+  servidor recorren esa lista y un elemento que no fuera un campo real habría que filtrarlo en
+  todos.
+- El encabezado se pinta como **hermano** del bloque del campo, nunca envolviéndolo: el JS
+  evalúa la cascada de condicionales por orden de DOM y busca los errores con `:scope >`.
+- Con una sola sección no se pinta nada. Las otras tres plantillas ganan sus encabezados gratis.
+
+### Reporte del combo
+
+`_visar_worksheet_report_sections` gana su cuarta rama. El preludio compartido (Servicios
+agregados + Horario) se extrajo a `_visar_report_preludio_sections` porque **el combo lo pinta
+una sola vez**; los cuerpos de cada servicio se reutilizan tal cual y solo se les prefija el
+título ("Fumigación — Áreas tratadas", "Áreas verdes — Labores realizadas"). Las **observaciones
+finales del técnico cierran el documento sin prefijo**: `x_comments` es uno solo por hoja y
+habla de la visita completa, no de una mitad. La plantilla QWeb no cambió (siempre fue genérica
+sobre la lista de secciones).
+
+### Dos arreglos que el formulario largo volvía urgentes
+
+- **Cerrar ya no pierde la captura.** El cierre reenvía la hoja por `fetch` y antes llamaba a
+  `closeAndSubmit` **tanto si el guardado salía bien como si fallaba**; si el servidor rechazaba
+  la hoja no escribía nada y el servicio se cerraba igual, perdiendo en silencio lo capturado
+  desde el último guardado. Ahora, si el guardado falla, no se cierra: se devuelve al técnico a
+  la hoja con los campos marcados.
+- **Descriptores memoizados por petición.** Un POST de guardado los reconstruía tres veces
+  (validar, coaccionar, sincronizar subfichas), y cada construcción hace `fields_get()` +
+  `get_view()` y un `search_read` por cada m2o/m2m — también por cada campo de línea de cada
+  tarjeta. Con dos subfichas y cinco m2m por tarjeta de área, se notaba en el teléfono.
+
 ## 🆕 Actualización — 27-jul-2026 — reportes por servicio, preview backend y solo-lectura en cerrados
 
 > Tanda de reportes PDF + ciclo de vida de la hoja. **Cambio SOLO Python/plantillas**: los

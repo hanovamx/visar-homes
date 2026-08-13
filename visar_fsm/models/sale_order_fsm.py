@@ -14,7 +14,7 @@ class SaleOrderLine(models.Model):
         """
         visar_service_lines = self.filtered(
             lambda sol: sol.product_id.visar_is_service
-            and sol.product_id.project_id
+            and self._visar_line_project(sol)
             and not sol.task_id
         )
 
@@ -26,11 +26,64 @@ class SaleOrderLine(models.Model):
 
         return super()._timesheet_service_generation()
 
+    @staticmethod
+    def _visar_line_project(line):
+        """Proyecto FSM configurado en el producto de la línea.
+
+        `product.template.project_id` es `company_dependent`, así que se lee con la
+        compañía de la línea — igual que el generador nativo
+        (`sale_project/models/sale_order_line.py`). Sin esto, en una BD multi-compañía
+        se leería el valor de la compañía del usuario que confirma."""
+        return line.product_id.with_company(line.company_id).project_id
+
+    def _visar_effective_project_map(self, visar_service_lines):
+        """{line.id: proyecto EFECTIVO} — el propio, o el combinado si aplica.
+
+        Un proyecto declara con qué otros comparte visita apuntando al mismo
+        `visar_fsm_combined_project_id` (ver `models/project_project.py`). La
+        consolidación solo se activa cuando la cita trae trabajo de **dos o más**
+        proyectos distintos que apuntan a ese mismo combinado: una fumigación sola
+        no debe caer en "Servicios combinados" (recibiría la hoja combinada y se le
+        exigiría captura de áreas verdes que nadie contrató).
+
+        Es configuración pura: ningún nombre ni id de proyecto vive en el código.
+        """
+        projects_by_combined = {}
+        for line in visar_service_lines:
+            project = self._visar_line_project(line)
+            combined = project.visar_fsm_combined_project_id
+            # Un combinado archivado, que dejó de ser FSM o de otra compañía no puede
+            # recibir tareas: mejor dos servicios externos que uno roto.
+            if (not combined or not combined.active or not combined.is_fsm
+                    or (combined.company_id
+                        and combined.company_id != project.company_id)):
+                continue
+            projects_by_combined.setdefault(combined, set()).add(project.id)
+
+        active_combined = {
+            combined for combined, source_ids in projects_by_combined.items()
+            if len(source_ids) > 1
+        }
+
+        effective = {}
+        for line in visar_service_lines:
+            project = self._visar_line_project(line)
+            combined = project.visar_fsm_combined_project_id
+            effective[line.id] = (
+                combined if combined in active_combined else project)
+        return effective
+
     def _visar_create_grouped_tasks(self, visar_service_lines):
-        """Create one FSM task per project group; returns {project_id: task}."""
+        """Create one FSM task per effective project group; returns {project_id: task}.
+
+        "Efectivo" = el proyecto propio del producto, salvo que la cita active una
+        regla de consolidación (ver `_visar_effective_project_map`), en cuyo caso
+        todas las líneas combinables caen en una sola tarea.
+        """
+        effective = self._visar_effective_project_map(visar_service_lines)
         groups = {}
         for line in visar_service_lines.sorted(lambda l: (l.sequence, l.id)):
-            pid = line.product_id.project_id.id
+            pid = effective[line.id].id
             groups.setdefault(pid, self.env['sale.order.line'])
             groups[pid] |= line
 
@@ -42,6 +95,15 @@ class SaleOrderLine(models.Model):
             remaining = lines - rep_line
             if remaining:
                 remaining.write({'task_id': task.id})
+            # Tarea CONSOLIDADA (líneas de dos proyectos distintos). El nombre
+            # nativo sale del producto de la línea REPRESENTANTE ("S00123 -
+            # Fumigación interior o exterior"), que aquí nombra solo una parte del
+            # trabajo — y es lo que el técnico lee en su tarjeta. Se reescribe con
+            # todos los servicios. Las tareas de un solo proyecto (p. ej. dos podas
+            # de la misma cita) conservan el nombre nativo de siempre.
+            sources = {self._visar_line_project(line).id for line in lines}
+            if len(sources) > 1:
+                task._visar_rename_from_services()
             task_by_project[project_id] = task
         return task_by_project
 
@@ -65,15 +127,22 @@ class SaleOrderLine(models.Model):
                 addon_line.sudo().write({'task_id': task.id})
 
     def _visar_resolve_addon_task(self, addon_line, visar_service_lines, task_by_project):
-        """Return the task whose service product declares the add-on as an optional line."""
+        """Return the task whose service product declares the add-on as an optional line.
+
+        `task_by_project` está indexado por el proyecto EFECTIVO (el combinado si la
+        cita activó la consolidación), así que el add-on se resuelve por el mismo
+        mapa que usó el agrupado — si se buscara por `product_id.project_id` a secas,
+        el add-on de una línea consolidada no encontraría tarea y caería al
+        `primary_task` por accidente.
+        """
         addon_tmpl = addon_line.product_id.product_tmpl_id
+        effective = self._visar_effective_project_map(visar_service_lines)
         for service_line in visar_service_lines:
             optional_tmpls = service_line.product_id.product_tmpl_id.visar_optional_line_ids.mapped(
                 'optional_product_id'
             )
             if addon_tmpl in optional_tmpls:
-                project_id = service_line.product_id.project_id.id
-                return task_by_project.get(project_id)
+                return task_by_project.get(effective[service_line.id].id)
         return None
 
 

@@ -343,8 +343,17 @@
                             Los campos con <span class="text-danger fw-bold">*</span> son obligatorios.
                         </p>
 
-                        <div t-foreach="worksheet_fields" t-as="field"
-                             t-attf-class="mb-3#{' o_visar_condfield d-none' if field.get('conditional') else ''}"
+                        <t t-foreach="worksheet_fields" t-as="field">
+                        <!-- Encabezado de sección (página del arch). Va como HERMANO
+                             del bloque del campo, nunca envolviéndolo: el JS evalúa
+                             la cascada de condicionales por orden de DOM y busca los
+                             mensajes de error con `:scope >`, así que los bloques de
+                             campo tienen que quedar exactamente donde estaban. Sin
+                             `data-req`/`data-showif`, es inerte para la validación. -->
+                        <h6 t-if="field.get('section_start')"
+                            class="o_visar_ws_section mt-4 mb-2 pb-1"
+                            t-esc="field['section']"/>
+                        <div t-attf-class="mb-3#{' o_visar_condfield d-none' if field.get('conditional') else ''}"
                              t-att-data-showif="field.get('conditional') and field['conditional']['controller'] or None"
                              t-att-data-showif-kind="field.get('conditional') and field['conditional']['kind'] or None"
                              t-att-data-showif-val="field.get('conditional') and field['conditional']['trigger'] or None"
@@ -556,6 +565,7 @@
                                 </t>
                             </t>
                         </div>
+                        </t>
 
                         <!-- Dos submits del MISMO form: el borrador viaja por el mismo
                              multipart (mismos campos, mismas fotos) y solo añade

@@ -25,8 +25,29 @@
                        invisible="not visar_sale_order_id"/>
                 <field name="visar_technician_ids" widget="many2many_tags"
                        options="{'no_create': True}"/>
+                <!-- Servicios que cubre la tarea. Es el eje de conteo por línea de
+                     negocio: una tarea combo lleva los dos grupos y cuenta en ambos
+                     (el proyecto dejó de servir para eso al consolidarse el combo). -->
+                <field name="visar_service_group_ids" widget="many2many_tags"
+                       readonly="1" invisible="not visar_service_group_ids"/>
             </xpath>
 
+        </field>
+    </record>
+
+    <!-- "Agrupar por > Servicio" en la vista de búsqueda de servicios externos.
+         Sustituye a agrupar por proyecto para medir volumen por línea de negocio:
+         al ser many2many, una tarea combo aparece bajo CADA servicio que cubre
+         (mismo comportamiento que las etiquetas nativas, justo arriba). -->
+    <record id="project_task_view_search_visar_fsm" model="ir.ui.view">
+        <field name="name">project.task.search.fsm.visar</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="industry_fsm.project_task_view_search_fsm"/>
+        <field name="arch" type="xml">
+            <filter name="stage" position="before">
+                <filter string="Servicio" name="visar_service_group"
+                        context="{'group_by': 'visar_service_group_ids'}"/>
+            </filter>
         </field>
     </record>
 

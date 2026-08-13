@@ -24,6 +24,7 @@ from odoo import api, fields, models
 from odoo.tools import formatLang, html2plaintext
 
 from ..hooks import (
+    COMBO_NAME,
     FUMIGACION_NAME,
     JARDINERIA_NAME,
     PLAGA_ESPECIES,
@@ -1097,6 +1098,8 @@ class ProjectTask(models.Model):
             return self._visar_jardineria_report_sections(record)
         if template.sudo().name == VISITA_NAME:
             return self._visar_visita_report_sections(record)
+        if template.sudo().name == COMBO_NAME:
+            return self._visar_combo_report_sections(record)
         try:
             arch = etree.fromstring(Model.get_view(view_type='form')['arch'])
         except Exception:  # noqa: BLE001 - vista dinámica ilegible → fallback nativo
@@ -1569,14 +1572,12 @@ class ProjectTask(models.Model):
         Devuelve None hasta que se defina ese modelo."""
         return None
 
-    def _visar_fumigacion_report_sections(self, record):
-        """Secciones del reporte de Fumigación, en el orden pedido por el cliente:
-        (3) Servicios agregados → (4) Horario del servicio → (5) Áreas tratadas →
-        (5b) Áreas no tratadas (aviso destacado) → (6) Evidencia →
-        (7) Plaguicidas [pendiente].
+    def _visar_report_preludio_sections(self):
+        """Encabezado COMPARTIDO por todas las maquetas: qué se vendió y cuándo se
+        prestó — (3) Servicios agregados y (4) Horario del servicio.
 
-        Cliente (1), Técnico (2) y Firma (8) los pinta el cascarón compartido del
-        reporte (fila superior y bloque de firma), no esta lista."""
+        Vive aparte porque el reporte del combo lo pinta UNA sola vez y después los
+        dos cuerpos de servicio; concatenar las maquetas completas lo duplicaría."""
         self.ensure_one()
         sections = []
 
@@ -1592,6 +1593,28 @@ class ProjectTask(models.Model):
                 {'kind': 'scalar', 'label': "Hora de llegada", 'text': times['arrived']},
                 {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
             ]})
+        return sections
+
+    def _visar_fumigacion_report_sections(self, record):
+        """Secciones del reporte de Fumigación, en el orden pedido por el cliente:
+        (3) Servicios agregados → (4) Horario del servicio → (5) Áreas tratadas →
+        (5b) Áreas no tratadas (aviso destacado) → (6) Evidencia →
+        (7) Plaguicidas [pendiente].
+
+        Cliente (1), Técnico (2) y Firma (8) los pinta el cascarón compartido del
+        reporte (fila superior y bloque de firma), no esta lista."""
+        self.ensure_one()
+        return (self._visar_report_preludio_sections()
+                + self._visar_fumigacion_body_sections(record))
+
+    def _visar_fumigacion_body_sections(self, record, include_comments=True):
+        """Cuerpo de Fumigación (sin el preludio compartido).
+
+        `include_comments=False` lo usa el combo: las observaciones finales son del
+        SERVICIO completo, no de una de sus mitades, así que allá se imprimen una
+        sola vez y sin prefijo de servicio."""
+        self.ensure_one()
+        sections = []
 
         # (4b) Diagnóstico — qué se encontró, antes de qué se hizo.
         diagnostico = self._visar_fumigacion_diagnostico_section(record)
@@ -1617,7 +1640,8 @@ class ProjectTask(models.Model):
 
         # (6b) Observaciones finales del técnico — cierre en palabras del técnico,
         # después de la evidencia que las respalda.
-        observaciones = self._visar_fumigacion_observaciones_section(record)
+        observaciones = (self._visar_fumigacion_observaciones_section(record)
+                         if include_comments else None)
         if observaciones:
             sections.append(observaciones)
 
@@ -1860,20 +1884,17 @@ class ProjectTask(models.Model):
         """Secciones del reporte de Mantenimiento de áreas verdes, en el orden
         pedido por el cliente (ver comentario del bloque)."""
         self.ensure_one()
+        return (self._visar_report_preludio_sections()
+                + self._visar_jardineria_body_sections(record))
+
+    def _visar_jardineria_body_sections(self, record, include_comments=True):
+        """Cuerpo de Áreas verdes (sin el preludio compartido).
+
+        `include_comments=False` lo usa el combo: `x_comments` es UN solo campo de
+        la hoja (las observaciones finales del técnico sobre toda la visita) y lo
+        cierra el bloque de fumigación, así que aquí no se repite."""
+        self.ensure_one()
         sections = []
-
-        # (1) Servicios y productos agregados — compartido.
-        services = self._visar_report_services_section()
-        if services:
-            sections.append(services)
-
-        # (2) Horario del servicio — llegada y finalización (sin tiempos internos).
-        times = self._visar_report_arrival_finish()
-        if times:
-            sections.append({'title': "Horario del servicio", 'fields': [
-                {'kind': 'scalar', 'label': "Hora de llegada", 'text': times['arrived']},
-                {'kind': 'scalar', 'label': "Hora de finalización", 'text': times['finished']},
-            ]})
 
         # (3) Labores realizadas — subficha `x_labores` como tabla.
         labores = self._visar_jardineria_labores_table(record)
@@ -1881,7 +1902,8 @@ class ProjectTask(models.Model):
             sections.append({'title': "Labores realizadas", 'fields': [labores]})
 
         # (4) Cierre del servicio — bloque etiqueta/valor condensado.
-        cierre = self._visar_jardineria_cierre_fields(record)
+        cierre = self._visar_jardineria_cierre_fields(
+            record, include_comments=include_comments)
         if cierre:
             sections.append({'title': "Cierre del servicio", 'fields': cierre})
 
@@ -1890,6 +1912,40 @@ class ProjectTask(models.Model):
         if evidence:
             sections.append(evidence)
 
+        return sections
+
+    # Servicios de la hoja del COMBO, en el orden en que se prestan. Cada entrada:
+    # (etiqueta para prefijar los títulos, constructor del cuerpo). Ambos cuerpos se
+    # piden SIN observaciones finales: `x_comments` es uno solo y cierra el reporte.
+    def _visar_combo_report_bodies(self):
+        return [
+            ("Fumigación",
+             lambda rec: self._visar_fumigacion_body_sections(
+                 rec, include_comments=False)),
+            ("Áreas verdes",
+             lambda rec: self._visar_jardineria_body_sections(
+                 rec, include_comments=False)),
+        ]
+
+    def _visar_combo_report_sections(self, record):
+        """Maqueta del reporte del COMBO: preludio, los dos cuerpos y un cierre.
+
+        Reutiliza tal cual los cuerpos de las maquetas individuales (leen los campos
+        por nombre, que en la hoja del combo son los mismos) y solo prefija los
+        títulos con el servicio, para que el cliente distinga a qué mitad pertenece
+        cada bloque. Las observaciones finales van al final y SIN prefijo: son del
+        servicio completo, no de una de sus mitades."""
+        self.ensure_one()
+        sections = self._visar_report_preludio_sections()
+        for label, build in self._visar_combo_report_bodies():
+            for section in build(record):
+                title = section.get('title')
+                if title:
+                    section = dict(section, title="%s — %s" % (label, title))
+                sections.append(section)
+        observaciones = self._visar_fumigacion_observaciones_section(record)
+        if observaciones:
+            sections.append(observaciones)
         return sections
 
     def _visar_jardineria_labores_table(self, record):
@@ -1920,12 +1976,15 @@ class ProjectTask(models.Model):
             'rows': rows,
         }
 
-    def _visar_jardineria_cierre_fields(self, record):
+    def _visar_jardineria_cierre_fields(self, record, include_comments=True):
         """Campos del bloque "Cierre del servicio" (lista de descriptores).
 
         Incluye (por decisión de negocio): indicaciones del cliente, área limpia,
         residuos retirados + nº de bolsas, y las observaciones finales del técnico.
-        NO incluye solicitudes adicionales ni estado del equipo (internos)."""
+        NO incluye solicitudes adicionales ni estado del equipo (internos).
+
+        `include_comments=False` en la hoja del combo: `x_comments` es único por
+        hoja y ya lo pinta el cierre de la mitad de fumigación."""
         self.ensure_one()
         fields_out = []
 
@@ -1949,7 +2008,7 @@ class ProjectTask(models.Model):
 
         # Observaciones finales del técnico (x_comments; puede ser html o texto).
         info = self.env[record._name].sudo().fields_get(['x_comments']).get('x_comments') or {}
-        value = record.x_comments
+        value = record.x_comments if include_comments else False
         if value:
             if info.get('type') == 'html':
                 if html2plaintext(value).strip():

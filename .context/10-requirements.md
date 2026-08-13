@@ -160,7 +160,15 @@ servicio externo **es una `project.task`** dentro de un proyecto con `is_fsm = T
   nuevo proyecto FSM) sea **solo configuración**, sin tocar código. El seeding inicial se hace por
   `hooks.py`/migración idempotente (no XML de productos), pero queda **reconfigurable** desde el backend.
 
-**Regla de agrupado: UNA tarea por proyecto.**
+**Regla de agrupado: UNA tarea por proyecto EFECTIVO.**
+
+> 🆕 **13-ago-2026.** "Efectivo" = el proyecto del producto, salvo que la cita active una regla
+> de consolidación: dos proyectos que apuntan al mismo `visar_fsm_combined_project_id` generan
+> UNA sola tarea cuando la cita trae trabajo de ambos (el combo fumigación + áreas verdes se
+> presta en una visita, con una hoja y una firma). Sigue siendo configuración pura — la regla se
+> declara en el proyecto, no en el código. Ver `40-decisions.md`. Todo lo de abajo aplica igual,
+> cambiando "proyecto" por "proyecto efectivo".
+
 - El generador nativo crea **una tarea por línea de servicio** → habría 3 tareas para
   fumigación interna + externa + corte. Se requiere **consolidar por proyecto**.
 - Implementación: **override de `_timesheet_service_generation`** (o wrapper) que:

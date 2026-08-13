@@ -102,17 +102,28 @@ OTRO_VISITA = "Especifica qué otro"
 FUMIGACION_NAME = "Fumigación interior o exterior (App v2)"
 JARDINERIA_NAME = "Mantenimiento de áreas verdes (App v2)"
 VISITA_NAME = "Visita de valoración técnica (App v2)"
+# Plantilla del COMBO: fumigación + áreas verdes prestadas en una sola visita.
+# Lleva los DOS juegos de campos, con los MISMOS nombres `x_` que las plantillas
+# individuales — de eso depende que todo lo que está indexado por nombre de campo
+# (condicionales, obligatoriedad, maquetas del reporte) siga sirviendo tal cual.
+COMBO_NAME = "Fumigación + Mantenimiento de áreas verdes (App v2)"
 FUM_LINE = "x_visar_area_tratada_v2"
 JAR_LINE = "x_visar_labor_jardineria"
 VISITA_LINE = "x_visar_zona_evidencia"
+# Modelos de línea propios del combo: el m2o `x_worksheet_id` apunta a UN modelo de
+# hoja concreto, así que las subfichas del combo no pueden colgar de los modelos de
+# línea de las plantillas individuales.
+FUM_LINE_COMBO = "x_visar_area_tratada_combo"
+JAR_LINE_COMBO = "x_visar_labor_combo"
 FACTOR_MODEL = "x_visar_factor_riesgo"
 PLAGA_MODEL = "x_visar_plaga"
 SERVICIO_MODEL = "x_visar_servicio_identificado"
 
-FUMIGACION_ARCH = """<form create="false" duplicate="false">
-  <sheet>
-    <notebook>
-      <page string="Inspección inicial">
+# --- páginas del notebook, por servicio ---
+# Los CUERPOS viven aquí una sola vez y se componen en las plantillas individuales
+# y en la del combo (`_arch`). Así una página no puede quedar distinta entre la
+# hoja de fumigación suelta y la mitad de fumigación del combo.
+_FUM_BODY_INSPECCION = """
         <group>
           <field name="x_recorrido_completo" required="1" help="Confirma que se revisó todo el inmueble antes de aplicar cualquier producto."/>
           <field name="x_nivel_infestacion" required="1" help="Preventivo: sin infestación visible. Moderado: presencia ocasional. Alto: infestación activa o problema complejo."/>
@@ -121,8 +132,9 @@ FUMIGACION_ARCH = """<form create="false" duplicate="false">
           <field name="x_foto_inicial" widget="image" required="1" help="Foto general del área con mayor problema antes de iniciar."/>
           <field name="x_descripcion_zona" placeholder="Ej. Cucarachas visibles bajo el fregadero de la cocina"/>
         </group>
-      </page>
-      <page string="Ejecución del tratamiento">
+      """
+
+_FUM_BODY_EJECUCION = """
         <group>
           <field name="x_foto_ejecucion" widget="image" required="1" help="Foto representativa del tratamiento aplicado."/>
         </group>
@@ -161,27 +173,17 @@ FUMIGACION_ARCH = """<form create="false" duplicate="false">
             </group>
           </form>
         </field>
-      </page>
-      <page string="Cierre">
-        <group>
-          <field name="x_comments"/>
-        </group>
-      </page>
-    </notebook>
-  </sheet>
-</form>"""
+      """
 
-JARDINERIA_ARCH = """<form create="false" duplicate="false">
-  <sheet>
-    <notebook>
-      <page string="Inspección inicial">
+_JAR_BODY_INSPECCION = """
         <group>
           <field name="x_foto_inicial_jardin" widget="image" required="1" help="Foto general del área antes de iniciar el servicio."/>
           <field name="x_indicaciones_cliente" placeholder="Ej. No cortar las rosas del lado izquierdo" help="Instrucciones específicas para el servicio de hoy."/>
           <field name="x_solicitudes_adicionales" placeholder="Ej. Cliente pregunta por poda de palma" help="Necesidades del cliente que NO son parte del servicio de hoy. Genera seguimiento comercial."/>
         </group>
-      </page>
-      <page string="Ejecución">
+      """
+
+_JAR_BODY_EJECUCION = """
         <field name="x_labores" help="Llene la información para cada labor realizada, agregando cada una con el botón de '+ Agregar'.">
           <list>
             <field name="x_tipo_servicio"/>
@@ -197,8 +199,11 @@ JARDINERIA_ARCH = """<form create="false" duplicate="false">
             </group>
           </form>
         </field>
-      </page>
-      <page string="Cierre">
+      """
+
+# Cierre de áreas verdes. Incluye `x_comments` (observaciones finales del técnico),
+# que es UN solo campo por hoja: en el combo cierra las dos mitades.
+_JAR_BODY_CIERRE = """
         <group>
           <field name="x_resultado_final" widget="image" required="1" help="Foto general del área al finalizar el servicio."/>
           <field name="x_area_limpia"/>
@@ -209,10 +214,49 @@ JARDINERIA_ARCH = """<form create="false" duplicate="false">
           <field name="x_estado_equipo" help="Alimenta el mantenimiento preventivo de los equipos de la cuadrilla."/>
           <field name="x_comments"/>
         </group>
-      </page>
-    </notebook>
+      """
+
+_FUM_BODY_CIERRE = """
+        <group>
+          <field name="x_comments"/>
+        </group>
+      """
+
+
+def _arch(pages):
+    """Arma el arch del formulario a partir de una lista de (título, cuerpo)."""
+    body = ''.join('<page string="%s">%s</page>\n      ' % (title, content)
+                   for title, content in pages)
+    return """<form create="false" duplicate="false">
+  <sheet>
+    <notebook>
+      %s</notebook>
   </sheet>
-</form>"""
+</form>""" % body
+
+
+FUMIGACION_ARCH = _arch([
+    ("Inspección inicial", _FUM_BODY_INSPECCION),
+    ("Ejecución del tratamiento", _FUM_BODY_EJECUCION),
+    ("Cierre", _FUM_BODY_CIERRE),
+])
+
+JARDINERIA_ARCH = _arch([
+    ("Inspección inicial", _JAR_BODY_INSPECCION),
+    ("Ejecución", _JAR_BODY_EJECUCION),
+    ("Cierre", _JAR_BODY_CIERRE),
+])
+
+# Combo: las dos mitades en el orden en que el técnico trabaja, con el servicio en
+# el título de cada página (la app las pinta como encabezados de sección) y UN solo
+# cierre — un servicio, una firma, un reporte.
+COMBO_ARCH = _arch([
+    ("Fumigación — Inspección inicial", _FUM_BODY_INSPECCION),
+    ("Fumigación — Ejecución del tratamiento", _FUM_BODY_EJECUCION),
+    ("Áreas verdes — Inspección inicial", _JAR_BODY_INSPECCION),
+    ("Áreas verdes — Ejecución", _JAR_BODY_EJECUCION),
+    ("Cierre", _JAR_BODY_CIERRE),
+])
 
 VISITA_ARCH = """<form create="false" duplicate="false">
   <sheet>
@@ -417,10 +461,21 @@ def _get_template(env, name):
 
 
 # ---------------------------------------------------------------------------
-# Fumigación interior o exterior (App v2)
+# Juegos de campos por servicio
 # ---------------------------------------------------------------------------
-def _seed_fumigacion(env):
-    tmpl = _get_template(env, FUMIGACION_NAME)
+# Cada juego se siembra sobre la plantilla que se le pase: la individual y la del
+# COMBO. Los nombres de campo `x_` son los MISMOS en ambas (viven en modelos
+# distintos, así que no chocan) — de eso depende que las tablas indexadas por
+# nombre de campo del controlador (condicionales, obligatoriedad) y las maquetas
+# del reporte sirvan igual para la hoja suelta y para la mitad del combo.
+#
+# Lo ÚNICO que cambia entre plantillas es lo que no puede repetirse en la BD:
+#   - el modelo de línea de cada subficha (su m2o apunta a UNA hoja concreta);
+#   - los nombres de las tablas de relación m2m.
+# Ambas tablas se pasan con nombre EXPLÍCITO y corto: el autogenerado se pasa del
+# límite de identificador de Postgres y el m2m desaparece sin error (bug ya vivido
+# con `x_plaga_ids`).
+def _seed_fumigacion_fields(env, tmpl, line_model, line_label, line_rel, ws_rel):
     ws, wid = tmpl.model_id.model, tmpl.model_id.id
 
     _ensure_tag(env, FACTOR_MODEL, "Factor de riesgo (Visar)", FACTORES)
@@ -438,50 +493,50 @@ def _seed_fumigacion(env):
         _ensure_tag(env, tag_model, "Plaga — %s (Visar)" % categoria, especies,
                     prune=True)
 
-    line = _ensure_model(env, FUM_LINE, "Área tratada (Fumigación v2)", [
+    line = _ensure_model(env, line_model, line_label, [
         (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
                 'ttype': 'many2one', 'relation': ws, 'required': True,
                 'on_delete': 'cascade'}),
         (0, 0, {'name': 'x_sequence', 'field_description': 'Secuencia', 'ttype': 'integer'}),
     ])
-    _acls(env, FUM_LINE, line.id)
+    _acls(env, line_model, line.id)
     env.cr.flush()
     lid = line.id
 
-    _ensure_field(env, FUM_LINE, lid, 'x_area', 'selection', 'Área', selection=AREAS)
-    _ensure_field(env, FUM_LINE, lid, 'x_area_otro', 'char', OTRO)
-    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids', 'many2many', 'Tipo de plaga',
-                  relation=PLAGA_MODEL, relation_table='x_area_plaga_rel',
+    _ensure_field(env, line_model, lid, 'x_area', 'selection', 'Área', selection=AREAS)
+    _ensure_field(env, line_model, lid, 'x_area_otro', 'char', OTRO)
+    _ensure_field(env, line_model, lid, 'x_plaga_ids', 'many2many', 'Tipo de plaga',
+                  relation=PLAGA_MODEL, relation_table='%s_plaga_rel' % line_rel,
                   column1='area_id', column2='plaga_id')
-    _ensure_field(env, FUM_LINE, lid, 'x_plaga_ids_otro', 'char',
+    _ensure_field(env, line_model, lid, 'x_plaga_ids_otro', 'char',
                   "Especifica qué plaga")
     # Especies por categoría. Tabla de relación EXPLÍCITA y corta: el nombre
     # autogenerado se pasa del límite de identificador de Postgres y el m2m
     # desaparece sin error (bug ya vivido con `x_plaga_ids`).
     for index, (fname, tag_model, _categoria, label, _especies) in enumerate(
             PLAGA_ESPECIES):
-        _ensure_field(env, FUM_LINE, lid, fname, 'many2many', label,
+        _ensure_field(env, line_model, lid, fname, 'many2many', label,
                       relation=tag_model,
-                      relation_table='x_area_plesp%d_rel' % index,
+                      relation_table='%s_plesp%d_rel' % (line_rel, index),
                       column1='area_id', column2='especie_id')
-    _ensure_field(env, FUM_LINE, lid, 'x_infestacion_activa', 'boolean',
+    _ensure_field(env, line_model, lid, 'x_infestacion_activa', 'boolean',
                   '¿Se detectó presencia activa de plaga?')
     # Marca de "área fija" (Cocina / Baño / Área de basura): no se puede eliminar
     # y se siembra al crear la hoja. NO va en el arch a propósito — es contabilidad
     # interna, no captura del técnico.
-    _ensure_field(env, FUM_LINE, lid, 'x_fija', 'boolean', 'Área obligatoria')
-    _ensure_field(env, FUM_LINE, lid, 'x_cliente_no_permitio', 'boolean',
+    _ensure_field(env, line_model, lid, 'x_fija', 'boolean', 'Área obligatoria')
+    _ensure_field(env, line_model, lid, 'x_cliente_no_permitio', 'boolean',
                   'Cliente NO permitió que se fumigara en esta área')
-    _ensure_field(env, FUM_LINE, lid, 'x_plaguicida_nombre', 'selection',
+    _ensure_field(env, line_model, lid, 'x_plaguicida_nombre', 'selection',
                   'Plaguicida — nombre', selection=PLAGUICIDAS)
-    _ensure_field(env, FUM_LINE, lid, 'x_plaguicida_nombre_otro', 'char', OTRO)
-    _ensure_field(env, FUM_LINE, lid, 'x_plaguicida_dosis', 'float', 'Plaguicida — dosis (ml)')
-    _ensure_field(env, FUM_LINE, lid, 'x_trampa_monitoreo', 'boolean',
+    _ensure_field(env, line_model, lid, 'x_plaguicida_nombre_otro', 'char', OTRO)
+    _ensure_field(env, line_model, lid, 'x_plaguicida_dosis', 'float', 'Plaguicida — dosis (ml)')
+    _ensure_field(env, line_model, lid, 'x_trampa_monitoreo', 'boolean',
                   'Trampa de monitoreo colocada')
-    _ensure_field(env, FUM_LINE, lid, 'x_foto_evidencia', 'binary', 'Fotos de evidencia')
-    _ensure_field(env, FUM_LINE, lid, 'x_accion_correctiva', 'selection',
+    _ensure_field(env, line_model, lid, 'x_foto_evidencia', 'binary', 'Fotos de evidencia')
+    _ensure_field(env, line_model, lid, 'x_accion_correctiva', 'selection',
                   'Tipo de acción correctiva requerida', selection=ACCION)
-    _ensure_field(env, FUM_LINE, lid, 'x_accion_correctiva_otro', 'char', OTRO)
+    _ensure_field(env, line_model, lid, 'x_accion_correctiva_otro', 'char', OTRO)
 
     _ensure_field(env, ws, wid, 'x_recorrido_completo', 'boolean',
                   'Recorrido completo por el inmueble realizado')
@@ -489,66 +544,58 @@ def _seed_fumigacion(env):
                   'Nivel de infestación', selection=NIVEL)
     _ensure_field(env, ws, wid, 'x_factores_riesgo', 'many2many',
                   'Factores de riesgo detectados', relation=FACTOR_MODEL,
-                  relation_table='x_ws_factor_rel', column1='worksheet_id',
+                  relation_table='%s_factor_rel' % ws_rel, column1='worksheet_id',
                   column2='factor_id')
     _ensure_field(env, ws, wid, 'x_factores_riesgo_otro', 'char', OTRO)
     _ensure_field(env, ws, wid, 'x_foto_inicial', 'binary', 'Fotos estado inicial zona afectada')
     _ensure_field(env, ws, wid, 'x_descripcion_zona', 'text', 'Descripción de la zona afectada')
     _ensure_field(env, ws, wid, 'x_foto_ejecucion', 'binary', 'Fotos generales durante la ejecución')
     _ensure_field(env, ws, wid, 'x_areas_tratadas', 'one2many', 'Áreas tratadas',
-                  relation=FUM_LINE, relation_field='x_worksheet_id')
+                  relation=line_model, relation_field='x_worksheet_id')
     env.cr.flush()
 
     # Campos-foto en plural (ahora son galerías multi-foto).
     _relabel_field(env, ws, 'x_foto_inicial', 'Fotos estado inicial zona afectada')
     _relabel_field(env, ws, 'x_foto_ejecucion', 'Fotos generales durante la ejecución')
-    _relabel_field(env, FUM_LINE, 'x_foto_evidencia', 'Fotos de evidencia')
+    _relabel_field(env, line_model, 'x_foto_evidencia', 'Fotos de evidencia')
     # Reetiquetados de la taxonomía de 2 niveles (campos que ya existen en QA/prod).
-    _relabel_field(env, FUM_LINE, 'x_plaga_ids', 'Tipo de plaga')
-    _relabel_field(env, FUM_LINE, 'x_plaga_ids_otro', "Especifica qué plaga")
-    _relabel_field(env, FUM_LINE, 'x_infestacion_activa',
+    _relabel_field(env, line_model, 'x_plaga_ids', 'Tipo de plaga')
+    _relabel_field(env, line_model, 'x_plaga_ids_otro', "Especifica qué plaga")
+    _relabel_field(env, line_model, 'x_infestacion_activa',
                    '¿Se detectó presencia activa de plaga?')
     for fname, _tm, _categoria, label, _especies in PLAGA_ESPECIES:
-        _relabel_field(env, FUM_LINE, fname, label)
-    _sync_selection(env, FUM_LINE, 'x_area', AREAS)
-    _sync_selection(env, FUM_LINE, 'x_plaguicida_nombre', PLAGUICIDAS)
-    _sync_selection(env, FUM_LINE, 'x_accion_correctiva', ACCION)
+        _relabel_field(env, line_model, fname, label)
+    _sync_selection(env, line_model, 'x_area', AREAS)
+    _sync_selection(env, line_model, 'x_plaguicida_nombre', PLAGUICIDAS)
+    _sync_selection(env, line_model, 'x_accion_correctiva', ACCION)
     _sync_selection(env, ws, 'x_nivel_infestacion', NIVEL)
     _relabel_comments(env, ws, 'Observaciones finales del técnico')
-    _write_arch(env, ws, FUMIGACION_ARCH)
-    tmpl._generate_qweb_report_template()
-    _logger.info("Seeded worksheet template %s (%s)", FUMIGACION_NAME, ws)
-    return tmpl
 
 
-# ---------------------------------------------------------------------------
-# Mantenimiento de áreas verdes (App v2)
-# ---------------------------------------------------------------------------
-def _seed_jardineria(env):
-    tmpl = _get_template(env, JARDINERIA_NAME)
+def _seed_jardineria_fields(env, tmpl, line_model, line_label):
     ws, wid = tmpl.model_id.model, tmpl.model_id.id
 
-    line = _ensure_model(env, JAR_LINE, "Labor de jardinería", [
+    line = _ensure_model(env, line_model, line_label, [
         (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
                 'ttype': 'many2one', 'relation': ws, 'required': True,
                 'on_delete': 'cascade'}),
         (0, 0, {'name': 'x_sequence', 'field_description': 'Secuencia', 'ttype': 'integer'}),
     ])
-    _acls(env, JAR_LINE, line.id)
+    _acls(env, line_model, line.id)
     env.cr.flush()
     lid = line.id
 
-    _ensure_field(env, JAR_LINE, lid, 'x_tipo_servicio', 'selection', 'Tipo de servicio',
+    _ensure_field(env, line_model, lid, 'x_tipo_servicio', 'selection', 'Tipo de servicio',
                   selection=TIPO_SERVICIO)
-    _ensure_field(env, JAR_LINE, lid, 'x_tipo_servicio_otro', 'char', OTRO)
-    _ensure_field(env, JAR_LINE, lid, 'x_completado', 'boolean', '¿Se completó?')
-    _ensure_field(env, JAR_LINE, lid, 'x_observaciones', 'text', 'Observaciones')
+    _ensure_field(env, line_model, lid, 'x_tipo_servicio_otro', 'char', OTRO)
+    _ensure_field(env, line_model, lid, 'x_completado', 'boolean', '¿Se completó?')
+    _ensure_field(env, line_model, lid, 'x_observaciones', 'text', 'Observaciones')
 
     _ensure_field(env, ws, wid, 'x_foto_inicial_jardin', 'binary', 'Fotos estado inicial del jardín')
     _ensure_field(env, ws, wid, 'x_indicaciones_cliente', 'text', 'Indicaciones especiales del cliente')
     _ensure_field(env, ws, wid, 'x_solicitudes_adicionales', 'text', 'Solicitudes adicionales del cliente')
     _ensure_field(env, ws, wid, 'x_labores', 'one2many', 'Labor de jardinería',
-                  relation=JAR_LINE, relation_field='x_worksheet_id')
+                  relation=line_model, relation_field='x_worksheet_id')
     _ensure_field(env, ws, wid, 'x_resultado_final', 'binary', 'Resultado final del jardín')
     _ensure_field(env, ws, wid, 'x_area_limpia', 'boolean', 'Área limpia y en orden')
     _ensure_field(env, ws, wid, 'x_residuos_embolsados', 'boolean',
@@ -564,13 +611,51 @@ def _seed_jardineria(env):
     _relabel_field(env, ws, 'x_foto_inicial_jardin', 'Fotos estado inicial del jardín')
     _relabel_field(env, ws, 'x_foto_bolsas', 'Fotos de bolsas de residuos generadas')
     _relabel_field(env, ws, 'x_foto_bolsas_camioneta', 'Fotos de bolsas dentro de la camioneta')
-    _sync_selection(env, JAR_LINE, 'x_tipo_servicio', TIPO_SERVICIO)
+    _sync_selection(env, line_model, 'x_tipo_servicio', TIPO_SERVICIO)
     _sync_selection(env, ws, 'x_estado_equipo', ESTADO_EQUIPO)
     _relabel_comments(env, ws, 'Observaciones finales del técnico')
-    _write_arch(env, ws, JARDINERIA_ARCH)
+
+
+def _finish_template(env, tmpl, arch, name):
+    """Escribe el arch canónico y regenera el reporte QWeb de la plantilla."""
+    _write_arch(env, tmpl.model_id.model, arch)
     tmpl._generate_qweb_report_template()
-    _logger.info("Seeded worksheet template %s (%s)", JARDINERIA_NAME, ws)
+    _logger.info("Seeded worksheet template %s (%s)", name, tmpl.model_id.model)
     return tmpl
+
+
+# ---------------------------------------------------------------------------
+# Plantillas
+# ---------------------------------------------------------------------------
+def _seed_fumigacion(env):
+    tmpl = _get_template(env, FUMIGACION_NAME)
+    _seed_fumigacion_fields(env, tmpl, FUM_LINE, "Área tratada (Fumigación v2)",
+                            line_rel='x_area', ws_rel='x_ws')
+    return _finish_template(env, tmpl, FUMIGACION_ARCH, FUMIGACION_NAME)
+
+
+def _seed_jardineria(env):
+    tmpl = _get_template(env, JARDINERIA_NAME)
+    _seed_jardineria_fields(env, tmpl, JAR_LINE, "Labor de jardinería")
+    return _finish_template(env, tmpl, JARDINERIA_ARCH, JARDINERIA_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Fumigación + Mantenimiento de áreas verdes (App v2) — el COMBO
+# ---------------------------------------------------------------------------
+def _seed_combo(env):
+    """Plantilla de la visita combinada: los dos juegos de campos en una hoja.
+
+    Misma semilla que las individuales, con los mismos nombres de campo; solo
+    cambian los modelos de línea y las tablas de relación (no pueden repetirse en
+    la BD). Los catálogos de etiquetas (plagas, factores) SE COMPARTEN: son los
+    mismos registros que ya usa la hoja de fumigación suelta.
+    """
+    tmpl = _get_template(env, COMBO_NAME)
+    _seed_fumigacion_fields(env, tmpl, FUM_LINE_COMBO, "Área tratada (Combo v2)",
+                            line_rel='x_cmb', ws_rel='x_wsc')
+    _seed_jardineria_fields(env, tmpl, JAR_LINE_COMBO, "Labor de jardinería (Combo)")
+    return _finish_template(env, tmpl, COMBO_ARCH, COMBO_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +723,57 @@ def seed_worksheet_templates(env):
     _seed_fumigacion(env)
     _seed_jardineria(env)
     _seed_visita(env)
+    combo = _seed_combo(env)
+    wire_combined_project(env, combo)
+
+
+# ======================================================================
+# Plantilla del proyecto de servicios combinados
+# ======================================================================
+# Parámetro donde `visar_fsm` guarda el id del proyecto anfitrión del combo.
+COMBINED_PROJECT_PARAM = 'visar.fsm_project_combinados_id'
+# Plantilla nativa genérica ("Default Worksheet"): la que Odoo le pone SOLO a
+# cualquier proyecto FSM al nacer.
+NATIVE_TEMPLATE_XMLID = 'industry_fsm_report.fsm_worksheet_template'
+
+
+def wire_combined_project(env, combo_template=None):
+    """Apunta el proyecto de servicios combinados a la plantilla fusionada.
+
+    Excepción DELIBERADA a "la asignación de plantilla no se automatiza" (ver
+    `.context/40-decisions.md`): ese criterio protege una elección humana, y aquí
+    no hay ninguna — el proyecto lo crea el código y no existe para otra cosa.
+    Dejarlo sin plantilla propia no es neutral: el técnico abriría el combo con una
+    hoja de un solo campo y el PDF caería al render genérico.
+
+    Por eso NO basta con "solo si está vacío": `_compute_worksheet_template_id`
+    (industry_fsm_report) le pone la plantilla nativa genérica a todo proyecto FSM
+    al crearse, así que ese guardia nunca dispararía. Se reescribe si está vacío o
+    si sigue en la nativa; una elección distinta hecha a mano se respeta.
+    """
+    combo_template = combo_template or env['worksheet.template'].sudo().search(
+        [('name', '=', COMBO_NAME)], limit=1)
+    if not combo_template:
+        return env['project.project'].sudo().browse()
+
+    raw_id = env['ir.config_parameter'].sudo().get_param(COMBINED_PROJECT_PARAM)
+    project = (env['project.project'].sudo().browse(int(raw_id)).exists()
+               if raw_id and raw_id.isdigit() else None)
+    if not project:
+        _logger.info("Sin proyecto de servicios combinados (%s): plantilla del "
+                     "combo sin asignar", COMBINED_PROJECT_PARAM)
+        return env['project.project'].sudo().browse()
+
+    native = env.ref(NATIVE_TEMPLATE_XMLID, raise_if_not_found=False)
+    current = project.worksheet_template_id
+    if current and current != native and current != combo_template:
+        _logger.info("Proyecto %s conserva su plantilla elegida a mano (%s)",
+                     project.name, current.name)
+        return project
+    if current != combo_template:
+        project.write({'worksheet_template_id': combo_template.id})
+        _logger.info("Proyecto %s -> plantilla %s", project.name, COMBO_NAME)
+    return project
 
 
 # ======================================================================
