@@ -527,12 +527,21 @@
                                             <t t-set="input_name" t-value="''"/>
                                             <t t-set="capture_disabled" t-value="False"/>
                                         </t>
-                                        <!-- La galería principal sube por AJAX: el widget de
-                                             cámara dispara este botón al cerrar, así que aquí
-                                             solo queda como reintento manual. -->
-                                        <button type="button" class="btn btn-outline-primary w-100 mt-2 o_visar_ws_photo_upload"
+                                        <!-- TRANSPORTE de la galería principal, no un control
+                                             del técnico. El `<input type="file">` de esta
+                                             galería va SIN `name` (no viaja en el POST del
+                                             formulario), así que estas fotos solo llegan al
+                                             servidor por este AJAX; el widget de cámara lo
+                                             dispara solo al cerrar.
+
+                                             Por eso nace OCULTO: pulsarlo a mano no aportaba
+                                             nada —la foto ya se subió sola— y con el input
+                                             vacío solo respondía con un regaño en rojo. Se
+                                             muestra únicamente si una subida FALLA, como
+                                             reintento de verdad (ver `initWsPhotos`). -->
+                                        <button type="button" class="btn btn-outline-primary w-100 mt-2 o_visar_ws_photo_upload d-none"
                                                 t-att-data-action="'/visar/field/task/%s/ws-photo/%s' % (task.id, field['name'])">
-                                            Subir fotos
+                                            Reintentar subida
                                         </button>
                                     </t>
                                 </div>

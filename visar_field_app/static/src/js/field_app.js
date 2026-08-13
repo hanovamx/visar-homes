@@ -290,8 +290,11 @@
 
     /* POST por fetch (AJAX): así subir/borrar fotos NO recarga la página y no se
        pierde nada de lo escrito en la hoja de trabajo. El controlador responde JSON
-       cuando ve la cabecera X-Requested-With. Nunca rechaza: resuelve null en error
-       (el llamador recae en recargar, que preserva la foto ya persistida). */
+       cuando ve la cabecera X-Requested-With. Nunca rechaza: resuelve null en error.
+       `null` NO distingue "sin señal" de "sesión caducada" (la redirección al login
+       tampoco es JSON), así que cada llamador decide: borrar una foto recae en
+       recargar (la foto ya está en el servidor), pero SUBIR conserva los ficheros y
+       ofrece reintentar — ahí lo que se perdería no está en ningún otro lado. */
     function postForm(action, formData) {
         if (!formData.has("csrf_token")) {
             formData.append("csrf_token", csrfToken());
@@ -332,9 +335,13 @@
         return col;
     }
 
-    /* Galería viva de campos-foto principales: "Subir fotos" adjunta por AJAX y
-       repinta las miniaturas SIN recargar; si no hay archivos elegidos, abre el
-       selector. Todo lo demás de la hoja de trabajo queda intacto. */
+    /* Galería viva de campos-foto principales: adjunta por AJAX y repinta las
+       miniaturas SIN recargar.
+
+       El botón que lo dispara está OCULTO y lo pulsa el widget de cámara al cerrar
+       (`commit`). Solo se muestra si la subida falla, como "Reintentar subida": es
+       el único camino de estas fotos al servidor (su input no tiene `name`, así que
+       no viaja en el POST del formulario). */
     function initWsPhotos() {
         document.querySelectorAll(".o_visar_ws_photo_upload").forEach(function (btn) {
             btn.addEventListener("click", function () {
@@ -343,15 +350,19 @@
                 if (!input) {
                     return;
                 }
-                if (!input.files || !input.files.length) {
-                    /* NO se abre el selector de archivos: la foto se toma con la
-                       cámara (ver field_app_camera.js). Abrirlo aquí reintroduciría
-                       el acceso al carrete que justamente se cerró. */
-                    var err = box.querySelector(".o_visar_capture_err");
+                var err = box.querySelector(".o_visar_capture_err");
+                var showErr = function (msg) {
                     if (err) {
-                        err.textContent = "Tome al menos una foto con la cámara.";
+                        err.textContent = msg;
                         err.classList.remove("d-none");
                     }
+                };
+                if (!input.files || !input.files.length) {
+                    /* Guardia: con el botón oculto esto ya no le pasa al técnico.
+                       NO se abre el selector de archivos —la foto se toma con la
+                       cámara (ver field_app_camera.js)—, porque abrirlo aquí
+                       reintroduciría el acceso al carrete que justamente se cerró. */
+                    showErr("Tome al menos una foto con la cámara.");
                     return;
                 }
                 var taskId = box.getAttribute("data-task");
@@ -364,9 +375,22 @@
                 postForm(btn.getAttribute("data-action"), fd).then(function (data) {
                     btn.disabled = false;
                     if (!data || !data.ok) {
-                        window.location.reload();
+                        /* Ni recargar ni descartar: estas fotos se tomaron con la
+                           cámara y NO quedan en el carrete, así que solo existen en
+                           este input. Perderlas obliga a repetir trabajo que puede
+                           ser irrepetible (el área ya se trató, el cliente ya se
+                           fue). Se conservan, se muestran como pendientes y se
+                           revela el reintento. */
+                        showErr("No se pudieron subir las fotos. Revise su conexión "
+                                + "y toque «Reintentar subida»; siguen guardadas "
+                                + "aquí mientras no cierre la página.");
+                        btn.classList.remove("d-none");
                         return;
                     }
+                    if (err) {
+                        err.classList.add("d-none");
+                    }
+                    btn.classList.add("d-none");
                     input.value = "";
                     var grid = box.querySelector(".o_visar_photo_grid");
                     if (grid) {

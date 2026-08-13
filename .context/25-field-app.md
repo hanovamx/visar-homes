@@ -1193,6 +1193,20 @@ sigue ofreciendo "Fototeca". Por eso la foto ahora se toma con **`getUserMedia`*
 - `initWsPhotos` **ya no abre el selector de archivos** cuando no hay fotos: eso reintroducía el
   carrete por la puerta de atrás. Ahora avisa "Tome al menos una foto con la cámara".
 
+> **Corrección (11-ago, v19.0.1.22.0):** ese aviso era lo único que hacía el botón "Subir fotos", y
+> el técnico lo veía como un segundo botón que había que pulsar. **No se podía borrar el elemento**:
+> el `<input type="file">` de la galería principal va **sin `name`**, así que no viaja en el POST del
+> formulario y ese AJAX es el **único** camino de esas fotos al servidor (las tarjetas o2m sí llevan
+> `name` y viajan al guardar). Ahora nace **oculto** —lo dispara el widget de cámara al cerrar— y
+> solo aparece si la subida **falla**, ya como "Reintentar subida".
+>
+> En ese fallo **ya no se recarga la página**, que es lo que hacía antes: la recarga borraba los
+> `File` del input y, siendo fotos de cámara que **no quedan en el carrete**, obligaba a repetir un
+> trabajo que puede ser irrepetible (el área ya se trató, el cliente ya se fue). Se conservan como
+> pendientes, con el mensaje de qué hacer. El precio es que una **sesión caducada** ya no se detecta
+> con la recarga: el reintento seguirá fallando y el técnico verá el aviso. Se aceptó a propósito —
+> perder evidencia recién tomada es peor que un aviso confuso en un caso raro.
+
 **Límites, dichos claramente:** esto cierra el **camino fácil**, no vuelve imposible falsificar una
 foto (una cámara virtual seguiría pasando). Garantizarlo de verdad pide verificación del lado del
 servidor (sello de tiempo/geo contra la ventana del servicio), que es otra tarea.
