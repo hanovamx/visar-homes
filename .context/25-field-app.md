@@ -1092,11 +1092,16 @@ especies (m2m companion, indentada). Categorías tomadas del wizard de reserva
 
 | Categoría | Especies |
 |---|---|
-| Rastreros | Cucarachas, Alacranes, Hormigas, Arañas |
-| Voladores | Moscas, Mosquitos o zancudos |
+| Rastreros | Cucaracha alemana (chica), Cucaracha americana (grande), Araña, Garrapata, Larva (gusano), Hormiga, Pescado de plata, Alacrán, Cochinilla, Tijerillas |
+| Voladores | Mosca de hogar, Mosca de fruta, Mosca de drenaje, Zancudo, Polilla, Avispa y avispón |
 | Roedores | Ratas, Ratones |
-| Otras plagas | Termitas, Chinches de cama, Polilla |
+| Otras plagas | Termitas, Chinches de cama |
 | Otra plaga no en las opciones | → campo de texto libre |
+
+> Rastreros y Voladores se detallaron el **11-ago-2026** con la lista de Visar (v19.0.1.23.0): la
+> especie manda el plaguicida y la dosis, así que "Cucarachas" a secas no servía. **Polilla** pasó
+> de "Otras plagas" a **Voladores** (donde la puso Visar); tenerla en las dos dejaba al técnico
+> eligiendo entre dos opciones idénticas.
 
 - `x_infestacion_activa` se reetiquetó a **"¿Se detectó presencia activa de plaga?"** y ahora
   **abre un bloque**: foto de evidencia (obligatoria) + categorías. Antes la foto era

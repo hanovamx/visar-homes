@@ -49,18 +49,30 @@ PLAGA_OTRO = "Otra plaga no en las opciones"
 PLAGAS = [PLAGA_RASTREROS, PLAGA_VOLADORES, PLAGA_ROEDORES, PLAGA_OTRAS, PLAGA_OTRO]
 
 # (campo companion, modelo-etiqueta, categoría que lo revela, etiqueta, especies)
-# Termitas / Chinches / Polilla viven como ESPECIES bajo "Otras plagas": en el
-# wizard aparecen solo como síntomas (madera dañada, picaduras en hilera), no
-# como categorías con especies propias.
+# Termitas / Chinches viven como ESPECIES bajo "Otras plagas": en el wizard
+# aparecen solo como síntomas (madera dañada, picaduras en hilera), no como
+# categorías con especies propias.
+#
+# Las especies de Rastreros y Voladores las dictó Visar (11-ago-2026) con el
+# detalle que usan en campo: la especie manda el plaguicida y la dosis, así que
+# "Cucarachas" a secas no servía —la alemana y la americana no se tratan igual—.
+# POLILLA está aquí bajo Voladores, no bajo "Otras plagas" como antes: la lista de
+# Visar la puso entre los voladores (vuela), y tenerla en dos categorías dejaría al
+# técnico eligiendo entre dos opciones idénticas.
 PLAGA_ESPECIES = [
     ('x_plaga_rastreros_ids', 'x_visar_plaga_rastrero', PLAGA_RASTREROS,
-     "Rastreros — ¿cuáles?", ["Cucarachas", "Alacranes", "Hormigas", "Arañas"]),
+     "Rastreros — ¿cuáles?", [
+         "Cucaracha alemana (chica)", "Cucaracha americana (grande)", "Araña",
+         "Garrapata", "Larva (gusano)", "Hormiga", "Pescado de plata", "Alacrán",
+         "Cochinilla", "Tijerillas"]),
     ('x_plaga_voladores_ids', 'x_visar_plaga_volador', PLAGA_VOLADORES,
-     "Voladores — ¿cuáles?", ["Moscas", "Mosquitos o zancudos"]),
+     "Voladores — ¿cuáles?", [
+         "Mosca de hogar", "Mosca de fruta", "Mosca de drenaje", "Zancudo",
+         "Polilla", "Avispa y avispón"]),
     ('x_plaga_roedores_ids', 'x_visar_plaga_roedor', PLAGA_ROEDORES,
      "Roedores — ¿cuáles?", ["Ratas", "Ratones"]),
     ('x_plaga_otras_ids', 'x_visar_plaga_otra', PLAGA_OTRAS,
-     "Otras plagas — ¿cuáles?", ["Termitas", "Chinches de cama", "Polilla"]),
+     "Otras plagas — ¿cuáles?", ["Termitas", "Chinches de cama"]),
 ]
 
 # Áreas que SIEMPRE se inspeccionan: la hoja nace con estas tres tarjetas, no se
@@ -416,8 +428,15 @@ def _seed_fumigacion(env):
     # las viejas categorías-especie (Termitas / Polilla / Chinches / Otros) tienen
     # que SALIR del nivel 1 — ahora viven bajo "Otras plagas".
     _ensure_tag(env, PLAGA_MODEL, "Tipo de plaga (Visar)", PLAGAS, prune=True)
+    # También `prune=True` en las especies: el código es el canon de esta taxonomía
+    # igual que en el nivel 1. Sin esto, cambiar una lista solo AGREGA y la vieja
+    # convive con la nueva — el técnico vería "Cucarachas" junto a "Cucaracha
+    # alemana (chica)" y "Cucaracha americana (grande)". Ojo: borra también lo que
+    # alguien haya agregado a mano por el backend; si mañana negocio quiere
+    # mantener el catálogo desde ahí, esto tiene que dejar de podar.
     for _f, tag_model, categoria, label, especies in PLAGA_ESPECIES:
-        _ensure_tag(env, tag_model, "Plaga — %s (Visar)" % categoria, especies)
+        _ensure_tag(env, tag_model, "Plaga — %s (Visar)" % categoria, especies,
+                    prune=True)
 
     line = _ensure_model(env, FUM_LINE, "Área tratada (Fumigación v2)", [
         (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',

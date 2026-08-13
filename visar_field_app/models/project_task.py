@@ -1826,7 +1826,7 @@ class ProjectTask(models.Model):
 
     @staticmethod
     def _visar_fumigacion_plaga_text(line):
-        """"Rastreros (Cucarachas, Arañas); Otras plagas (Termitas)" para una línea.
+        """"Rastreros (Cucaracha alemana (chica), Araña); Otras plagas (Termitas)".
 
         La categoría sin especies marcadas sale sola; la escotilla "Otra plaga no
         en las opciones" se sustituye por el texto que escribió el técnico (si no,
