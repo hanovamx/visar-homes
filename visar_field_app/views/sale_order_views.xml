@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================================
+         Trazabilidad del upsell en el pedido de venta.
+
+         El pedido de adicionales vive APARTE del que originó el servicio (el porqué,
+         en `project.task._visar_upsell_order`: en una póliza la línea entraría al
+         ciclo recurrente, y el cobro en sitio dejaría de ser solo el extra). Eso hace
+         que sin estas vistas la venta parezca huérfana: aquí se cierra el circuito en
+         los dos sentidos y se le da a comisiones un eje por el que agrupar.
+         ================================================================ -->
+    <record id="view_order_form_visar_upsell" model="ir.ui.view">
+        <field name="name">sale.order.form.visar.upsell</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+
+            <!-- (a) Desde el pedido ORIGINAL: todo lo que sus visitas vendieron en
+                 campo. Una póliza acumula uno por visita, de ahí el contador. -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_visar_view_upsell_orders" type="object"
+                        class="oe_stat_button" icon="fa-shopping-cart"
+                        invisible="visar_upsell_order_count == 0">
+                    <field name="visar_upsell_order_count" widget="statinfo"
+                           string="Adicionales"/>
+                </button>
+            </xpath>
+
+            <!-- (b) En el pedido DE ADICIONALES: de qué servicio salió, de qué venta
+                 venía ese servicio, quién lo vendió y cómo se cobró. Los cuatro
+                 campos existían desde el primer día pero no estaban en ninguna vista:
+                 la trazabilidad estaba en la base de datos y en ningún lado más. -->
+            <xpath expr="//notebook" position="inside">
+                <page name="visar_upsell" string="Visar - Venta en campo"
+                      invisible="not visar_upsell_task_id">
+                    <group>
+                        <group string="Origen">
+                            <field name="visar_upsell_task_id"
+                                   options="{'no_create': True}" readonly="1"/>
+                            <field name="visar_upsell_source_order_id"
+                                   options="{'no_create': True}" readonly="1"/>
+                        </group>
+                        <group string="Cobro en sitio">
+                            <!-- Base de la comisión del 10% al técnico. -->
+                            <field name="visar_upsell_employee_id"
+                                   options="{'no_create': True}" readonly="1"/>
+                            <field name="visar_upsell_cash_at" readonly="1"/>
+                            <field name="visar_upsell_cash_by_id"
+                                   options="{'no_create': True}" readonly="1"
+                                   invisible="not visar_upsell_cash_at"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+
+    <!-- Filtro y agrupaciones. `visar_upsell_task_id` puesto es la definición de
+         "pedido nacido en campo": no hace falta un booleano aparte. Agrupar por
+         técnico es el reporte que pide el requerimiento de comisiones (10% de todo
+         lo que venda como upsell). -->
+    <record id="view_sales_order_filter_visar_upsell" model="ir.ui.view">
+        <field name="name">sale.order.search.visar.upsell</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_sales_order_filter"/>
+        <field name="arch" type="xml">
+            <filter name="my_sale_orders_filter" position="after">
+                <separator/>
+                <filter name="visar_upsell" string="Venta en campo (adicionales)"
+                        domain="[('visar_upsell_task_id', '!=', False)]"/>
+                <filter name="visar_upsell_cash" string="Cobrado en efectivo en sitio"
+                        domain="[('visar_upsell_cash_at', '!=', False)]"/>
+            </filter>
+            <filter name="salesperson" position="after">
+                <filter name="visar_upsell_technician" string="Técnico (upsell)"
+                        context="{'group_by': 'visar_upsell_employee_id'}"/>
+                <filter name="visar_upsell_task" string="Servicio de origen"
+                        context="{'group_by': 'visar_upsell_task_id'}"/>
+            </filter>
+        </field>
+    </record>
+
+    <!-- Columnas opcionales en la lista: ocultas por defecto (`optional="hide"`), se
+         encienden desde el selector de columnas. Así el filtro de arriba sirve para
+         algo sin cambiarle la lista de pedidos a quien no trabaja el upsell. -->
+    <record id="view_order_tree_visar_upsell" model="ir.ui.view">
+        <field name="name">sale.order.list.visar.upsell</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_tree"/>
+        <field name="arch" type="xml">
+            <field name="user_id" position="after">
+                <field name="visar_upsell_employee_id" optional="hide"/>
+                <field name="visar_upsell_task_id" optional="hide"/>
+            </field>
+        </field>
+    </record>
+
+</odoo>

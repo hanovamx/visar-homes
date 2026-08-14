@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import fields, models
+from odoo import api, fields, models
 
 
 class SaleOrder(models.Model):
@@ -13,6 +13,24 @@ class SaleOrder(models.Model):
         'project.task', string="Servicio de origen (upsell)", readonly=True,
         copy=False, index='btree_not_null',
         help="Servicio en el que el técnico vendió estos productos adicionales.")
+    # Segundo salto de la trazabilidad: el pedido/póliza que originó el SERVICIO.
+    # Se congela al crear el pedido de adicionales en vez de leerlo al vuelo por
+    # `visar_upsell_task_id.sale_order_id` para que sea indexable y agrupable (el
+    # nativo de la tarea es un `compute` sobre `sale_line_id`), y para que el
+    # vínculo sobreviva si mañana la tarea se re-apunta a otra línea.
+    visar_upsell_source_order_id = fields.Many2one(
+        'sale.order', string="Pedido que originó el servicio", readonly=True,
+        copy=False, index='btree_not_null',
+        help="Pedido de venta (o póliza) del que salió el servicio en el que se "
+             "vendieron estos adicionales. El upsell NO se factura aquí: es solo "
+             "el hilo para llegar de la venta original a lo vendido en sitio.")
+    # Inverso: desde el pedido ORIGINAL, todo lo que sus visitas generaron en campo.
+    visar_upsell_order_ids = fields.One2many(
+        'sale.order', 'visar_upsell_source_order_id',
+        string="Adicionales vendidos en sitio", readonly=True)
+    visar_upsell_order_count = fields.Integer(
+        compute='_compute_visar_upsell_order_count',
+        string="Pedidos de adicionales", export_string_translation=False)
     visar_upsell_employee_id = fields.Many2one(
         'hr.employee', string="Vendido por (técnico)", readonly=True, copy=False,
         help="Técnico que levantó la venta desde la app de campo. "
@@ -24,6 +42,37 @@ class SaleOrder(models.Model):
              "pago contra la factura.")
     visar_upsell_cash_by_id = fields.Many2one(
         'hr.employee', string="Efectivo recibido por", readonly=True, copy=False)
+
+    @api.depends('visar_upsell_order_ids')
+    def _compute_visar_upsell_order_count(self):
+        counts = dict(self.env['sale.order']._read_group(
+            [('visar_upsell_source_order_id', 'in', self.ids)],
+            ['visar_upsell_source_order_id'], ['__count'],
+        ))
+        for order in self:
+            order.visar_upsell_order_count = counts.get(order, 0)
+
+    def action_visar_view_upsell_orders(self):
+        """Botón inteligente: los pedidos de adicionales nacidos de ESTE pedido.
+
+        Con uno solo abre la ficha directo (el caso normal: una cita, un upsell);
+        con varios abre la lista, porque una póliza acumula uno por visita.
+        """
+        self.ensure_one()
+        orders = self.visar_upsell_order_ids
+        action = {
+            'type': 'ir.actions.act_window',
+            'name': "Adicionales vendidos en sitio",
+            'res_model': 'sale.order',
+            'context': {'create': False},
+        }
+        if len(orders) == 1:
+            action.update(view_mode='form', res_id=orders.id)
+        else:
+            action.update(
+                view_mode='list,form',
+                domain=[('visar_upsell_source_order_id', '=', self.id)])
+        return action
 
     def _visar_upsell_is_paid(self):
         """¿El cobro de este pedido de adicionales ya está resuelto?

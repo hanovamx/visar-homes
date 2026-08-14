@@ -179,6 +179,14 @@ class ProjectTask(models.Model):
         'sale.order', string="Pedido de adicionales", readonly=True, copy=False,
         help="Pedido SEPARADO con los productos que el técnico vendió durante la "
              "visita. El pedido (o póliza) que originó el servicio no se toca.")
+    # Monto del upsell EN LA TARJETA del servicio: es lo que hace que el vínculo se
+    # vea sin abrir nada. El botón inteligente lo pinta con `widget="monetary"` y no
+    # con `statinfo`: ese widget llama al formateador SIN los datos del registro, así
+    # que a un campo monetario le quita el símbolo de moneda.
+    visar_upsell_amount_total = fields.Monetary(
+        string="Vendido en sitio", currency_field='currency_id',
+        related='visar_upsell_order_id.amount_total', readonly=True,
+        export_string_translation=False)
 
     # ==================================================================
     # Flujo en sitio: etapas nativas + timesheet + reagenda (Req 2)
@@ -817,8 +825,19 @@ class ProjectTask(models.Model):
     #      MENTE lo agregado. Con un pedido propio el total ES el monto a cobrar,
     #      sin depender de saldos ni de lo ya facturado del servicio original.
     #
-    # El vínculo con el servicio se guarda en ambos sentidos
-    # (`visar_upsell_order_id` / `sale.order.visar_upsell_task_id`).
+    # El vínculo con el servicio se guarda por TRES vías, porque "pedido aparte" no
+    # puede significar "venta huérfana" — administración tiene que poder ir del
+    # servicio a lo vendido y de la venta original a todo lo que sus visitas
+    # generaron:
+    #
+    #   * cabecera ↔ cabecera — `visar_upsell_order_id` / `sale.order.
+    #     visar_upsell_task_id`, más `visar_upsell_source_order_id` hacia el pedido
+    #     (o póliza) que originó el servicio;
+    #   * línea → tarea — cada línea del pedido de adicionales lleva `task_id`, que
+    #     es el MISMO campo con el que el FSM nativo cuelga los materiales de una
+    #     tarea (`industry_fsm_sale.product_product`). Así el servicio externo lista
+    #     los adicionales entre sus líneas atendidas en vez de ignorarlos;
+    #   * documento — `origin` con el nombre del servicio (texto, para el cliente).
     def _visar_upsell_zone(self):
         """Zona Visar del servicio, resuelta por el CP del cliente.
 
@@ -885,6 +904,7 @@ class ProjectTask(models.Model):
             'pricelist_id': pricelist.id if pricelist else False,
             'origin': "%s — adicionales en sitio" % (self.name or ''),
             'visar_upsell_task_id': self.id,
+            'visar_upsell_source_order_id': self.sale_order_id.id or False,
             'visar_upsell_employee_id': employee.id if employee else False,
         })
         self.sudo().visar_upsell_order_id = order
@@ -912,9 +932,13 @@ class ProjectTask(models.Model):
         if line:
             line.product_uom_qty += quantity
         else:
+            # `task_id` es el enlace línea→servicio del FSM nativo (el mismo que usa
+            # `action_fsm_view_material` para los materiales). Sin él la venta queda
+            # colgando solo de la cabecera y el servicio externo no la lista.
             order.write({'order_line': [(0, 0, {
                 'product_id': product_id,
                 'product_uom_qty': quantity,
+                'task_id': self.id,
             })]})
         return True
 
@@ -1055,6 +1079,78 @@ class ProjectTask(models.Model):
         if order._visar_upsell_is_paid():
             return 'pagado'
         return 'por_cobrar'
+
+    def action_visar_view_upsell_order(self):
+        """Botón inteligente del servicio externo → pedido de adicionales."""
+        self.ensure_one()
+        order = self.visar_upsell_order_id
+        if not order:
+            return False
+        return {
+            'type': 'ir.actions.act_window',
+            'name': "Adicionales vendidos en sitio",
+            'res_model': 'sale.order',
+            'view_mode': 'form',
+            'res_id': order.id,
+            'context': {'create': False},
+        }
+
+    def _visar_upsell_report_section(self):
+        """Sección "Productos adicionales" del PDF, o `None` si no hubo upsell.
+
+        Misma forma que las secciones de la worksheet (`title` + `fields` con
+        `kind='table'`), para que la plantilla la dibuje con el estilo del resto
+        del documento sin CSS nuevo. Solo entra el upsell YA CONFIRMADO: un carrito
+        en borrador es una cotización que el técnico aún no cerró, y el cliente
+        firma este documento.
+        """
+        self.ensure_one()
+        if self._visar_upsell_state() in ('vacio', 'borrador'):
+            return None
+        order = self._visar_upsell_order()
+        lines = order.order_line.filtered(lambda l: not l.display_type)
+        if not lines:
+            return None
+        currency = order.currency_id or self.env.company.currency_id
+
+        def money(amount):
+            return formatLang(self.env, amount, currency_obj=currency)
+
+        # Importes CON impuesto (`price_total`, no `price_subtotal`): los precios de
+        # upsell están capturados IVA incluido, así que con el subtotal la fila no
+        # cuadraba —"Precio $350.00 / Importe $301.72"— y el total de abajo
+        # (`amount_total`, que sí lleva impuesto) tampoco era la suma de la columna.
+        # El cliente FIRMA este documento y lo que le importa es lo que pagó.
+        rows = [[
+            {'kind': 'scalar', 'text': line.product_id.display_name or line.name},
+            {'kind': 'scalar', 'text': formatLang(self.env, line.product_uom_qty)},
+            {'kind': 'scalar', 'text': money(line.price_total / (line.product_uom_qty or 1.0))},
+            {'kind': 'scalar', 'text': money(line.price_total)},
+        ] for line in lines]
+        rows.append([
+            {'kind': 'scalar', 'text': "Total"},
+            {'kind': 'scalar', 'text': ''},
+            {'kind': 'scalar', 'text': ''},
+            {'kind': 'scalar', 'text': money(order.amount_total)},
+        ])
+        fields_ = [{
+            'kind': 'table',
+            'label': '',
+            'columns': ["Producto", "Cantidad", "Precio", "Importe"],
+            'rows': rows,
+        }]
+        # Cómo quedó el cobro: es lo que el cliente reclama después ("ya le pagué al
+        # técnico"). El sello de efectivo lo pone el técnico en la app; el resto sale
+        # del estado real del pedido.
+        if order.visar_upsell_cash_at:
+            paid_by = order.visar_upsell_cash_by_id.name or "el técnico"
+            note = "Pagado en sitio (efectivo o transferencia), recibido por %s." % paid_by
+        elif self._visar_upsell_state() == 'pagado':
+            note = "Pagado en línea."
+        else:
+            note = "Pendiente de pago. Se cobra contra el pedido %s." % (order.name or '')
+        fields_.append({'kind': 'scalar', 'label': "Estado del cobro", 'text': note})
+        return {'title': "PRODUCTOS ADICIONALES VENDIDOS EN SITIO", 'fields': fields_}
 
     # ==================================================================
     # Reporte PDF — lectura "para mostrar" de la worksheet dinámica

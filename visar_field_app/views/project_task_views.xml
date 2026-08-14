@@ -24,6 +24,35 @@
                         <span class="o_stat_text">(PDF)</span>
                     </div>
                 </button>
+                <!-- Adicionales vendidos en sitio. El pedido vive APARTE del que
+                     originó el servicio (ver la nota en `_visar_upsell_order`), así
+                     que este botón es la vía por la que administración lo encuentra:
+                     sin él, la venta solo asomaba en un campo dentro de una pestaña.
+                     Muestra el monto porque es el dato por el que se pregunta. -->
+                <button name="action_visar_view_upsell_order"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-shopping-cart"
+                        groups="project.group_project_user"
+                        invisible="not visar_upsell_order_id">
+                    <!-- Monto con `widget="monetary"` y NO con `statinfo`: el widget
+                         statinfo llama al formateador sin los datos del registro, así
+                         que un campo monetario le sale sin símbolo de moneda. Con la
+                         maqueta explícita (misma que el botón del reporte) el importe
+                         se pinta completo. -->
+                    <!-- `currency_id` y `visar_upsell_order_id` NO se declaran aquí:
+                         ya viven en el arch combinado (el botón "Products" nativo de
+                         industry_fsm_sale trae la moneda; el pedido, la pestaña
+                         "Visar - Campo" de abajo). Declararlos otra vez duplicaría
+                         campos en la misma vista. -->
+                    <div class="o_stat_info">
+                        <span class="o_stat_value">
+                            <field name="visar_upsell_amount_total" widget="monetary"
+                                   options="{'currency_field': 'currency_id'}"/>
+                        </span>
+                        <span class="o_stat_text">Adicionales</span>
+                    </div>
+                </button>
             </xpath>
 
             <!-- Atribución del cierre en campo (quién cerró el servicio).

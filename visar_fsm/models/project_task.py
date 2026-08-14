@@ -51,7 +51,8 @@ class ProjectTask(models.Model):
         help="Grupos de servicio Visar que cubre este servicio externo. Un combo "
              "cubre varios y cuenta en cada uno.")
 
-    @api.depends('visar_sale_line_ids.product_id')
+    @api.depends('visar_sale_line_ids.product_id', 'visar_sale_line_ids.order_id',
+                 'sale_order_id')
     def _compute_visar_service_group_ids(self):
         """Grupo(s) de servicio derivados de las líneas atendidas por la tarea.
 
@@ -62,9 +63,20 @@ class ProjectTask(models.Model):
         dimensión (los add-ons no aportan grupo por su cuenta), y la versión laxa es
         la que servirá también para las visitas de póliza, cuyos productos llevan
         `visar_generates_visit` pero muchas veces no `visar_is_service`.
+
+        Solo cuentan las líneas del pedido PROPIO de la tarea. Otras órdenes pueden
+        apuntar aquí por `task_id` —hoy el pedido de adicionales que levanta el
+        técnico en campo (`visar_field_app`), mañana cualquier venta que se cuelgue
+        del servicio— y este campo es el eje de conteo por línea de negocio: lo que
+        mide es qué se AGENDÓ, no qué se vendió de paso. Sin el filtro, vender un
+        corte de pasto durante una fumigación haría que la visita contara también
+        como servicio de áreas verdes.
         """
         for task in self:
-            templates = task.visar_sale_line_ids.mapped('product_id.product_tmpl_id')
+            lines = task.visar_sale_line_ids
+            if task.sale_order_id:
+                lines = lines.filtered(lambda l: l.order_id == task.sale_order_id)
+            templates = lines.mapped('product_id.product_tmpl_id')
             task.visar_service_group_ids = (
                 templates._visar_service_groups() if templates else False)
 

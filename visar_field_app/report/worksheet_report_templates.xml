@@ -347,6 +347,48 @@
                     <t t-call="#{doc.worksheet_template_id.report_view_id.id}"/>
                 </div>
             </t>
+            <!-- Adicionales vendidos en sitio. Va FUERA del t-if/t-elif de arriba a
+                 propósito: se suma tanto a la maqueta Visar como al respaldo nativo,
+                 y una tarea sin hoja legible pero con upsell tampoco lo pierde.
+                 Reusa las clases de la maqueta (.o_visar_ws_*) — si el bloque se
+                 pinta sobre el respaldo nativo, ese <style> no está en la página y
+                 la tabla sale sin adornos, pero legible. -->
+            <t t-if="visar_upsell_map and visar_upsell_map.get(doc.id)">
+                <t t-set="visar_ups" t-value="visar_upsell_map.get(doc.id)"/>
+                <t t-set="visar_ups_pal" t-value="doc._visar_report_palette()"/>
+                <div class="o_visar_ws o_visar_ws_section" style="page-break-inside: avoid;">
+                    <div class="o_visar_ws_title"
+                         t-attf-style="color: #{visar_ups_pal['accent']}; border-bottom: 2px solid #{visar_ups_pal['accent']};"
+                         t-out="visar_ups['title']"/>
+                    <t t-foreach="visar_ups['fields']" t-as="f" t-key="f_index">
+                        <div t-if="f['kind'] == 'table'" class="o_visar_ws_block">
+                            <table class="o_visar_ws_table">
+                                <thead>
+                                    <tr>
+                                        <th t-foreach="f['columns']" t-as="col"
+                                            t-key="col_index" t-out="col"
+                                            t-attf-style="background: #{visar_ups_pal['accent']}; color: #fff;"/>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- La última fila es el TOTAL (la arma
+                                         `_visar_upsell_report_section`): se marca en
+                                         negrita para que no se lea como un renglón más. -->
+                                    <tr t-foreach="f['rows']" t-as="row" t-key="row_index"
+                                        t-attf-style="#{'font-weight: 700;' if row_last else ''}">
+                                        <td t-foreach="row" t-as="cell" t-key="cell_index"
+                                            t-out="cell['text']"/>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div t-else="" class="o_visar_ws_row">
+                            <span class="o_visar_ws_label" t-out="f['label']"/>
+                            <div class="o_visar_ws_value" t-out="f['text']"/>
+                        </div>
+                    </t>
+                </div>
+            </t>
         </xpath>
     </template>
 </odoo>
