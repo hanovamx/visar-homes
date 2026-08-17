@@ -16,6 +16,10 @@ grupo de solo lectura son el limite efectivo.
 """
 import logging
 
+import pytz
+from dateutil.relativedelta import relativedelta
+from markupsafe import Markup, escape
+
 from odoo import api, fields, models
 from odoo.tools import format_datetime
 
@@ -652,6 +656,56 @@ class VisarAgentTools(models.AbstractModel):
         return "Cotizacion del agente: %s%s" % (label, detail)
 
     @api.model
+    def _agent_open_lead(self, nat, group, partner=None, phone=None, source=None):
+        """(lead, created, motivo). Lead ABIERTO del pipeline WhatsApp, o lo crea.
+
+        Lo comparten `agent_track_lead` (cotizacion) y `agent_request_handoff`
+        (escalar a un humano): los dos tienen que aterrizar en el MISMO lead, o el
+        asesor acabaria con dos fichas del mismo cliente y la mitad del contexto
+        en cada una.
+
+        `group` puede venir vacio: al escalar no siempre se sabe todavia que
+        servicio queria el cliente.
+        """
+        team = self.env.ref(WA_TEAM_XMLID, raise_if_not_found=False)
+        nuevo = self.env.ref(WA_STAGE_NUEVO_XMLID, raise_if_not_found=False)
+        cerrado = self.env.ref(WA_STAGE_CERRADO_XMLID, raise_if_not_found=False)
+        if not team or not nuevo:
+            _logger.warning(
+                "pipeline WhatsApp ausente (equipo/etapa sin cargar). "
+                "Instalar/actualizar el modulo visar_crm.")
+            return self.env['crm.lead'].browse(), False, 'pipeline_missing'
+
+        # sudo() acotado a crm.lead: el usuario RPC no tiene ACL de CRM.
+        Lead = self.env['crm.lead'].sudo()
+        domain = [
+            ('visar_wa_phone_norm', '=', nat),
+            ('visar_service_group_id', '=', group.id if group else False),
+            ('team_id', '=', team.id),
+        ]
+        if cerrado:  # lead "abierto" = aun no Cerrado (won/lost ya archivado)
+            domain.append(('stage_id', '!=', cerrado.id))
+        lead = Lead.search(domain, order='id desc', limit=1)
+        if lead:
+            if partner and not lead.partner_id:
+                # El partner aparecio despues de crear el lead: enlazarlo.
+                lead.partner_id = partner.id
+            return lead, False, None
+
+        lead = Lead.create({
+            'name': "WhatsApp %s" % ((partner.name if partner else None) or nat),
+            'type': 'opportunity',
+            'team_id': team.id,
+            'stage_id': nuevo.id,
+            'visar_service_group_id': group.id if group else False,
+            'visar_wa_phone_norm': nat,
+            'visar_source': source or 'whatsapp',
+            'phone': phone or nat,
+            'partner_id': partner.id if partner else False,
+        })
+        return lead, True, None
+
+    @api.model
     def agent_track_lead(self, payload):
         """Registra una interaccion de WhatsApp como lead de CRM en 'Nuevo'.
 
@@ -687,44 +741,13 @@ class VisarAgentTools(models.AbstractModel):
         if self._agent_partner_has_service_in_group(partner, group):
             return self._agent_lead_skip('existing_customer')
 
-        team = self.env.ref(WA_TEAM_XMLID, raise_if_not_found=False)
-        nuevo = self.env.ref(WA_STAGE_NUEVO_XMLID, raise_if_not_found=False)
-        cerrado = self.env.ref(WA_STAGE_CERRADO_XMLID, raise_if_not_found=False)
-        if not team or not nuevo:
-            _logger.warning(
-                "agent_track_lead: falta el pipeline WhatsApp (equipo/etapa sin "
-                "cargar). Instalar/actualizar el modulo visar_crm.")
-            return self._agent_lead_skip('pipeline_missing')
-
-        # sudo() acotado a crm.lead: el usuario RPC no tiene ACL de CRM.
-        Lead = self.env['crm.lead'].sudo()
-        domain = [
-            ('visar_wa_phone_norm', '=', nat),
-            ('visar_service_group_id', '=', group.id),
-            ('team_id', '=', team.id),
-        ]
-        if cerrado:  # lead "abierto" = aun no Cerrado (won/lost ya archivado)
-            domain.append(('stage_id', '!=', cerrado.id))
-        lead = Lead.search(domain, order='id desc', limit=1)
+        lead, created, reason = self._agent_open_lead(
+            nat, group, partner=partner, phone=payload.get('phone'),
+            source=payload.get('source'))
+        if reason:
+            return self._agent_lead_skip(reason)
 
         quote = payload.get('quote') or {}
-        created = False
-        if not lead:
-            lead = Lead.create({
-                'name': "WhatsApp %s" % (partner.name or nat),
-                'type': 'opportunity',
-                'team_id': team.id,
-                'stage_id': nuevo.id,
-                'visar_service_group_id': group.id,
-                'visar_wa_phone_norm': nat,
-                'visar_source': payload.get('source') or 'whatsapp',
-                'phone': payload.get('phone') or nat,
-                'partner_id': partner.id if partner else False,
-            })
-            created = True
-        elif partner and not lead.partner_id:
-            # El partner aparecio despues de crear el lead: enlazarlo.
-            lead.partner_id = partner.id
 
         # Enriquecimiento (diseno 31 seccion 5.1): valor del pipeline + chatter.
         # NO avanza la etapa: la cotizacion del agente se queda en 'Nuevo'.
@@ -741,4 +764,588 @@ class VisarAgentTools(models.AbstractModel):
             'created': created,
             'stage': lead.stage_id.name,
             'skipped_reason': None,
+        }
+
+    # ------------------------------------------------------------------
+    # Horarios disponibles (solo lectura)
+    # ------------------------------------------------------------------
+    #
+    # No reimplementan la agenda: llaman al generador nativo
+    # `appointment.type._get_appointment_slots` -que es un metodo de modelo y NO
+    # necesita sesion web- y lo pasan por el mismo filtro multi-tecnico que usa el
+    # wizard. Lo unico propio es APLANAR el resultado: el nativo devuelve un arbol
+    # mes/semana/dia pensado para pintar un calendario, y por WhatsApp lo que sirve
+    # es una lista corta de dias y horas.
+
+    # Tope de dias que se ofrecen de golpe. WhatsApp corta las listas en 10 filas,
+    # asi que pedir mas no cabria en un mensaje.
+    MAX_AVAILABLE_DAYS = 10
+
+    @api.model
+    def _agent_slot_bounds(self, slot, tz_info, apt_type):
+        """(inicio, fin) en UTC naive de un slot del arbol nativo."""
+        dt_str = slot.get('datetime')
+        if not dt_str:
+            return None, None
+        duration = float(
+            slot.get('slot_duration') or apt_type.appointment_duration or 1.0)
+        start_local = fields.Datetime.from_string(dt_str)
+        start_utc = tz_info.localize(start_local).astimezone(
+            pytz.utc).replace(tzinfo=None)
+        return start_utc, start_utc + relativedelta(hours=duration)
+
+    @api.model
+    def _agent_slot_resource_ids(self, slot):
+        """Tecnicos del slot, venga del filtro Visar o del arbol nativo."""
+        resources = slot.get('available_resources')
+        if resources:
+            return [res['id'] for res in resources if res.get('id')]
+        raw = slot.get('available_resource_ids')
+        return raw.ids if hasattr(raw, 'ids') else list(raw or [])
+
+    @api.model
+    def _agent_slot_tree(self, payload):
+        """(apt_type, arbol de meses ya filtrado, tz_info) o (empty, [], None)."""
+        AptType = self.env['appointment.type'].sudo()
+        zone = self._agent_booking_zone(payload)
+        if not zone:
+            return AptType.browse(), [], None
+        mode, apt_type, items = self._agent_booking_context(payload)
+        if not apt_type or not items:
+            return AptType.browse(), [], None
+
+        tz_name = self.env['ir.config_parameter'].sudo().get_param(
+            TZ_PARAM, DEFAULT_TZ)
+        tz_info = pytz.timezone(tz_name)
+        asked_capacity = int(payload.get('asked_capacity') or 1)
+
+        if mode == 'valuation':
+            resources = apt_type._visar_eligible_resources(zone)
+            if not resources:
+                return AptType.browse(), [], None
+            months = apt_type._get_appointment_slots(
+                tz_name, filter_resources=resources, asked_capacity=asked_capacity)
+            return apt_type, months, tz_info
+
+        pools, _missing = AptType._visar_service_resource_pools(zone, items)
+        if not pools:
+            return AptType.browse(), [], None
+        resource_ids = AptType._visar_filter_resource_ids_for_pools(pools)
+        resources = self.env['appointment.resource'].sudo().browse(resource_ids)
+        months = apt_type._get_appointment_slots(
+            tz_name, filter_resources=resources, asked_capacity=asked_capacity)
+        # Mismo filtro que el wizard: exige que los tecnicos de TODOS los
+        # servicios esten libres a la vez.
+        months = AptType._visar_filter_slots_multi_service(
+            apt_type, months, pools, tz_name, asked_capacity)
+        return apt_type, months, tz_info
+
+    @api.model
+    def _agent_iter_days(self, months):
+        """Recorre el arbol nativo y entrega (fecha, slots) de los dias con hueco."""
+        for month in months or []:
+            for week in month.get('weeks', []):
+                for day in week:
+                    if not isinstance(day, dict) or not day.get('slots'):
+                        continue
+                    yield day.get('day'), day['slots']
+
+    @api.model
+    def agent_available_days(self, payload):
+        """Proximos dias con horarios disponibles para lo que el cliente pidio.
+
+        `payload` = {"selections": {...}, "cp"|"zone_id", "mode", "asked_capacity"}
+
+        Devuelve {"days": [{"date": "2026-08-20", "slot_count": 5}], "min_hours",
+        "message"}. `min_hours` importa: con `min_schedule_hours` en 24 **no se
+        puede reservar para hoy**, y el agente tiene que decirlo de frente en vez
+        de ofrecer algo imposible.
+        """
+        payload = payload or {}
+        apt_type, months, _tz = self._agent_slot_tree(payload)
+        if not apt_type:
+            return {'days': [], 'min_hours': 0,
+                    'message': "No hay cobertura o servicio para esa consulta."}
+
+        days = []
+        for day, slots in self._agent_iter_days(months):
+            if not day:
+                continue
+            days.append({
+                'date': fields.Date.to_string(day),
+                'slot_count': len(slots),
+            })
+            if len(days) >= self.MAX_AVAILABLE_DAYS:
+                break
+
+        return {
+            'days': days,
+            'min_hours': apt_type.min_schedule_hours,
+            'message': ("%d dia(s) con disponibilidad." % len(days) if days
+                        else "No hay horarios disponibles por ahora."),
+        }
+
+    @api.model
+    def agent_day_slots(self, payload):
+        """Horarios disponibles de UN dia concreto.
+
+        `payload` = el de `agent_available_days` + {"date": "2026-08-20"}.
+        Devuelve {"date", "slots": [{"start","stop","resource_ids"}]} en UTC naive
+        (el runtime los presenta en la zona del cliente).
+        """
+        payload = payload or {}
+        wanted = fields.Date.to_date(payload.get('date'))
+        if not wanted:
+            return {'date': None, 'slots': [], 'message': "Falta la fecha."}
+
+        apt_type, months, tz_info = self._agent_slot_tree(payload)
+        if not apt_type:
+            return {'date': payload.get('date'), 'slots': [],
+                    'message': "No hay cobertura o servicio para esa consulta."}
+
+        slots_payload = []
+        for day, slots in self._agent_iter_days(months):
+            if day != wanted:
+                continue
+            for slot in slots:
+                start, stop = self._agent_slot_bounds(slot, tz_info, apt_type)
+                if not start:
+                    continue
+                slots_payload.append({
+                    'start': fields.Datetime.to_string(start),
+                    'stop': fields.Datetime.to_string(stop),
+                    'resource_ids': self._agent_slot_resource_ids(slot),
+                })
+            break
+
+        return {
+            'date': fields.Date.to_string(wanted),
+            'slots': slots_payload,
+            'message': ("%d horario(s) disponibles." % len(slots_payload)
+                        if slots_payload else "No hay horarios ese dia."),
+        }
+
+    # ------------------------------------------------------------------
+    # Hand-off a un humano (agent_request_handoff)
+    # ------------------------------------------------------------------
+    #
+    # Hasta ahora el agente decia "en seguida te contacta un asesor" y NO pasaba
+    # nada mas: no se creaba nada en Odoo y nadie se enteraba. Era la falla del
+    # sistema manual -el contexto se pierde, nadie da seguimiento- reproducida
+    # dentro del sistema nuevo, y encima con una promesa explicita al cliente.
+    #
+    # Aterriza en el lead de CRM, que es donde ya vive el rastro de este cliente:
+    # nota en el chatter con TODO lo que ya se recogio (para que el asesor no
+    # vuelva a preguntarlo) + actividad asignada, para que caiga en la bandeja de
+    # alguien y no solo en un historial que nadie mira.
+    # Ver `.context/33-whatsapp-agendado-design.md` §9.1.
+
+    # Motivos por los que el agente escala. Catalogo CERRADO: el runtime elige de
+    # esta lista, no manda texto libre que luego nadie pueda agrupar.
+    HANDOFF_REASONS = {
+        'customer_request': "El cliente pidio hablar con un asesor",
+        'no_slot_fits': "Ninguna fecha ofrecida le acomoda al cliente",
+        'payment_failed': "Fallo el pago o la liga",
+        'hold_expired': "Se vencio el apartado del horario",
+        'out_of_coverage': "Codigo postal fuera de cobertura",
+        'phone_ambiguous': "El telefono coincide con varios clientes",
+        'complaint': "Queja o inconformidad",
+        'not_understood': "El agente no logro entender al cliente",
+        'other': "Otro motivo",
+    }
+
+    # Dias para vencer la actividad. Corto a proposito: un hand-off que se atiende
+    # en una semana ya no sirve de nada.
+    HANDOFF_ACTIVITY_DAYS = 1
+
+    @api.model
+    def agent_request_handoff(self, payload):
+        """Escala la conversacion a un humano dejando rastro accionable en Odoo.
+
+        `payload` = {
+          "phone":   "5218112345678",
+          "reason":  "no_slot_fits",          # de HANDOFF_REASONS
+          "summary": "texto libre corto",     # opcional, lo que dijo el cliente
+          "context": {"servicio": "...", "cp": "64000", ...},  # opcional
+          "service_code": "FUM_INT"           # opcional, para agrupar por grupo
+        }
+
+        Devuelve {"lead_id", "created", "activity_scheduled", "skipped_reason"}.
+        Best-effort, como agent_track_lead: no lanza por datos malos del runtime.
+        """
+        payload = payload or {}
+
+        nat = self._agent_normalize_phone(payload.get('phone'))
+        if len(nat) != 10:
+            return {'lead_id': None, 'created': False,
+                    'activity_scheduled': False, 'skipped_reason': 'invalid_phone'}
+
+        # El grupo es opcional: al escalar puede no saberse aun que queria.
+        group = self.env['visar.service.group'].browse()
+        if payload.get('service_code'):
+            dimension, _options = self._agent_resolve_dimension(payload['service_code'])
+            group = dimension.group_id if dimension else group
+
+        partner = self._agent_find_partner(payload.get('phone'))
+        lead, created, reason = self._agent_open_lead(
+            nat, group, partner=partner, phone=payload.get('phone'),
+            source='whatsapp_handoff')
+        if reason:
+            return {'lead_id': None, 'created': False,
+                    'activity_scheduled': False, 'skipped_reason': reason}
+
+        lead.message_post(body=self._agent_handoff_note(payload))
+
+        # La actividad es lo que convierte la nota en trabajo asignado. Si no hay
+        # a quien asignarla, la nota igual queda: mejor rastro sin dueno que nada.
+        scheduled = False
+        assignee = lead.user_id or lead.team_id.user_id
+        if assignee:
+            lead.activity_schedule(
+                'mail.mail_activity_data_call',
+                date_deadline=fields.Date.add(
+                    fields.Date.context_today(lead), days=self.HANDOFF_ACTIVITY_DAYS),
+                summary="WhatsApp: %s" % self.HANDOFF_REASONS.get(
+                    payload.get('reason'), self.HANDOFF_REASONS['other']),
+                user_id=assignee.id,
+            )
+            scheduled = True
+
+        return {
+            'lead_id': lead.id,
+            'created': created,
+            'activity_scheduled': scheduled,
+            'skipped_reason': None,
+        }
+
+    @api.model
+    def _agent_handoff_note(self, payload):
+        """Nota de chatter del hand-off.
+
+        Lleva TODO lo que el agente ya recogio. Es la diferencia entre que el
+        asesor retome la conversacion y que la empiece de cero preguntando lo
+        mismo — el problema que este proyecto existe para eliminar.
+        """
+        reason = self.HANDOFF_REASONS.get(
+            payload.get('reason'), self.HANDOFF_REASONS['other'])
+        lines = ["<p><b>El agente de WhatsApp escalo esta conversacion.</b></p>",
+                 "<p><b>Motivo:</b> %s</p>" % escape(reason)]
+        summary = (payload.get('summary') or '').strip()
+        if summary:
+            lines.append("<p><b>Lo que dijo el cliente:</b> %s</p>" % escape(summary))
+        context = payload.get('context') or {}
+        if isinstance(context, dict) and context:
+            rows = "".join(
+                "<li><b>%s:</b> %s</li>" % (escape(str(key)), escape(str(value)))
+                for key, value in context.items() if value not in (None, '', False))
+            if rows:
+                lines.append("<p><b>Lo que ya se sabe:</b></p><ul>%s</ul>" % rows)
+        return Markup("".join(lines))
+
+    # ------------------------------------------------------------------
+    # Agendado por WhatsApp — apartado + preparacion de la reserva
+    # ------------------------------------------------------------------
+    #
+    # Segundo y tercer metodo de ESCRITURA, tan acotados como agent_track_lead:
+    # sudo() dentro del metodo, payload tipado, sin nombres de modelo ni dominios.
+    #
+    # NO reimplementan nada del wizard web. Llaman a los MISMOS metodos de modelo
+    # que el controlador (`sale.order._visar_fill_from_booking`,
+    # `calendar.booking._visar_create_for_booking`), que se bajaron del
+    # controlador justo para esto. Si una regla de precio cambia, cambia para los
+    # dos canales a la vez. Ver `.context/33-whatsapp-agendado-design.md`.
+
+    @api.model
+    def _agent_booking_fail(self, reason, message):
+        """Respuesta de fallo, tipada. Nunca lanza: el agente tiene que poder
+        decirle algo util al cliente (o escalar) en vez de recibir un traceback."""
+        return {
+            'prepared': False,
+            'reason': reason,
+            'message': message,
+            'payment_url': None,
+        }
+
+    @api.model
+    def _agent_booking_zone(self, payload):
+        """Zona desde `zone_id` o desde el CP. Recordset vacio si no hay cobertura."""
+        zone_id = payload.get('zone_id')
+        if zone_id:
+            return self.env['visar.zone'].sudo().browse(int(zone_id)).exists()
+        cp_record = self.env['visar.zone.cp'].sudo()._get_cp_record(payload.get('cp'))
+        return cp_record.zone_id if cp_record else self.env['visar.zone'].sudo().browse()
+
+    @api.model
+    def _agent_booking_partner(self, phone, name=None):
+        """(partner, motivo_de_error). Crea el cliente si el telefono es nuevo.
+
+        La politica de AMBIGUEDAD es la misma que en agent_customer_services y por
+        la misma razon: si dos partners comparten el numero no se adivina, porque
+        equivocarse aqui significa colgarle una venta a otra persona. Se devuelve
+        el motivo para que el agente escale a un humano (agent_request_handoff).
+        """
+        Partner = self.env['res.partner'].sudo()
+        key = Partner._visar_phone_nat10_value(phone)
+        if not key:
+            return Partner.browse(), 'phone_invalid'
+        matches = Partner.search([('visar_phone_nat10', '=', key)])
+        if len(matches) > 1:
+            _logger.info(
+                "agent_prepare_booking: el telefono terminado en %s coincide con "
+                "%d partners; no se reserva por ambiguedad.", key[-4:], len(matches))
+            return Partner.browse(), 'phone_ambiguous'
+        if matches:
+            return matches, None
+        if not (name or '').strip():
+            return Partner.browse(), 'name_required'
+        return Partner.create({'name': name.strip(), 'phone': phone}), None
+
+    @api.model
+    def _agent_booking_context(self, payload):
+        """(mode, appointment_type, items) para la reserva, o (mode, empty, []).
+
+        Dos modos, los mismos que el web: `wizard` (fumigacion / areas verdes) y
+        `valuation` (visita de valoracion, precio fijo y sin medidas).
+        """
+        AptType = self.env['appointment.type'].sudo()
+        mode = payload.get('mode') or 'wizard'
+        if mode == 'valuation':
+            apt_type = AptType._visar_get_valuation_appointment_type()
+            template = self.env['product.template'].sudo()._visar_get_valuation_template()
+            variant = template.product_variant_id if template else False
+            items = [{
+                'dimension_id': False,
+                'variant_id': variant.id if variant else False,
+                'is_valuation': True,
+            }] if variant else []
+            return mode, apt_type, items
+        apt_type = AptType._visar_get_master_appointment_type()
+        # SIEMPRE se resuelven desde `selections`. Armar `items` a mano puede
+        # emparejar una dimension con un tramo del eje equivocado y devolver la
+        # variante base -un tercio del precio- SIN error. Ver diseno 33 §7.1.
+        items = AptType._visar_resolve_wizard_items(payload.get('selections') or {})
+        return mode, apt_type, items
+
+    @api.model
+    def _agent_pick_resources(self, apt_type, zone, items, start, stop, mode,
+                              asked_capacity=1):
+        """Tecnico(s) libres para el horario pedido, o recordset vacio."""
+        AptType = self.env['appointment.type'].sudo()
+        if mode == 'valuation':
+            eligible = apt_type._visar_eligible_resources(zone)
+            free = AptType._visar_free_candidates(
+                apt_type, eligible, start, stop, asked_capacity)
+            if not free:
+                return self.env['appointment.resource'].browse()
+            return min(free, key=lambda r: AptType._visar_resource_load(r, start, stop))
+        pools, _missing = AptType._visar_service_resource_pools(zone, items)
+        if not pools:
+            return self.env['appointment.resource'].browse()
+        return AptType._visar_pick_resources_for_slot(
+            apt_type, pools, start, stop, asked_capacity)
+
+    @api.model
+    def _agent_booking_line_values(self, apt_type, resources, start, stop,
+                                   asked_capacity=1):
+        """Lineas de reserva por recurso, con el mismo reparto de capacidad que el web.
+
+        Espeja `appointment/controllers/appointment.py` (submit): reparte la
+        capacidad pedida entre los recursos elegidos respetando lo que queda libre.
+        """
+        remaining = apt_type._get_resources_remaining_capacity(
+            resources, start, stop, with_linked_resources=False)
+        values = []
+        to_assign = asked_capacity
+        for resource in resources:
+            resource_remaining = remaining.get(resource, 0)
+            reserved = min(resource_remaining, to_assign, resource.capacity)
+            to_assign -= reserved
+            values.append({
+                'appointment_resource_id': resource.id,
+                'capacity_reserved': reserved,
+                'capacity_used': (
+                    reserved if resource.shareable and apt_type.manage_capacity
+                    else resource.capacity if apt_type.manage_capacity else 1),
+            })
+        return values
+
+    @api.model
+    def agent_hold_slot(self, payload):
+        """Aparta un horario unos minutos a nombre de un telefono.
+
+        `payload` = {"phone": "5218112345678", "resource_id": 1,
+                     "start": "2026-08-20 16:00:00", "stop": "2026-08-20 17:00:00"}
+
+        Devuelve {"held": bool, "hold_id": int|None, "expire_at": str|None}.
+        Un telefono solo puede tener UN apartado a la vez: pedir otro libera el
+        anterior (si no, un cliente indeciso bloquearia la agenda saltando de
+        horario en horario).
+        """
+        payload = payload or {}
+        Partner = self.env['res.partner'].sudo()
+        owner = Partner._visar_phone_nat10_value(payload.get('phone'))
+        resource = self.env['appointment.resource'].sudo().browse(
+            int(payload.get('resource_id') or 0)).exists()
+        start = fields.Datetime.to_datetime(payload.get('start'))
+        stop = fields.Datetime.to_datetime(payload.get('stop'))
+        if not (owner and resource and start and stop):
+            return {'held': False, 'hold_id': None, 'expire_at': None}
+        hold = self.env['visar.slot.hold']._visar_hold(resource, start, stop, owner)
+        return {
+            'held': bool(hold),
+            'hold_id': hold.id if hold else None,
+            'expire_at': hold.expire_at.isoformat() if hold else None,
+        }
+
+    @api.model
+    def agent_prepare_booking(self, payload):
+        """Deja la reserva lista para pagar y devuelve la liga de pago.
+
+        `payload` = {
+            "phone": "5218112345678",       # identidad; obligatorio
+            "name": "Juan Perez",           # solo si el telefono es nuevo
+            "mode": "wizard"|"valuation",   # default wizard
+            "selections": {...},            # respuestas del cuestionario
+            "cp": "64000" | "zone_id": 2,
+            "delivery_address": {"street", "ext_num", "int_num",
+                                 "neighborhood", "zip", "city"},
+            "slot": {"start": "...", "stop": "..."},   # UTC naive
+            "extras_accepted": [{"product_id": 1, "quantity": 3}],
+            "asked_capacity": 1,
+        }
+
+        Devuelve {"prepared": True, "payment_url", "expire_at", "total",
+        "currency", "booking_id", "order_id"} o, si algo falla,
+        {"prepared": False, "reason", "message"} — nunca una excepcion: el agente
+        tiene que poder responderle al cliente o escalar.
+
+        El horario queda APARTADO mientras el cliente paga, y la liga vive y muere
+        con ese apartado (diseno 33 §6.1): pagar tarde no puede terminar en
+        "pagaste y tu lugar ya se lo dieron a otro".
+        """
+        payload = payload or {}
+        AptType = self.env['appointment.type'].sudo()
+
+        # 1. Identidad. Sin cliente no hay reserva, y la ambiguedad no se adivina.
+        partner, error = self._agent_booking_partner(
+            payload.get('phone'), payload.get('name'))
+        if error:
+            return self._agent_booking_fail(error, {
+                'phone_invalid': "El telefono no es valido.",
+                'phone_ambiguous': "Hay varios clientes con ese telefono; "
+                                   "conviene canalizarlo con un asesor.",
+                'name_required': "Falta el nombre del cliente.",
+            }[error])
+
+        # 2. Cobertura.
+        zone = self._agent_booking_zone(payload)
+        if not zone:
+            return self._agent_booking_fail(
+                'out_of_coverage', "Ese codigo postal esta fuera de cobertura.")
+
+        # 3. Que se va a vender.
+        mode, apt_type, items = self._agent_booking_context(payload)
+        if not apt_type:
+            return self._agent_booking_fail(
+                'config_missing', "Falta configurar el tipo de cita.")
+        if not items:
+            return self._agent_booking_fail(
+                'no_items', "No pude resolver el servicio a partir de las respuestas.")
+
+        # 4. Horario.
+        slot = payload.get('slot') or {}
+        start = fields.Datetime.to_datetime(slot.get('start'))
+        stop = fields.Datetime.to_datetime(slot.get('stop'))
+        if not (start and stop) or stop <= start:
+            return self._agent_booking_fail('slot_invalid', "El horario no es valido.")
+
+        asked_capacity = int(payload.get('asked_capacity') or 1)
+        owner_key = self.env['res.partner'].sudo()._visar_phone_nat10_value(
+            payload.get('phone'))
+        # El contexto tiene que viajar en `apt_type`, no en `self`: quien acaba
+        # consultando la capacidad es `_visar_resource_free_at`, y lo hace sobre
+        # el tipo de cita que se le pasa. Sin esto pasan DOS cosas, ambas malas:
+        # el cliente se bloquearia con su propio apartado, y el reparto de
+        # capacidad de las lineas saldria en cero (su hold se restaria a si mismo).
+        apt_type = apt_type.with_context(visar_hold_owner=owner_key)
+        resources = self._agent_pick_resources(
+            apt_type, zone, items, start, stop, mode, asked_capacity)
+        if not resources:
+            return self._agent_booking_fail(
+                'slot_taken', "Ese horario ya no esta disponible.")
+
+        # 5. Apartar antes de cobrar.
+        hold = self.env['visar.slot.hold']._visar_hold(
+            resources[0], start, stop, owner_key, capacity=asked_capacity)
+
+        # 6. Reserva pendiente + pedido, por los mismos metodos que el web.
+        booking_payload = {
+            'mode': mode,
+            'master_appointment_type_id': apt_type.id,
+            'zone_id': zone.id,
+            'items': items,
+            'selections': payload.get('selections') or {},
+            'delivery_address': payload.get('delivery_address') or {},
+            'extras_accepted': payload.get('extras_accepted') or [],
+        }
+        description = AptType._visar_calification_notes(payload.get('selections'))
+        booking_line_values = self._agent_booking_line_values(
+            apt_type, resources, start, stop, asked_capacity)
+        calendar_booking = self.env['calendar.booking']._visar_create_for_booking(
+            apt_type, start, stop, description, False, [], partner.name, partner,
+            asked_capacity=asked_capacity,
+            booking_line_values=booking_line_values)
+        hold.sudo().calendar_booking_id = calendar_booking.id
+
+        order = self.env['sale.order'].sudo().create({
+            'partner_id': partner.id,
+            'website_id': self.env['website'].sudo().search([], limit=1).id or False,
+        })
+        plan = self.env['sale.subscription.plan'].sudo().browse(
+            int((payload.get('selections') or {}).get('poliza_plan_id') or 0)).exists()
+        lines_added = order._visar_fill_from_booking(
+            booking_payload, calendar_booking, zone, plan=plan,
+            tz=apt_type.appointment_tz)
+        if not lines_added:
+            calendar_booking.sudo().unlink()  # arrastra el hold (ondelete cascade)
+            order.sudo().unlink()
+            return self._agent_booking_fail(
+                'cart_failed', "No pude armar el pedido para ese servicio.")
+
+        order._visar_apply_delivery_address(
+            payload.get('delivery_address'), partner_name=partner.name)
+        # Sin esto el portal puede mostrar la orden sin boton de pago.
+        order.require_payment = True
+
+        # Total en cero (p. ej. un tramo sin cargo): no hay nada que cobrar, asi
+        # que no hay liga de pago que generar — y sin pago el flujo nativo nunca
+        # convierte la reserva en cita. Se escala en vez de mandar una liga rota.
+        if order.amount_total <= 0:
+            return self._agent_booking_fail(
+                'zero_total',
+                "El servicio no tiene cargo; conviene cerrarlo con un asesor.")
+
+        # 7. Liga de pago. ABSOLUTA a proposito: `get_portal_url()` devuelve una
+        # ruta relativa, que en un chat no es tocable.
+        link_wizard = self.env['payment.link.wizard'].sudo().create({
+            'res_model': 'sale.order',
+            'res_id': order.id,
+            'amount': order.amount_total,
+            'currency_id': order.currency_id.id,
+            'partner_id': order.partner_id.id,
+        })
+
+        return {
+            'prepared': True,
+            'reason': None,
+            'message': None,
+            'payment_url': link_wizard.link,
+            'expire_at': hold.expire_at.isoformat() if hold else None,
+            # amount_TOTAL: los precios de Visar llevan IVA incluido, asi que el
+            # subtotal NO es lo que el cliente ve ni lo que cotizo el agente.
+            'total': order.amount_total,
+            'currency': order.currency_id.name,
+            'booking_id': calendar_booking.id,
+            'order_id': order.id,
+            'hold_id': hold.id if hold else None,
         }

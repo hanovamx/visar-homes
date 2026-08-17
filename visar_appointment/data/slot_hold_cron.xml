@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: el staff puede ajustar frecuencia/activo sin que un upgrade lo
+         pise (mismo patrón que los crons de visar_crm y visar_field_app). -->
+    <data noupdate="1">
+        <record id="visar_slot_hold_gc_cron" model="ir.cron">
+            <field name="name">Visar Citas: limpiar apartados de horario vencidos</field>
+            <field name="model_id" ref="model_visar_slot_hold"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_gc()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <!-- Solo evita que la tabla crezca: la disponibilidad YA ignora lo
+                 vencido (`_visar_active_domain`), así que la correccion no
+                 depende de que este cron haya corrido. -->
+            <field name="interval_number">5</field>
+            <field name="interval_type">minutes</field>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>

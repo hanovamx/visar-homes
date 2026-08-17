@@ -514,6 +514,77 @@ class AppointmentType(models.Model):
             picked |= best
         return picked
 
+    @api.model
+    def _visar_selections_has_roedores(self, selections):
+        """True si el cliente pidió control de roedores en el wizard.
+
+        Vive aquí -y no como literal repetido- porque lo consultan el controlador
+        web y el agente de WhatsApp. Ojo con el `== 'si'`: la respuesta guardada
+        es 'si'/'no', y ambas son *truthy*; comparar por verdad booleana añadiría
+        roedores a toda reserva donde el cliente dijo que NO.
+        """
+        return (selections or {}).get('roedores') == 'si'
+
+    # ------------------------------------------------------------------
+    # Apartados temporales (visar.slot.hold)
+    # ------------------------------------------------------------------
+
+    def _get_resources_remaining_capacity(self, resources, slot_start_utc, slot_stop_utc,
+                                          resource_to_bookings=None,
+                                          with_linked_resources=True,
+                                          filter_resources=None):
+        """Descuenta los apartados vivos de la capacidad disponible.
+
+        Se engancha AQUI y no en `_visar_filter_slots_multi_service` porque este
+        es el único punto por el que pasan todos los caminos: la generación de
+        slots del calendario, la validación final al enviar el formulario de cita
+        (`appointment/controllers/appointment.py`) y, de rebote,
+        `_visar_resource_free_at`. El filtro multi-servicio no habría cubierto la
+        rama de valoración, que no pasa por él.
+
+        Contexto que reconoce:
+          * `visar_hold_owner`     — clave del cliente cuyos apartados NO cuentan
+                                     (quien apartó el horario debe poder reservarlo);
+          * `visar_ignore_hold_ids`— ids concretos a ignorar (re-validación de un
+                                     apartado ya identificado).
+
+        Ver `visar_slot_hold.py` para el porqué del modelo.
+        """
+        capacity = super()._get_resources_remaining_capacity(
+            resources, slot_start_utc, slot_stop_utc,
+            resource_to_bookings=resource_to_bookings,
+            with_linked_resources=with_linked_resources,
+            filter_resources=filter_resources)
+
+        # Sin recursos el nativo devuelve {'total_remaining_capacity': 0}: no hay
+        # nada que descontar y la clave de recurso ni siquiera existe.
+        if not resources:
+            return capacity
+
+        # Las claves-registro del dict SON el conjunto de recursos que el nativo
+        # considero (ya con linked/filter aplicados). Reusarlas evita repetir esa
+        # logica y que las dos se desincronicen.
+        resource_keys = [key for key in capacity if key != 'total_remaining_capacity']
+        if not resource_keys:
+            return capacity
+
+        Resource = self.env['appointment.resource']
+        considered = Resource.browse([res.id for res in resource_keys])
+        used = self.env['visar.slot.hold']._visar_used_capacity(
+            considered, slot_start_utc, slot_stop_utc,
+            exclude_owner=self.env.context.get('visar_hold_owner'),
+            exclude_ids=self.env.context.get('visar_ignore_hold_ids'))
+        if not used:
+            return capacity
+
+        total = 0
+        for key in resource_keys:
+            remaining = capacity[key] - used.get(key.id, 0)
+            capacity[key] = remaining
+            total += remaining
+        capacity['total_remaining_capacity'] = total
+        return capacity
+
     # Filtra la estructura de slots del calendario dejando solo los con técnicos simultáneos disponibles.
     @api.model
     def _visar_filter_slots_multi_service(self, master_type, months, service_pools, timezone, asked_capacity=1):

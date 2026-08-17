@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 
 from markupsafe import Markup
 
-from odoo import Command, fields, http, _
+from odoo import fields, http, _
 from odoo.fields import Domain
 from odoo.http import request
 from odoo.addons.website_appointment_sale.controllers.appointment import WebsiteAppointmentSale
@@ -293,7 +293,10 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
     # True si el cliente declaró problema de roedores en el paso de calificación.
     def _visar_booking_has_roedores(self, booking):
-        return (booking.get('selections') or {}).get('roedores') == 'si'
+        # La regla vive en el modelo: la comparte el agente de WhatsApp, que arma
+        # el mismo pedido sin pasar por aqui.
+        return request.env['appointment.type'].sudo()._visar_selections_has_roedores(
+            booking.get('selections'))
 
     # Add-ons opcionales ofrecibles como extras para la reserva actual.
     def _visar_extras_offers(self, booking):
@@ -1597,26 +1600,14 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         answer_input_values, name, customer, appointment_invite, guests=None,
         staff_user=None, asked_capacity=1, booking_line_values=None,
     ):
-        return request.env['calendar.booking'].sudo().create([{
-            'allday': bool(allday),
-            'appointment_answer_input_ids': [
-                Command.create(vals) for vals in (answer_input_values or [])
-            ],
-            'appointment_invite_id': appointment_invite.id,
-            'appointment_type_id': appointment_type.id,
-            'asked_capacity': asked_capacity,
-            'booking_line_ids': [
-                Command.create(vals) for vals in (booking_line_values or [])
-            ],
-            'description': description,
-            'guest_ids': [Command.link(pid) for pid in guests.ids] if guests else [],
-            'name': name,
-            'partner_id': customer.id,
-            'product_id': appointment_type.product_id.id,
-            'staff_user_id': staff_user.id if staff_user else False,
-            'start': date_start,
-            'stop': date_end,
-        }])
+        # La creacion vive en calendar.booking: el agente de WhatsApp crea la
+        # misma reserva sin peticion HTTP.
+        return request.env['calendar.booking']._visar_create_for_booking(
+            appointment_type, date_start, date_end, description, allday,
+            answer_input_values, name, customer,
+            appointment_invite=appointment_invite, guests=guests,
+            staff_user=staff_user, asked_capacity=asked_capacity,
+            booking_line_values=booking_line_values)
 
     # Añade zona e items al evento de calendario y gestiona el flujo de pago Visar.
     def _handle_appointment_form_submission(
@@ -1686,50 +1677,10 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     # Crea (o reutiliza) un contacto de entrega tipo 'delivery' con la dirección
     # capturada y la fija como dirección de servicio Visar (no la pisa el checkout).
     def _visar_apply_delivery_address(self, order_sudo, booking, partner_name=None):
-        address = (booking or {}).get('delivery_address') or {}
-        if not address or not order_sudo.partner_id:
-            return
-        Partner = request.env['res.partner'].sudo()
-        commercial = order_sudo.partner_id.commercial_partner_id
-        country = request.env.ref('base.mx', raise_if_not_found=False)
-        state = request.env['res.country.state'].sudo().search([
-            ('country_id', '=', country.id), ('code', '=', 'NL'),
-        ], limit=1) if country else request.env['res.country.state'].sudo()
-
-        street = (address.get('street') or '').strip()
-        ext_num = (address.get('ext_num') or '').strip()
-        int_num = (address.get('int_num') or '').strip()
-        if ext_num:
-            street = ('%s No. %s' % (street, ext_num)).strip()
-        if int_num:
-            street = ('%s Int. %s' % (street, int_num)).strip()
-
-        vals = {
-            'name': partner_name or order_sudo.partner_id.name or _('Dirección de servicio'),
-            'type': 'delivery',
-            'parent_id': commercial.id,
-            'street': street,
-            'street2': address.get('neighborhood') or '',
-            'zip': address.get('zip') or '',
-            'city': address.get('city') or '',
-            'state_id': state.id if state else False,
-            'country_id': country.id if country else False,
-        }
-        # Reutiliza un contacto de entrega idéntico si ya existe.
-        existing = Partner.search([
-            ('parent_id', '=', commercial.id),
-            ('type', '=', 'delivery'),
-            ('street', '=', vals['street']),
-            ('zip', '=', vals['zip']),
-        ], limit=1)
-        delivery_partner = existing or Partner.create(vals)
-        if existing:
-            # Keep name/details fresh when reusing (e.g. new booking contact name).
-            existing.write({
-                k: vals[k] for k in ('name', 'street2', 'city', 'state_id', 'country_id')
-                if vals.get(k)
-            })
-        order_sudo._visar_set_service_shipping(delivery_partner)
+        # La logica vive en sale.order: el agente de WhatsApp la necesita igual,
+        # pero sin peticion HTTP. Aqui solo se desenvuelve la sesion del wizard.
+        return order_sudo._visar_apply_delivery_address(
+            (booking or {}).get('delivery_address'), partner_name=partner_name)
 
     # Elimina del carrito las líneas de reservas Visar anteriores, para que rehacer
     # el wizard REEMPLACE la cita en lugar de acumular líneas duplicadas. Solo toca
@@ -1911,72 +1862,22 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
         order_sudo = request.cart or request.website._create_cart()
         self._visar_clear_previous_booking_lines(order_sudo, keep_booking=calendar_booking)
-        # Soltar el plan del carrito ANTES de resolver el nuevo. `_verify_cart_after_update`
-        # solo lo limpia cuando una actualización deja cero líneas recurrentes, así que sin
-        # esto un cliente que contrató póliza, volvió atrás y reservó una compra única se
-        # llevaba el plan pegado y la orden se confirmaba como suscripción. También evita el
-        # UserError "no puedes mezclar planes" al cambiar de mensual a bimestral.
-        order_sudo.plan_id = False
         zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
         plan = self._visar_booking_poliza_plan(booking)
-        order_sudo._visar_apply_zone_pricelist(zone, plan=plan)
-
         master = request.env['appointment.type'].sudo().browse(booking['master_appointment_type_id'])
-        sale_lines = master._visar_build_sale_lines(
-            booking.get('items', []), zone,
-            include_roedores=self._visar_booking_has_roedores(booking),
-            extra_addons=booking.get('extras_accepted'))
-        if not sale_lines:
-            calendar_booking.sudo().unlink()
-            return request.redirect('/appointment/%s?%s' % (
-                master.id, keep_query('*', state='failed-resource')))
 
+        # El armado del pedido vive en sale.order: es exactamente lo que necesita
+        # el agente de WhatsApp sin peticion HTTP. Aqui queda solo lo que SI es
+        # web: el carrito de sesion y la redireccion cuando algo falla.
         tz = (request.session.get('timezone') or
               request.env.context.get('tz') or
               calendar_booking.appointment_type_id.appointment_tz)
-        quantity = calendar_booking.asked_capacity or 1
-        lines_added = 0
-
-        for line_vals in sale_lines:
-            if master._visar_skip_cart_line(line_vals, zone, plan=plan):
-                continue
-            line_qty = line_vals.get('quantity', quantity)
-            # `allow_one_time_sale` deja inalcanzable la rama de suscripción de
-            # website_sale_subscription en el flujo de compra única: hoy no se dispara
-            # solo porque las listas de zona no tienen reglas de plan, y eso es
-            # demasiado frágil para dejarlo al azar.
-            cart_values = order_sudo._cart_add(
-                product_id=line_vals['product_id'],
-                quantity=line_qty,
-                calendar_booking_id=calendar_booking.id,
-                calendar_booking_tz=tz,
-                plan_id=plan.id if plan else None,
-                allow_one_time_sale=not plan,
-            )
-            if cart_values.get('quantity', 0) < line_qty:
-                calendar_booking.sudo().unlink()
-                return request.redirect('/appointment/%s?%s' % (
-                    master.id, keep_query('*', state='failed-resource')))
-            lines_added += 1
-            discount = line_vals.get('discount') or 0.0
-            if discount:
-                sol = order_sudo.order_line.filtered(
-                    lambda line: line.product_id.id == line_vals['product_id']
-                    and calendar_booking in line.calendar_booking_ids
-                )[-1:]
-                if sol:
-                    sol.write({'discount': discount})
-
+        lines_added = order_sudo._visar_fill_from_booking(
+            booking, calendar_booking, zone, plan=plan, tz=tz)
         if not lines_added:
             calendar_booking.sudo().unlink()
             return request.redirect('/appointment/%s?%s' % (
                 master.id, keep_query('*', state='failed-resource')))
-
-        # Las mensualidades adelantadas se añaden DESPUÉS de todo el bucle: espejan el
-        # estado final de cada línea de servicio, y el descuento de combo solo queda
-        # fijo cuando terminó de recorrerse.
-        if plan:
-            order_sudo._visar_sync_anticipo_lines()
 
         # El wizard puede correrlo el cliente (portal) o el staff en su nombre; el
         # cliente real es calendar_booking.partner_id. Se fija en la orden cuando

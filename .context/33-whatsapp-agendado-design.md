@@ -624,6 +624,44 @@ ocurran — meterlos después obliga a reabrir el hold, que es la pieza más del
 > la concurrencia todavía no existe (§3) y la ruta casi nunca aprieta (§5.3.2).
 > Si mañana entran técnicos o volumen, 4 sube.
 
+## 10.1 Estado de implementación (17-ago-2026)
+
+> **Escrito, compila, SIN correr contra una BD.** Las pruebas nuevas no se han
+> ejecutado todavía: hace falta la corrida en el servidor sobre una copia
+> (`visar-scratch`), que es la verificación que vale.
+
+Hecho en `visar_appointment` (**v19.0.2.6.0**, necesita `-u`):
+- [x] `visar.slot.hold` + ACL + cron de limpieza.
+- [x] Override de `_get_resources_remaining_capacity` que descuenta apartados,
+      con exclusión del dueño (`visar_hold_owner`) y por ids.
+- [x] Liberación del apartado al confirmarse la reserva (`calendar.booking`).
+- [x] Congelado/descongelado del apartado por estado de `payment.transaction`.
+- [x] **Refactor:** `sale.order._visar_apply_delivery_address` y
+      `_visar_fill_from_booking`, y `calendar.booking._visar_create_for_booking`
+      bajados del controlador; el controlador ahora delega.
+- [x] `_visar_selections_has_roedores` en el modelo (era un literal `== 'si'`
+      duplicado; comparar por verdad booleana habría añadido roedores a toda
+      reserva donde el cliente dijo que NO).
+
+Hecho en `visar_whatsapp_agent` (**sin bump**: solo Python → basta reiniciar):
+- [x] `agent_available_days`, `agent_day_slots` (lectura).
+- [x] `agent_hold_slot`, `agent_prepare_booking` (escritura acotada).
+- [x] `agent_request_handoff` + `_agent_open_lead` compartido con `agent_track_lead`.
+
+Pruebas escritas (sin ejecutar): `test_slot_hold.py` (11 casos),
+`test_agent_handoff.py` (5), `test_agent_prepare_booking.py` (guardias siempre;
+paridad de precio se **salta** si la BD no trae catálogo real, para no dar un
+falso verde).
+
+**Lo que falta:**
+1. Correr las pruebas en el servidor sobre `visar-scratch` (§Verificación del plan).
+2. Prueba end-to-end a mano: días → apartar → liga → pagar con *Demo* → cita +
+   tarea FSM → apartado liberado.
+3. Confirmar que las pruebas existentes (`test_booking_partner`,
+   `test_partner_dedupe`, `test_poliza`) siguen verdes **sin tocarlas**: es la
+   red de seguridad del refactor.
+4. Guardia defensiva en `_visar_combined_variant_for_tiers` (§7.1) — aún no.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio
