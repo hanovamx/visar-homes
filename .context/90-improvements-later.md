@@ -64,7 +64,11 @@
   servicio (`res.partner._visar_geo_localize`, menú "Geolocalizar direcciones de clientes"). Detalle en
   `25-field-app.md` (sección 08-jul-2026).
 - **Puntos:**
-  1. **Ruta Mapbox de éxito sin probar en vivo** — falta un token real (`web_map.token_map_box`). Validar
+  1. ~~**Ruta Mapbox de éxito sin probar en vivo** — falta un token real~~ → **OBSOLETO
+     (17-ago-2026):** verificado en el servidor, `web_map.token_map_box` **existe** y no está
+     vacío (101 chars), y `base_geolocalize.geo_provider = 1`. Lo que sigue pendiente es
+     comprobar que el token **sirve**: nadie ha hecho una llamada en vivo. Texto original:
+     falta un token real (`web_map.token_map_box`). Validar
      con una dirección conocida que Mapbox devuelve match a nivel calle. (Ya probado: fallback Mapbox-error → OSM.)
   2. **"Re-geolocalizar todo"** — la acción de menú solo procesa faltantes; re-geocodificar los ya guardados
      (subir de centroide OSM a calle Mapbox) requiere `force=True`, sin entrada de menú aún.
@@ -137,10 +141,29 @@
   dirección en el checkout**.
 - **Por qué importa:** el cliente vería el descuento de combo y podría acabar pagando sin él.
   No es teórico: es el mismo mecanismo que obligó a proteger las líneas de anticipo.
-- **Recomendación:** ampliar el filtro de `sale.order._get_update_prices_lines()` (hoy solo
-  excluye anticipos) para cubrir también las líneas con `calendar_booking_ids`. Ver el gotcha
+- **Recomendación:** ~~ampliar el filtro de `sale.order._get_update_prices_lines()` (hoy solo
+  excluye anticipos) para cubrir también las líneas con `calendar_booking_ids`~~ →
+  **ESA RECOMENDACIÓN NO FUNCIONA (verificado 17-ago-2026).** Ver el gotcha
   en `60-odoo19-conventions.md`.
-- **Prioridad:** Alta — riesgo de cobrar de menos, silencioso.
+- **⚠️ Por qué no funciona:** `sale.order.line.calendar_booking_ids` es un one2many cuyo
+  inverso es `calendar.booking.order_line_id`, un **many2one**. Es decir: una reserva apunta a
+  **UNA sola línea**, y pasar el mismo `calendar_booking_id` a `_cart_add` en llamadas
+  sucesivas **la va moviendo** — gana la última línea agregada. Comprobado en el servidor:
+
+      línea 417 'Fumigación interior + exterior'  disc=0.0   bookings=[]
+      línea 418 'Mantenimiento de áreas verdes'   disc=50.0  bookings=[]
+      línea 419 'Control de chinches de cama'     disc=0.0   bookings=[119]
+
+  La reserva acabó en un add-on obligatorio y **la línea descontada quedó sin enlace**. Filtrar
+  por `calendar_booking_ids` protegería justo la línea que no lleva descuento. El riesgo de
+  cobrar de menos sigue **abierto y sin mitigación válida**.
+- **Alternativas a evaluar:** filtrar por producto de servicio Visar; marcar la línea con un
+  flag propio al escribir el descuento; o reaplicar el descuento después de `_recompute_prices`.
+- **Efecto colateral:** cualquier código que quiera ir de una reserva a "la línea de servicio
+  que pagó" está sobre arena. Es dato para el diseño de agendado por WhatsApp
+  (`33-whatsapp-agendado-design.md`).
+- **Prioridad:** Alta — riesgo de cobrar de menos, silencioso, y **el arreglo propuesto era
+  falso**, así que llevaba tiempo pareciendo resuelto sin estarlo.
 
 ## I-12 — Un solo producto de anticipo para todos los servicios
 - **Qué:** `VISAR-ANTICIPO` es un único producto; la línea copia los impuestos del servicio que

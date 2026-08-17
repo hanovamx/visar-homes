@@ -1,6 +1,14 @@
 # Handoff — Deploy & verify latest Visar changes on the production server
 
 > **Audience:** an agent/operator with SSH + code access to the host running the
+> ⚠️ **CORRECCIÓN (17-ago-2026, verificada en el servidor):** la base se llama
+> **`visar-db`**, no `visar_prod`. `visar_prod` **no existe**: `/etc/odoo/odoo.conf`
+> trae `db_name = visar-db`, y `psql -l` lista `visar-db`, `visar-db-2`,
+> `visar-db-pres`, `visar-db-rehearsal` y `visar-test`. Los módulos viven en
+> **`/opt/custom`**. Donde este doc (y `25-field-app.md`, `27-whatsapp-agent.md`,
+> `30-whatsapp-agent-routing-implementation.md`, y el `50-status-roadmap.md` del
+> runtime con su `ODOO_DB=visar_prod`) diga `visar_prod`, léase `visar-db`.
+
 > **productive Odoo 19 Enterprise** instance (`visar_prod`). You do the deploy and
 > the post-deploy configuration/verification. This doc is self-contained; you do
 > **not** need the `.context/` history, but `80-deploy-prod.md` and `25-field-app.md`

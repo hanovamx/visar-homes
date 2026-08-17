@@ -108,3 +108,5 @@ Odoo 19 core: `/Users/luisgarza27/Documents/HANOVA/odoo_19_visar/odoo/addons/`
 9. `27-whatsapp-agent.md` — **agente de IA por WhatsApp** (`visar_whatsapp_agent`, 5º módulo).
 10. `35-polizas.md` — **pólizas / suscripciones** (`visar_subscription`, 6º módulo): cobro
     adelantado, listas (zona × plan) y paso de póliza en el wizard.
+11. `33-whatsapp-agendado-design.md` — **diseño** del agendado completo por WhatsApp
+    (todo en el chat salvo el pago): factibilidad de ruta, hold de slot y liga de pago.
