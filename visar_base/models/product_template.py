@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from odoo import api, fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import ValidationError
 
 
 class ProductTemplate(models.Model):
@@ -272,6 +273,36 @@ class ProductTemplate(models.Model):
         empty = self.env['product.product']
         if not interior_tier or not exterior_tier:
             return empty
+
+        # Guardia: los tramos tienen que corresponder al eje al que se les asigna.
+        # No es paranoia — este metodo lee los ejes de tamano DE LOS TRAMOS QUE SE
+        # LE PASAN, mientras que quien decide cual es interior y cual exterior es
+        # el llamador (por `dimension.measure_type`). Son dos fuentes
+        # independientes, y el `measure_scope` de un tramo es contraintuitivo
+        # respecto a su nombre: el tramo "51 - 100 m2" tiene scope EXTERIOR.
+        #
+        # Cruzarlos NO daba error: devolvia la variante combinada de la fila base
+        # (p. ej. 600 en vez de 2,000 — un tercio del precio), en silencio. El
+        # wizard web nunca cae en esto porque resuelve los tramos con
+        # `dimension._visar_tier_field_name()`; cualquier llamador nuevo -el
+        # agente de WhatsApp- podria. Mejor reventar que cobrar de menos.
+        #
+        # Solo se rechaza el desajuste DEFINITIVO: `measure_scope = 'all'` es
+        # legitimo en cualquiera de los dos ejes.
+        if interior_tier.measure_scope == 'exterior' or \
+                exterior_tier.measure_scope == 'interior':
+            raise ValidationError(_(
+                "Tramos cruzados al resolver la variante combinada de %(product)s: "
+                "'%(interior)s' (alcance %(int_scope)s) se paso como interior y "
+                "'%(exterior)s' (alcance %(ext_scope)s) como exterior. Resolver los "
+                "tramos con _visar_resolve_wizard_items, no a mano.",
+                product=self.display_name,
+                interior=interior_tier.display_name,
+                int_scope=interior_tier.measure_scope,
+                exterior=exterior_tier.display_name,
+                ext_scope=exterior_tier.measure_scope,
+            ))
+
         int_var = interior_tier._visar_get_variant_for_zone(zone)
         ext_var = exterior_tier._visar_get_variant_for_zone(zone)
         if not int_var or not ext_var:

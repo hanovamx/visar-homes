@@ -653,14 +653,20 @@ Pruebas escritas (sin ejecutar): `test_slot_hold.py` (11 casos),
 paridad de precio se **salta** si la BD no trae catálogo real, para no dar un
 falso verde).
 
-**Lo que falta:**
-1. Correr las pruebas en el servidor sobre `visar-scratch` (§Verificación del plan).
+Hecho en `visar_base` (**sin bump**: solo Python + pruebas → basta reiniciar):
+- [x] **Guardia en `_visar_combined_variant_for_tiers`** (§7.1): si le cruzan los
+      ejes lanza `ValidationError` en vez de devolver la variante base en
+      silencio (600 en vez de 2,000). Solo rechaza el desajuste **definitivo**;
+      `measure_scope = 'all'` sigue siendo legítimo en cualquiera de los dos ejes.
+      Pruebas en `visar_base/tests/test_combined_variant_guard.py`.
+
+**Lo que falta — todo requiere el servidor, nada es local:**
+1. Correr las pruebas sobre una copia `visar-scratch` (§Verificación del plan).
 2. Prueba end-to-end a mano: días → apartar → liga → pagar con *Demo* → cita +
    tarea FSM → apartado liberado.
 3. Confirmar que las pruebas existentes (`test_booking_partner`,
    `test_partner_dedupe`, `test_poliza`) siguen verdes **sin tocarlas**: es la
    red de seguridad del refactor.
-4. Guardia defensiva en `_visar_combined_variant_for_tiers` (§7.1) — aún no.
 
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
