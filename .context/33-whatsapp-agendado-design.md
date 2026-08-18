@@ -694,11 +694,42 @@ cotización dice **1,900** en fumigación + áreas verdes (pierde el descuento d
 combo al pasar por `_update_address`). Es preexistente y del canal web. Detalle y
 causa exacta en [`90-improvements-later.md`](./90-improvements-later.md) **I-11**.
 
+## 10.3 Segunda verificación (18-ago-2026) — los tres fallos, cerrados
+
+Encargo en [`briefs/2026-08-18b-reverificacion-correcciones.md`](./briefs/2026-08-18b-reverificacion-correcciones.md).
+
+**Confirmado arreglado:** T3f (ya hay `calendar.event`, la tarea FSM aparece y el
+apartado se libera — los cuatro síntomas invertidos), T3h (lead nuevo sin
+excepción, `visar_source = whatsapp_handoff`, nota y actividad) y T3e. Y los
+arreglos **no rompieron nada nuevo**: la generación de slots sigue viva (R4a), la
+detección de indisponibilidad **real** sigue funcionando —un apartado ajeno sí
+descarta la reserva— (R4b), y la foto de apartados es fresca por petición (R4c).
+`test_booking_partner` 6/6 y `test_poliza` 21/21.
+
+De regalo, R4c dejó ver algo que no se había probado: **un apartado hecho por
+WhatsApp esconde el horario en el wizard web de inmediato**.
+
+**Cinco cosas más, corregidas en esta tanda:**
+
+| Qué | Por qué importaba |
+|---|---|
+| La prueba de regresión de **T3f no ejecutaba su aserción** — el `create()` omitía `product_id`, que es NOT NULL | El arreglo del fallo crítico pasó una ronda entera **sin cobertura**, y la prueba en rojo parecía culpa del arreglo |
+| **Rendimiento a medias** (+31% en vez de +58%): la foto solo cubría la generación nativa; la segunda pasada (`_visar_filter_slots_multi_service` → `_visar_resource_free_at`) seguía consultando 221 veces | Ahora esa pasada también toma foto |
+| **`agent_hold_slot` no comprobaba disponibilidad**: dos clientes apartaban el mismo horario y **quedaban fuera los dos** (a cada uno le estorbaba el del otro) | `agent_prepare_booking` sí validaba; el hueco era el RPC suelto |
+| **La actividad del hand-off se asignaba al propio bot** (CRM auto-asigna al creador, que es el usuario RPC) | Rastro perfecto que no convoca a nadie: justo lo que el hand-off existe para evitar |
+| El `try/except` del hand-off **no cubría** `message_post` ni `activity_schedule` | El "nunca lanza" del docstring no estaba cerrado |
+
+> ⚠️ **Decisión de datos pendiente, no de código:** el equipo de CRM de WhatsApp
+> **no tiene líder ni miembros**. El código ya nunca asigna al bot, pero si no hay
+> humanos en el equipo tampoco hay a quién asignar (queda la nota y un `warning`
+> en el log). Ponerle líder o miembros al equipo es lo que cierra el bucle.
+
 **Lo que falta:**
-1. **Re-correr la verificación** con estas correcciones (T3f y T3h sobre todo, y
-   re-medir el calendario para confirmar que el sobrecosto se fue).
-2. Decidir qué hacer con I-11 (dinero real, canal web).
-3. `test_partner_dedupe`: 2 fallos **preexistentes y ajenos** — `assertLogs` no
+1. Tercera pasada corta: confirmar estas cinco correcciones y **re-medir** el
+   calendario (esperado: cerca del baseline de 1.95 s, no 2.56 s).
+2. Poner líder/miembros al equipo de WhatsApp en Odoo (dato).
+3. Decidir qué hacer con I-11 (dinero real, canal web).
+4. `test_partner_dedupe`: 2 fallos **preexistentes y ajenos** — `assertLogs` no
    funciona en este Odoo 19 (el logger queda en nivel 25 = TEST, así que INFO se
    filtra). La conducta es correcta, verificada a mano. No tocar sin arreglar el
    harness.

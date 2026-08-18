@@ -1016,22 +1016,34 @@ class VisarAgentTools(models.AbstractModel):
             return {'lead_id': None, 'created': False,
                     'activity_scheduled': False, 'skipped_reason': reason}
 
-        lead.message_post(body=self._agent_handoff_note(payload))
-
-        # La actividad es lo que convierte la nota en trabajo asignado. Si no hay
-        # a quien asignarla, la nota igual queda: mejor rastro sin dueno que nada.
+        # El chatter y la actividad tambien van dentro del try: una excepcion aqui
+        # dejaria al cliente esperando a un asesor que nadie convoco, que es
+        # justo lo que este metodo existe para evitar.
         scheduled = False
-        assignee = lead.user_id or lead.team_id.user_id
-        if assignee:
-            lead.activity_schedule(
-                'mail.mail_activity_data_call',
-                date_deadline=fields.Date.add(
-                    fields.Date.context_today(lead), days=self.HANDOFF_ACTIVITY_DAYS),
-                summary="WhatsApp: %s" % self.HANDOFF_REASONS.get(
-                    payload.get('reason'), self.HANDOFF_REASONS['other']),
-                user_id=assignee.id,
-            )
-            scheduled = True
+        try:
+            lead.message_post(body=self._agent_handoff_note(payload))
+            assignee = self._agent_handoff_assignee(lead)
+            if assignee:
+                lead.activity_schedule(
+                    'mail.mail_activity_data_call',
+                    date_deadline=fields.Date.add(
+                        fields.Date.context_today(lead),
+                        days=self.HANDOFF_ACTIVITY_DAYS),
+                    summary="WhatsApp: %s" % self.HANDOFF_REASONS.get(
+                        payload.get('reason'), self.HANDOFF_REASONS['other']),
+                    user_id=assignee.id,
+                )
+                scheduled = True
+            else:
+                # Sin humano a quien asignar, la nota igual queda: mejor rastro
+                # sin dueno que nada. Pero se avisa, porque un hand-off que no
+                # llega a la bandeja de nadie es medio hand-off.
+                _logger.warning(
+                    "agent_request_handoff: lead %s sin asignatario humano. "
+                    "Poner lider o miembros al equipo de WhatsApp.", lead.id)
+        except Exception:  # noqa: BLE001 - el hand-off nunca tumba la respuesta
+            _logger.exception(
+                "agent_request_handoff: fallo al anotar/agendar el lead %s", lead.id)
 
         return {
             'lead_id': lead.id,
@@ -1039,6 +1051,25 @@ class VisarAgentTools(models.AbstractModel):
             'activity_scheduled': scheduled,
             'skipped_reason': None,
         }
+
+    @api.model
+    def _agent_handoff_assignee(self, lead):
+        """Humano al que se le asigna el hand-off, o vacio si no hay ninguno.
+
+        **El bot no cuenta.** CRM auto-asigna el lead a quien lo crea, y quien lo
+        crea aqui es el usuario RPC del agente: sin este filtro la actividad
+        quedaba a nombre de "Agente WhatsApp (RPC)" — rastro perfecto que no
+        convoca a nadie, exactamente lo que este metodo existe para evitar.
+        Se descartan tambien los usuarios *share* (portal): no ven el CRM.
+        """
+        def usable(users):
+            return users.filtered(
+                lambda user: user and not user.share and user != self.env.user)[:1]
+
+        return (usable(lead.user_id)
+                or usable(lead.team_id.user_id)
+                or usable(lead.team_id.member_ids)
+                or self.env['res.users'].browse())
 
     @api.model
     def _agent_handoff_note(self, payload):
@@ -1198,7 +1229,9 @@ class VisarAgentTools(models.AbstractModel):
         `payload` = {"phone": "5218112345678", "resource_id": 1,
                      "start": "2026-08-20 16:00:00", "stop": "2026-08-20 17:00:00"}
 
-        Devuelve {"held": bool, "hold_id": int|None, "expire_at": str|None}.
+        Devuelve {"held": bool, "hold_id": int|None, "expire_at": str|None,
+        "reason": str|None}.
+
         Un telefono solo puede tener UN apartado a la vez: pedir otro libera el
         anterior (si no, un cliente indeciso bloquearia la agenda saltando de
         horario en horario).
@@ -1211,12 +1244,29 @@ class VisarAgentTools(models.AbstractModel):
         start = fields.Datetime.to_datetime(payload.get('start'))
         stop = fields.Datetime.to_datetime(payload.get('stop'))
         if not (owner and resource and start and stop):
-            return {'held': False, 'hold_id': None, 'expire_at': None}
+            return {'held': False, 'hold_id': None, 'expire_at': None,
+                    'reason': 'invalid_payload'}
+
+        # Comprobar disponibilidad ANTES de apartar. Sin esto dos clientes podian
+        # apartar el mismo horario y quedarse FUERA LOS DOS: la exclusion del
+        # dueno solo ignora el apartado propio, asi que a cada uno le estorbaba el
+        # del otro y ninguno volvia a ver el horario. `agent_prepare_booking` si
+        # validaba, pero este RPC suelto no.
+        apt_type = resource.appointment_type_ids[:1]
+        if apt_type:
+            remaining = apt_type.with_context(
+                visar_hold_owner=owner)._get_resources_remaining_capacity(
+                    resource, start, stop, with_linked_resources=False)
+            if remaining.get('total_remaining_capacity', 0) < 1:
+                return {'held': False, 'hold_id': None, 'expire_at': None,
+                        'reason': 'slot_taken'}
+
         hold = self.env['visar.slot.hold']._visar_hold(resource, start, stop, owner)
         return {
             'held': bool(hold),
             'hold_id': hold.id if hold else None,
             'expire_at': hold.expire_at.isoformat() if hold else None,
+            'reason': None if hold else 'hold_failed',
         }
 
     @api.model

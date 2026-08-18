@@ -103,6 +103,26 @@ class TestAgentHandoff(TransactionCase):
         self.assertTrue(result['lead_id'])
         self.assertIsNone(result['skipped_reason'])
 
+    def test_la_actividad_no_se_asigna_al_propio_bot(self):
+        """El hand-off tiene que convocar a un HUMANO.
+
+        CRM auto-asigna el lead a quien lo crea, y aqui quien lo crea es el
+        usuario RPC del agente. Sin filtro, la actividad quedaba a nombre de
+        "Agente WhatsApp (RPC)": rastro perfecto que no llega a la bandeja de
+        nadie — exactamente lo que este metodo existe para evitar.
+        """
+        result = self.Tools.agent_request_handoff({
+            'phone': self.WA, 'reason': 'complaint'})
+        lead = self.Lead.browse(result['lead_id'])
+        activities = self.env['mail.activity'].search([
+            ('res_model', '=', 'crm.lead'), ('res_id', '=', lead.id)])
+        for activity in activities:
+            self.assertNotEqual(
+                activity.user_id, self.env.user,
+                "la actividad del hand-off no puede quedar asignada al propio "
+                "agente que la creo")
+            self.assertFalse(activity.user_id.share)
+
     def test_telefono_invalido_no_revienta(self):
         result = self.Tools.agent_request_handoff({'phone': '123'})
         self.assertIsNone(result['lead_id'])

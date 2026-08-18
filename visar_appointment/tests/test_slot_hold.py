@@ -34,6 +34,8 @@ class TestSlotHold(TransactionCase):
             'schedule_based_on': 'resources',
             'resource_ids': [(6, 0, cls.resource.ids)],
         })
+        cls.product = cls.env['product.product'].create({
+            'name': 'Producto Test Hold', 'type': 'service'})
         # Una hora cualquiera en el futuro, en UTC naive (misma convencion que
         # appointment.booking.line.event_start).
         cls.start = fields.Datetime.add(fields.Datetime.now(), days=3)
@@ -140,6 +142,11 @@ class TestSlotHold(TransactionCase):
         booking = self.env['calendar.booking'].create({
             'appointment_type_id': self.apt_type.id,
             'name': 'Reserva Test Hold',
+            # `product_id` es NOT NULL en calendar.booking. Omitirlo hacia que
+            # esta prueba reventara en el create y NUNCA llegara a su asercion:
+            # el arreglo del fallo critico se quedo sin cobertura una ronda
+            # entera, y la prueba "roja" parecia un fallo del arreglo.
+            'product_id': self.product.id,
             'partner_id': self.env['res.partner'].create(
                 {'name': 'Cliente Test Hold'}).id,
             'start': self.start,
@@ -178,6 +185,21 @@ class TestSlotHold(TransactionCase):
                                       exclude_owner=self.owner),
             Hold.with_context(visar_hold_cache=snapshot)._visar_used_capacity(
                 self.resource, self.start, self.stop, exclude_owner=self.owner))
+
+    def test_dos_clientes_no_pueden_apartar_el_mismo_horario(self):
+        """REGRESION: `agent_hold_slot` dejaba a los DOS fuera.
+
+        `_visar_hold` crea sin comprobar disponibilidad. Como la exclusion del
+        dueno solo ignora el apartado propio, a cada cliente le estorbaba el del
+        otro y **ninguno de los dos** volvia a ver el horario. Aqui se fija el
+        invariante desde el modelo: con un apartado ajeno vivo, el horario no
+        tiene capacidad para el segundo.
+        """
+        self._hold(owner='9990001111')
+        self.assertEqual(
+            self._remaining(visar_hold_owner='9990002222'), 0,
+            "el segundo cliente no debe ver libre un horario ya apartado; si lo "
+            "aparta igual, los dos se quedan fuera")
 
     def test_liberar_devuelve_la_capacidad(self):
         self._hold()

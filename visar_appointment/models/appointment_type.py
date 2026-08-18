@@ -618,6 +618,20 @@ class AppointmentType(models.Model):
         from dateutil.relativedelta import relativedelta
         from werkzeug.urls import url_decode, url_encode
 
+        # Segunda foto de apartados. La de `_get_appointment_slots` no alcanza
+        # hasta aqui: esta pasada corre DESPUES de que el nativo retorno, sobre el
+        # recordset del llamador, que ya no lleva `visar_hold_cache`. Medido en el
+        # servidor: la foto resolvia 223 consultas y otras 221 seguian yendo a la
+        # base por este camino (`_visar_resource_free_at`), o sea la mitad del
+        # ahorro. Se contextualiza `master_type` porque es el recordset sobre el
+        # que `_visar_resource_free_at` acaba pidiendo la capacidad.
+        if 'visar_hold_cache' not in master_type.env.context:
+            pool_resources = self.env['appointment.resource'].browse(
+                {rid for pool in service_pools.values() for rid in pool.ids})
+            snapshot = self.env['visar.slot.hold']._visar_snapshot(
+                master_type.resource_ids | pool_resources)
+            master_type = master_type.with_context(visar_hold_cache=snapshot)
+
         tz_info = pytz.timezone(timezone or master_type.appointment_tz)
         filtered_months = []
         for month in months:
