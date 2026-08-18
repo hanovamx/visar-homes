@@ -660,13 +660,48 @@ Hecho en `visar_base` (**sin bump**: solo Python + pruebas → basta reiniciar):
       `measure_scope = 'all'` sigue siendo legítimo en cualquiera de los dos ejes.
       Pruebas en `visar_base/tests/test_combined_variant_guard.py`.
 
-**Lo que falta — todo requiere el servidor, nada es local:**
-1. Correr las pruebas sobre una copia `visar-scratch` (§Verificación del plan).
-2. Prueba end-to-end a mano: días → apartar → liga → pagar con *Demo* → cita +
-   tarea FSM → apartado liberado.
-3. Confirmar que las pruebas existentes (`test_booking_partner`,
-   `test_partner_dedupe`, `test_poliza`) siguen verdes **sin tocarlas**: es la
-   red de seguridad del refactor.
+## 10.2 Primera verificación en servidor (18-ago-2026) y correcciones
+
+Corrida sobre `visar-scratch`. Encargo en
+[`briefs/2026-08-18-verificacion-agendado-whatsapp.md`](./briefs/2026-08-18-verificacion-agendado-whatsapp.md).
+
+**Lo que aguantó:** el refactor **no rompió nada** — `test_booking_partner` y
+`test_poliza` verdes, y el wizard web sigue emitiendo UNA línea combinada con el
+total correcto (1,400 = `_visar_quote_booking`), creando la dirección de servicio
+y los anticipos de póliza. La liga de pago funciona anónima y reabrible. El
+apartado sí esconde el horario a otros clientes y sí caduca sin cron.
+
+**Tres fallos propios, corregidos:**
+
+| # | Qué pasaba | Arreglo |
+|---|---|---|
+| **T3f** | 🔴 **Se cobraba y NO se creaba la cita.** El nativo `_filter_unavailable_bookings` consulta capacidad **sin contexto**, así que el override restaba el apartado **del propio cliente**, declaraba el horario sin cupo y descartaba la reserva — con el pago ya adentro. En **todas** las reservas por WhatsApp. El apartado provocaba justo el desastre que existe para evitar. | Override de `_filter_unavailable_bookings` que excluye los apartados de las reservas que se están filtrando |
+| **T3h** | `agent_request_handoff` **lanzaba** con lead nuevo: escribía `visar_source='whatsapp_handoff'` y la Selection solo aceptaba `'whatsapp'`. Solo sobrevivía el caso que REUSA un lead — el único que las pruebas cubrían | Valor añadido a la Selection (`visar_crm` **v19.0.1.3.0**, necesita `-u`) + `try/except` para cumplir el "nunca lanza" del docstring |
+| **T3e** | El dueño **no veía su propio horario apartado** en el listado: `agent_day_slots` nunca ponía `visar_hold_owner`. Reservar sí funcionaba, pero el listado es lo que el cliente ve | El teléfono del payload siembra el contexto en `_agent_slot_tree` |
+
+**Dos molestias, corregidas:** el override costaba **~1 s por página de calendario
+(+57%)** por consultar una vez por slot → ahora `_get_appointment_slots` precarga
+una foto y se filtra en memoria; y comparar recordset contra cadena emitía un
+`UserWarning` por slot → se filtra por tipo.
+
+**Una prueba mal calibrada, no un error de precio:**
+`test_interior_mas_exterior_es_una_linea_combinada` tomaba el primer tramo
+exterior, que es el **incluido** (0–50 m²), donde el diseño emite dos líneas a
+propósito. Ahora exige `is_free = False`.
+
+**Hallazgo ajeno, más caro que todo lo anterior:** el web cobra **2,400** donde la
+cotización dice **1,900** en fumigación + áreas verdes (pierde el descuento de
+combo al pasar por `_update_address`). Es preexistente y del canal web. Detalle y
+causa exacta en [`90-improvements-later.md`](./90-improvements-later.md) **I-11**.
+
+**Lo que falta:**
+1. **Re-correr la verificación** con estas correcciones (T3f y T3h sobre todo, y
+   re-medir el calendario para confirmar que el sobrecosto se fue).
+2. Decidir qué hacer con I-11 (dinero real, canal web).
+3. `test_partner_dedupe`: 2 fallos **preexistentes y ajenos** — `assertLogs` no
+   funciona en este Odoo 19 (el logger queda en nivel 25 = TEST, así que INFO se
+   filtra). La conducta es correcta, verificada a mano. No tocar sin arreglar el
+   harness.
 
 ## 11. Riesgo estructural: dos front-ends, un flujo
 

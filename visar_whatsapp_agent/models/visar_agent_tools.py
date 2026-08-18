@@ -819,6 +819,15 @@ class VisarAgentTools(models.AbstractModel):
         tz_info = pytz.timezone(tz_name)
         asked_capacity = int(payload.get('asked_capacity') or 1)
 
+        # El cliente tiene que seguir viendo SU horario apartado. Sin esto el chat
+        # queda absurdo: "aparta este horario" -> "muestrame otra vez ese dia" ->
+        # su propio horario ya no aparece. Reservar si funcionaba (ahi el contexto
+        # se ponia), pero el listado no, y el listado es lo que el cliente ve.
+        owner_key = self.env['res.partner'].sudo()._visar_phone_nat10_value(
+            payload.get('phone'))
+        if owner_key:
+            apt_type = apt_type.with_context(visar_hold_owner=owner_key)
+
         if mode == 'valuation':
             resources = apt_type._visar_eligible_resources(zone)
             if not resources:
@@ -987,9 +996,22 @@ class VisarAgentTools(models.AbstractModel):
             group = dimension.group_id if dimension else group
 
         partner = self._agent_find_partner(payload.get('phone'))
-        lead, created, reason = self._agent_open_lead(
-            nat, group, partner=partner, phone=payload.get('phone'),
-            source='whatsapp_handoff')
+        # El docstring promete que no lanza, y hay que cumplirlo de verdad: si el
+        # hand-off revienta, el cliente se queda esperando a un asesor que nadie
+        # convoco. Mejor perder el rastro en Odoo (queda en el log) que perder la
+        # respuesta al cliente. Se aprendio por las malas: `visar_source` no
+        # aceptaba el valor que este metodo escribia, y la excepcion viajaba
+        # entera hasta el runtime.
+        try:
+            lead, created, reason = self._agent_open_lead(
+                nat, group, partner=partner, phone=payload.get('phone'),
+                source='whatsapp_handoff')
+        except Exception:  # noqa: BLE001 - el hand-off nunca tumba la respuesta
+            _logger.exception(
+                "agent_request_handoff: no se pudo abrir el lead del telefono "
+                "terminado en %s", nat[-4:])
+            return {'lead_id': None, 'created': False,
+                    'activity_scheduled': False, 'skipped_reason': 'lead_failed'}
         if reason:
             return {'lead_id': None, 'created': False,
                     'activity_scheduled': False, 'skipped_reason': reason}

@@ -87,10 +87,17 @@ class TestAgentPrepareBooking(TransactionCase):
         if not interior or not exterior:
             return None
         Tier = self.env['visar.service.tier'].sudo()
+        # `is_free` fuera: el primer tramo exterior del catalogo real es
+        # "0 - 50 m2" INCLUIDA, y ahi el diseno emite DOS lineas a proposito (una
+        # cobrada + una al 100% de descuento que muestra lo incluido). Sin este
+        # filtro la prueba fallaba con el precio correcto — la asercion estaba mal
+        # calibrada, no el dinero.
         tier_int = Tier.search([
-            ('measure_scope', '=', 'interior'), ('is_valuation', '=', False)], limit=1)
+            ('measure_scope', '=', 'interior'), ('is_valuation', '=', False),
+            ('is_free', '=', False)], limit=1)
         tier_ext = Tier.search([
-            ('measure_scope', '=', 'exterior'), ('is_valuation', '=', False)], limit=1)
+            ('measure_scope', '=', 'exterior'), ('is_valuation', '=', False),
+            ('is_free', '=', False)], limit=1)
         if not tier_int or not tier_ext:
             return None
         return {

@@ -82,6 +82,20 @@ class TestAgentHandoff(TransactionCase):
         self.assertFalse(result['created'])
         self.assertEqual(len(self._leads(self.group)), 1)
 
+    def test_lead_nuevo_registra_el_origen_escalado(self):
+        """REGRESION T3h: `agent_request_handoff` lanzaba con lead NUEVO.
+
+        `_agent_open_lead` escribia `visar_source='whatsapp_handoff'` y la
+        Selection de `crm.lead` solo aceptaba 'whatsapp': ValueError hasta el
+        runtime. Solo sobrevivia el caso que REUSA un lead existente, que es
+        justo el que las pruebas cubrian — por eso paso desapercibido.
+        """
+        result = self.Tools.agent_request_handoff({
+            'phone': self.WA, 'reason': 'payment_failed'})
+        self.assertTrue(result['created'], "este caso tiene que crear el lead")
+        lead = self.Lead.browse(result['lead_id'])
+        self.assertEqual(lead.visar_source, 'whatsapp_handoff')
+
     def test_sin_servicio_tambien_escala(self):
         # Al escalar no siempre se sabe todavia que servicio queria el cliente.
         result = self.Tools.agent_request_handoff({

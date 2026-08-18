@@ -54,9 +54,16 @@ class CrmLead(models.Model):
         help="Ultimos 10 digitos del telefono; clave de dedupe del pipeline WhatsApp.",
     )
 
-    # Origen del lead. Hoy solo 'whatsapp'; Selection para poder crecer sin migrar.
+    # Origen del lead. Selection para poder crecer sin migrar.
+    # 'whatsapp_handoff' = el agente escalo la conversacion a un humano
+    # (agent_request_handoff). Se distingue de 'whatsapp' a proposito: un lead que
+    # nace de un escalamiento necesita atencion, uno que nace de una cotizacion no
+    # necesariamente.
     visar_source = fields.Selection(
-        selection=[('whatsapp', "WhatsApp")],
+        selection=[
+            ('whatsapp', "WhatsApp"),
+            ('whatsapp_handoff', "WhatsApp (escalado a asesor)"),
+        ],
         string="Origen (Visar)",
         copy=False,
     )

@@ -157,8 +157,25 @@
   La reserva acabó en un add-on obligatorio y **la línea descontada quedó sin enlace**. Filtrar
   por `calendar_booking_ids` protegería justo la línea que no lleva descuento. El riesgo de
   cobrar de menos sigue **abierto y sin mitigación válida**.
+- **🔴 CAUSA EXACTA Y COSTO MEDIDO (18-ago-2026, en `visar-scratch`).** Ya no es teórico:
+  una reserva web de **fumigación + áreas verdes** cobra **2,400.00** donde la cotización
+  dice **1,900.00** — **500 MXN de más (+26%)**, en silencio, cada vez.
+  - El armado del carrito es **correcto**; medido justo a la salida de
+    `_visar_fill_from_booking`: línea de áreas verdes `disc=50.0`, `amount_total = 1900`,
+    lista `VISAR base (Zona B)`.
+  - Se pierde **después**, en el paso web-only `_visar_booking_customer` →
+    `_update_address(...)`, que en `website_sale` **relee la lista de precios de la
+    sesión** (`PRICELIST_SELECTED_SESSION_CACHE_KEY`), recalcula precios y borra el
+    descuento manual. El pedido termina con lista **`Tarifa Corporativa / Empresarial`**
+    en vez de la de zona.
+  - **No es del refactor:** la misma reserva contra el commit padre da idéntico 2,400.
+  - El agente de WhatsApp **no** cae aquí (no pasa por `_update_address`), así que hoy
+    los dos canales cotizan distinto el mismo servicio: WhatsApp 1,900 (correcto) vs
+    web 2,400. Es el riesgo de "dos front-ends" del diseño 33 §11 hecho realidad — pero
+    al revés de lo esperado: **el canal nuevo es el que tiene razón**.
 - **Alternativas a evaluar:** filtrar por producto de servicio Visar; marcar la línea con un
-  flag propio al escribir el descuento; o reaplicar el descuento después de `_recompute_prices`.
+  flag propio al escribir el descuento; reaplicar el descuento después de `_recompute_prices`;
+  o **fijar la lista de zona después de `_update_address`** (ataca la causa medida arriba).
 - **Efecto colateral:** cualquier código que quiera ir de una reserva a "la línea de servicio
   que pagó" está sobre arena. Es dato para el diseño de agendado por WhatsApp
   (`33-whatsapp-agendado-design.md`).

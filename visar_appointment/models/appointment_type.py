@@ -529,6 +529,29 @@ class AppointmentType(models.Model):
     # Apartados temporales (visar.slot.hold)
     # ------------------------------------------------------------------
 
+    def _get_appointment_slots(self, timezone, filter_users=None, filter_resources=None,
+                               asked_capacity=1, reference_date=None):
+        """Precarga los apartados una sola vez para toda la generacion de slots.
+
+        `_get_resources_remaining_capacity` corre una vez POR SLOT, y un mes son
+        cientos. Con una consulta por llamada el calendario tardaba ~1 s mas
+        (+57%, medido en el servidor), y lo pagaba el wizard web igual que el
+        agente. Aqui se toma una foto de los apartados vivos y el override la
+        filtra en memoria.
+
+        La foto solo vale para ESTA generacion; nada crea apartados a mitad de
+        ella. Si alguien llama al calculo de capacidad por su cuenta (sin pasar
+        por aqui), no hay foto y se consulta la base como siempre.
+        """
+        records = self
+        if 'visar_hold_cache' not in self.env.context:
+            snapshot = self.env['visar.slot.hold']._visar_snapshot(
+                self.resource_ids | (filter_resources or self.env['appointment.resource']))
+            records = self.with_context(visar_hold_cache=snapshot)
+        return super(AppointmentType, records)._get_appointment_slots(
+            timezone, filter_users=filter_users, filter_resources=filter_resources,
+            asked_capacity=asked_capacity, reference_date=reference_date)
+
     def _get_resources_remaining_capacity(self, resources, slot_start_utc, slot_stop_utc,
                                           resource_to_bookings=None,
                                           with_linked_resources=True,
@@ -564,7 +587,10 @@ class AppointmentType(models.Model):
         # Las claves-registro del dict SON el conjunto de recursos que el nativo
         # considero (ya con linked/filter aplicados). Reusarlas evita repetir esa
         # logica y que las dos se desincronicen.
-        resource_keys = [key for key in capacity if key != 'total_remaining_capacity']
+        # Se filtra por TIPO y no comparando contra la cadena: comparar un
+        # recordset con un str hace que Odoo emita un UserWarning en cada slot, y
+        # esto corre en el camino caliente de la generacion del calendario.
+        resource_keys = [key for key in capacity if not isinstance(key, str)]
         if not resource_keys:
             return capacity
 

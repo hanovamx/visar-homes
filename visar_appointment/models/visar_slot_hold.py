@@ -124,15 +124,54 @@ class VisarSlotHold(models.Model):
         return self.sudo().search(domain)
 
     @api.model
+    def _visar_snapshot(self, resources):
+        """Apartados vivos de esos tecnicos, como tuplas planas.
+
+        Sirve para PRECARGAR: la capacidad se consulta una vez por slot, y la
+        generacion de un mes son cientos de slots. Con un `search()` por llamada
+        eso costaba ~1 s extra por pagina de calendario -medido en el servidor,
+        +57%- y lo pagaba tambien el wizard web. El costo no venia del numero de
+        apartados (son poquisimos) sino del viaje a la base repetido.
+        """
+        if not resources:
+            return []
+        holds = self.sudo().search(self._visar_active_domain() + [
+            ('appointment_resource_id', 'in', resources.ids),
+        ])
+        return [(hold.id, hold.appointment_resource_id.id, hold.start, hold.stop,
+                 hold.capacity, hold.owner_key) for hold in holds]
+
+    @api.model
     def _visar_used_capacity(self, resources, start, stop, exclude_owner=None,
                              exclude_ids=None):
-        """`{resource_id: capacidad apartada}` para el rango dado."""
+        """`{resource_id: capacidad apartada}` para el rango dado.
+
+        Si el contexto trae `visar_hold_cache` (lo siembra `_get_appointment_slots`)
+        se filtra en memoria; si no, se consulta la base. Las dos rutas tienen que
+        dar el MISMO resultado — hay prueba que lo fija.
+        """
+        cached = self.env.context.get('visar_hold_cache')
+        if cached is None:
+            rows = [
+                (hold.id, hold.appointment_resource_id.id, hold.start, hold.stop,
+                 hold.capacity, hold.owner_key)
+                for hold in self._visar_overlapping(
+                    resources, start, stop, exclude_owner=exclude_owner,
+                    exclude_ids=exclude_ids)
+            ]
+        else:
+            allowed = set(resources.ids)
+            excluded = set(exclude_ids or ())
+            rows = [
+                row for row in cached
+                if row[1] in allowed
+                and row[2] < stop and row[3] > start
+                and (not exclude_owner or row[5] != exclude_owner)
+                and row[0] not in excluded
+            ]
         used = {}
-        for hold in self._visar_overlapping(resources, start, stop,
-                                            exclude_owner=exclude_owner,
-                                            exclude_ids=exclude_ids):
-            key = hold.appointment_resource_id.id
-            used[key] = used.get(key, 0) + max(hold.capacity, 0)
+        for _hold_id, resource_id, _start, _stop, capacity, _owner in rows:
+            used[resource_id] = used.get(resource_id, 0) + max(capacity or 0, 0)
         return used
 
     # ------------------------------------------------------------------

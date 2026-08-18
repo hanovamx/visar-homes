@@ -40,6 +40,27 @@ class CalendarBooking(models.Model):
             'stop': date_end,
         }])
 
+    def _filter_unavailable_bookings(self):
+        """Una reserva NO compite contra su propio apartado.
+
+        Sin esto el apartado se muerde la cola y provoca exactamente el desastre
+        que fue escrito para evitar. El nativo consulta la capacidad **sin**
+        contexto, asi que el override de `_get_resources_remaining_capacity` le
+        restaba el apartado del propio cliente, declaraba el horario sin cupo y
+        descartaba la reserva; el cobro ya habia entrado. Resultado medido en el
+        servidor: `order.state = sale`, `tx = done`, `calendar_event_id = None`,
+        y el apartado sin liberar. **Todas** las reservas por WhatsApp acababan
+        cobradas y sin cita.
+
+        El wizard web nunca lo pisaba porque el web no crea apartados.
+        """
+        holds = self.env['visar.slot.hold'].sudo().search([
+            ('calendar_booking_id', 'in', self.ids),
+        ])
+        records = self.with_context(
+            visar_ignore_hold_ids=holds.ids) if holds else self
+        return super(CalendarBooking, records)._filter_unavailable_bookings()
+
     def _make_event_from_paid_booking(self):
         """Al confirmarse la reserva, su apartado ya no hace falta.
 

@@ -126,6 +126,59 @@ class TestSlotHold(TransactionCase):
             "puede bloquear la agenda saltando de horario en horario")
         self.assertTrue(second.exists())
 
+    # --- regresiones encontradas al verificar en el servidor (18-ago) ---------
+
+    def test_una_reserva_no_compite_contra_su_propio_apartado(self):
+        """REGRESION T3f: se pagaba y NO se creaba la cita.
+
+        El nativo `_filter_unavailable_bookings` consulta capacidad SIN contexto,
+        asi que el override restaba el apartado del propio cliente, declaraba el
+        horario sin cupo y descartaba la reserva — despues de cobrar. Medido en el
+        servidor: order=sale, tx=done, calendar_event_id=None. Pasaba en TODAS las
+        reservas por WhatsApp.
+        """
+        booking = self.env['calendar.booking'].create({
+            'appointment_type_id': self.apt_type.id,
+            'name': 'Reserva Test Hold',
+            'partner_id': self.env['res.partner'].create(
+                {'name': 'Cliente Test Hold'}).id,
+            'start': self.start,
+            'stop': self.stop,
+            'booking_line_ids': [(0, 0, {
+                'appointment_resource_id': self.resource.id,
+                'capacity_reserved': 1,
+                'capacity_used': 1,
+            })],
+        })
+        self._hold(calendar_booking_id=booking.id)
+        self.assertNotIn(
+            booking, booking._filter_unavailable_bookings(),
+            "su propio apartado no puede dejar a la reserva sin cupo: es "
+            "exactamente el desastre que el apartado existe para evitar")
+
+    def test_las_dos_rutas_de_capacidad_coinciden(self):
+        """La foto precargada y la consulta a la base tienen que dar lo mismo.
+
+        `_get_appointment_slots` siembra `visar_hold_cache` para no consultar una
+        vez por slot (costaba ~1 s por calendario). Si las dos rutas divergen, la
+        disponibilidad del calendario y la de la reserva dejarian de coincidir.
+        """
+        self._hold()
+        Hold = self.Hold
+        from_db = Hold._visar_used_capacity(self.resource, self.start, self.stop)
+        snapshot = Hold._visar_snapshot(self.resource)
+        from_cache = Hold.with_context(
+            visar_hold_cache=snapshot)._visar_used_capacity(
+                self.resource, self.start, self.stop)
+        self.assertEqual(from_db, from_cache)
+
+        # Y la exclusion del dueno tiene que respetarse igual por las dos rutas.
+        self.assertEqual(
+            Hold._visar_used_capacity(self.resource, self.start, self.stop,
+                                      exclude_owner=self.owner),
+            Hold.with_context(visar_hold_cache=snapshot)._visar_used_capacity(
+                self.resource, self.start, self.stop, exclude_owner=self.owner))
+
     def test_liberar_devuelve_la_capacidad(self):
         self._hold()
         self.assertEqual(self._remaining(), 0)
