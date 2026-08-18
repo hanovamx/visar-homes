@@ -1227,7 +1227,8 @@ class VisarAgentTools(models.AbstractModel):
         """Aparta un horario unos minutos a nombre de un telefono.
 
         `payload` = {"phone": "5218112345678", "resource_id": 1,
-                     "start": "2026-08-20 16:00:00", "stop": "2026-08-20 17:00:00"}
+                     "start": "2026-08-20 16:00:00", "stop": "2026-08-20 17:00:00",
+                     "mode": "wizard"|"valuation"}   # mode opcional, default wizard
 
         Devuelve {"held": bool, "hold_id": int|None, "expire_at": str|None,
         "reason": str|None}.
@@ -1252,14 +1253,26 @@ class VisarAgentTools(models.AbstractModel):
         # dueno solo ignora el apartado propio, asi que a cada uno le estorbaba el
         # del otro y ninguno volvia a ver el horario. `agent_prepare_booking` si
         # validaba, pero este RPC suelto no.
-        apt_type = resource.appointment_type_ids[:1]
-        if apt_type:
-            remaining = apt_type.with_context(
-                visar_hold_owner=owner)._get_resources_remaining_capacity(
-                    resource, start, stop, with_linked_resources=False)
-            if remaining.get('total_remaining_capacity', 0) < 1:
-                return {'held': False, 'hold_id': None, 'expire_at': None,
-                        'reason': 'slot_taken'}
+        #
+        # El tipo de cita se resuelve por MODO, igual que en el resto del flujo, y
+        # no tomando el primero que cuelgue del recurso: un tecnico puede estar en
+        # varios tipos (validariamos contra uno al azar) o en ninguno (apartariamos
+        # a ciegas). Si no se puede determinar, se rechaza: apartar sin comprobar
+        # es justo el bug que este bloque vino a cerrar.
+        AptType = self.env['appointment.type'].sudo()
+        mode = payload.get('mode') or 'wizard'
+        apt_type = (AptType._visar_get_valuation_appointment_type()
+                    if mode == 'valuation'
+                    else AptType._visar_get_master_appointment_type())
+        if not apt_type or resource not in apt_type.resource_ids:
+            return {'held': False, 'hold_id': None, 'expire_at': None,
+                    'reason': 'resource_unavailable'}
+        remaining = apt_type.with_context(
+            visar_hold_owner=owner)._get_resources_remaining_capacity(
+                resource, start, stop, with_linked_resources=False)
+        if remaining.get('total_remaining_capacity', 0) < 1:
+            return {'held': False, 'hold_id': None, 'expire_at': None,
+                    'reason': 'slot_taken'}
 
         hold = self.env['visar.slot.hold']._visar_hold(resource, start, stop, owner)
         return {

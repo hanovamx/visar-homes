@@ -149,6 +149,33 @@ class TestAgentPrepareBooking(TransactionCase):
             self.assertTrue(item.get('tier_id'))
             self.assertTrue(item.get('dimension_id'))
 
+    # --- apartado suelto ------------------------------------------------------
+
+    def test_hold_rechaza_recurso_ajeno_al_tipo_de_cita(self):
+        """El tipo de cita se resuelve por MODO, no tomando el primero del recurso.
+
+        Un técnico puede colgar de varios tipos (validaríamos contra uno al azar) o
+        de ninguno (apartaríamos a ciegas). Apartar sin comprobar es justo el bug
+        que la validación vino a cerrar, así que ante la duda se rechaza.
+        """
+        resource = self.env['appointment.resource'].create({
+            'name': 'Recurso Suelto Test', 'capacity': 1})
+        result = self.Tools.agent_hold_slot({
+            'phone': self.WA_NEW,
+            'resource_id': resource.id,
+            'start': fields.Datetime.to_string(
+                fields.Datetime.add(fields.Datetime.now(), days=3)),
+            'stop': fields.Datetime.to_string(
+                fields.Datetime.add(fields.Datetime.now(), days=3, hours=1)),
+        })
+        self.assertFalse(result['held'])
+        self.assertEqual(result['reason'], 'resource_unavailable')
+
+    def test_hold_con_payload_incompleto(self):
+        result = self.Tools.agent_hold_slot({'phone': self.WA_NEW})
+        self.assertFalse(result['held'])
+        self.assertEqual(result['reason'], 'invalid_payload')
+
     # --- horario --------------------------------------------------------------
 
     def test_horario_invalido(self):

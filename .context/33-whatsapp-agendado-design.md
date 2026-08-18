@@ -724,15 +724,47 @@ WhatsApp esconde el horario en el wizard web de inmediato**.
 > humanos en el equipo tampoco hay a quién asignar (queda la nota y un `warning`
 > en el log). Ponerle líder o miembros al equipo es lo que cierra el bucle.
 
-**Lo que falta:**
-1. Tercera pasada corta: confirmar estas cinco correcciones y **re-medir** el
-   calendario (esperado: cerca del baseline de 1.95 s, no 2.56 s).
-2. Poner líder/miembros al equipo de WhatsApp en Odoo (dato).
-3. Decidir qué hacer con I-11 (dinero real, canal web).
-4. `test_partner_dedupe`: 2 fallos **preexistentes y ajenos** — `assertLogs` no
+## 10.4 Tercera verificación (18-ago-2026) — ✅ el slice de servidor queda VERIFICADO
+
+Encargo en [`briefs/2026-08-18c-tercera-pasada.md`](./briefs/2026-08-18c-tercera-pasada.md).
+Las cinco correcciones, confirmadas. **93 pruebas, 0 errores**, y los únicos 2
+fallos son los preexistentes de `assertLogs`.
+
+**El rendimiento cerró del todo.** Trayectoria del sobrecosto del calendario web:
+
+| | ronda 1 | ronda 2 | ronda 3 |
+|---|---|---|---|
+| vs. baseline | +0.97 s (**+57%**) | +0.61 s (+31%) | **+0.04–0.20 s (+2–12%)** |
+| consultas a BD por render | 1 por slot | 221 de 444 | **0** |
+
+La segunda foto capturó exactamente las 221 que se escapaban. El sobrecosto que
+queda está dentro del ruido de medición.
+
+**Lo demás, confirmado:** el doble apartado ya se rechaza (`slot_taken`) y el
+dueño puede **renovar** el suyo; el hand-off no agenda nada cuando no hay humano
+(y deja `warning`), y salta al humano en cuanto el equipo tiene líder; el flujo
+crítico de la ronda 2 sigue en pie (cita creada, tarea FSM, apartado liberado); y
+el wizard web sigue dando UNA línea combinada a 1,400 = cotización.
+
+**Un borde más, corregido en esta tanda:** `agent_hold_slot` resolvía el tipo de
+cita con `resource.appointment_type_ids[:1]` — arbitrario si el técnico cuelga de
+varios tipos, y **sin validar nada** si no cuelga de ninguno. Ahora se resuelve
+por **modo** (igual que el resto del flujo) y, si no se puede determinar, se
+rechaza: apartar sin comprobar es justo el bug que esa validación vino a cerrar.
+
+**Lo que falta (ya no es de este slice):**
+1. **Poner líder o miembros al equipo de WhatsApp en Odoo.** Es **dato, no
+   código**: sin humanos en el equipo el hand-off deja la nota pero no agenda a
+   nadie. Confirmado en la copia: con un líder, la actividad se asigna bien.
+2. Decidir qué hacer con **I-11** (el web cobra 2,400 donde la cotización dice
+   1,900). Dinero real, canal web, decisión aparte.
+3. `test_partner_dedupe`: 2 fallos **preexistentes y ajenos** — `assertLogs` no
    funciona en este Odoo 19 (el logger queda en nivel 25 = TEST, así que INFO se
    filtra). La conducta es correcta, verificada a mano. No tocar sin arreglar el
    harness.
+4. **Siguiente fase, plan aparte:** el motor de flujos del runtime + persistencia
+   (**SQLite**) + el render de pasos en WhatsApp. Todo lo de Odoo que necesita ya
+   está en pie y verificado.
 
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
