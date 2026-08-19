@@ -340,6 +340,50 @@ class TestWizardFlow(TransactionCase):
         interior = self.AptType._visar_wizard_step_options(booking, 'interior')
         self.assertEqual(interior.get('mode_key'), 'interior_mode')
 
+    def test_los_pasos_editables_son_los_que_se_preguntaron(self):
+        """Lo que se preguntó es exactamente lo que se puede corregir, y va con
+        etiqueta: el runtime solo tiene claves (`group_12`)."""
+        booking = self._booking_fum(motivo='correctivo')
+        pasos = self.AptType._visar_wizard_editable_steps(booking)
+        claves = [p['key'] for p in pasos]
+        self.assertEqual(
+            claves, self.AptType._visar_wizard_step_sequence(booking))
+        for paso in pasos:
+            self.assertTrue(paso['label'], paso['key'])
+            self.assertNotEqual(paso['label'], paso['key'],
+                                "%s no tiene etiqueta legible" % paso['key'])
+
+    def test_la_huella_de_agenda_ignora_el_precio(self):
+        """Cambiar de tramo cambia lo que cuesta, no quién puede ir.
+
+        Es lo que evita cobrarle al cliente dos toques (día + horario) por haber
+        corregido su tramo de m² o su plan de póliza.
+        """
+        base = {'zone_id': 1, 'items': [
+            {'dimension_id': 3, 'appointment_type_id': 1, 'tier_id': 5}]}
+        otro_tramo = {'zone_id': 1, 'items': [
+            {'dimension_id': 3, 'appointment_type_id': 1, 'tier_id': 9}]}
+        otra_dimension = {'zone_id': 1, 'items': [
+            {'dimension_id': 4, 'appointment_type_id': 1, 'tier_id': 5}]}
+        otra_zona = {'zone_id': 2, 'items': base['items']}
+
+        clave = self.AptType._visar_wizard_schedule_key
+        self.assertEqual(clave(base), clave(otro_tramo),
+                         "otro tramo: mismo tecnico, el horario sigue valiendo")
+        self.assertNotEqual(clave(base), clave(otra_dimension),
+                            "otra dimension: puede ser otro tecnico")
+        self.assertNotEqual(clave(base), clave(otra_zona),
+                            "otra zona: otro pool")
+
+    def test_la_huella_no_depende_del_orden_de_los_items(self):
+        """Se compara entre dos llamadas distintas: si el orden la moviera, se
+        re-elegiria horario sin motivo."""
+        clave = self.AptType._visar_wizard_schedule_key
+        uno = {'zone_id': 1, 'items': [{'dimension_id': 3, 'appointment_type_id': 1},
+                                       {'dimension_id': 4, 'appointment_type_id': 1}]}
+        otro = {'zone_id': 1, 'items': list(reversed(uno['items']))}
+        self.assertEqual(clave(uno), clave(otro))
+
     def test_el_nombre_solo_se_pregunta_si_el_canal_lo_pide(self):
         """El paso existe para WhatsApp y NO para el web.
 

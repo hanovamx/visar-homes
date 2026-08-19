@@ -1314,6 +1314,13 @@ class VisarAgentTools(models.AbstractModel):
             'step': step,
             'options': AptType._visar_wizard_step_options(booking, step),
             'sequence': AptType._visar_wizard_step_sequence(booking),
+            # Lo mismo que `sequence`, pero con etiqueta: es el menu de "quiero
+            # cambiar algo". El runtime solo tiene claves (`group_12`) y ponerles
+            # nombre del otro lado seria otra regla duplicada.
+            'steps': AptType._visar_wizard_editable_steps(booking),
+            # Cadena opaca: si no cambia entre dos estados, el horario apartado
+            # sigue valiendo. El runtime la compara, no la interpreta.
+            'schedule_key': AptType._visar_wizard_schedule_key(booking),
             # Para la pantalla de revision: que lleva y cuanto cuesta, en texto.
             # El runtime no puede armarlo (`selections` trae ids, no nombres).
             'summary': AptType._visar_wizard_summary(booking),
@@ -1337,6 +1344,11 @@ class VisarAgentTools(models.AbstractModel):
             "phone":   "5218112345678",  # opcional; si el numero no es de ningun
                                   # cliente, el cuestionario anade el paso del
                                   # nombre. Sin el, ese paso no aparece.
+            "ask":     "cobertura",  # opcional; vuelve a PREGUNTAR ese paso sin
+                                  # aplicar nada. Es como el cliente corrige algo
+                                  # desde la pantalla de revision. Solo se admiten
+                                  # pasos de `steps`: pedir uno cualquiera seria
+                                  # dejar que el runtime invente secuencia.
         }
 
         Devuelve {"selections", "zone_id", "items", "delivery_address",
@@ -1361,6 +1373,17 @@ class VisarAgentTools(models.AbstractModel):
         needs_name = self._agent_booking_needs_name(payload.get('phone'))
         booking = dict(payload.get('booking') or {}, needs_name=needs_name)
         step = payload.get('step')
+
+        # Volver a preguntar un paso ya contestado (el cliente quiere corregirlo).
+        # No aplica nada: solo devuelve ESE paso con sus opciones. Lo que hace que
+        # corregir funcione es la poda, y esa corre al CONTESTAR, no al preguntar.
+        ask = payload.get('ask')
+        if ask and not step:
+            editables = {s['key'] for s
+                         in AptType._visar_wizard_editable_steps(booking)}
+            if ask in editables:
+                return self._agent_booking_state(booking, step=ask)
+            return self._agent_booking_state(booking)
 
         # Sin paso: solo se pregunta "¿en que voy?". Util para retomar una
         # conversacion estacionada sin tocar el estado.
@@ -1397,6 +1420,24 @@ class VisarAgentTools(models.AbstractModel):
         if step in ('address', 'nombre', 'extras', 'poliza'):
             return self._agent_booking_state(
                 booking, step=AptType._visar_wizard_step_after(booking, step))
+
+        # Corregir un paso de ARRIBA invalida los items, y el unico sitio donde se
+        # recalculan es el paso de la direccion. Si ya la tenemos, se vuelve a
+        # aplicar sola: hacerle escribir otra vez su direccion -la pregunta mas
+        # cara del cuestionario, y la que ya habia contestado bien- por cambiar
+        # "interior" a "ambos" es justo lo que hace que nadie corrija nada.
+        if (AptType._visar_wizard_next_step(booking) == 'address'
+                and (booking.get('delivery_address') or {})):
+            booking, error = AptType._visar_wizard_reapply_address(booking)
+            booking = dict(booking or {}, needs_name=needs_name)
+            if error:
+                # La direccion guardada ya no sirve para lo que ahora se pide
+                # (p. ej. no hay tecnicos para ese servicio en esa zona): se
+                # pregunta de nuevo, con el motivo delante.
+                return self._agent_booking_state(
+                    booking, step='address', error=error)
+            return self._agent_booking_state(
+                booking, step=AptType._visar_wizard_step_after(booking, 'address'))
 
         return self._agent_booking_state(booking)
 

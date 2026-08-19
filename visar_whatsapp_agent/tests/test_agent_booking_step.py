@@ -36,6 +36,32 @@ class TestAgentBookingStep(TransactionCase):
         base.update(selections)
         return {'mode': 'wizard', 'selections': base}
 
+    def test_ask_vuelve_a_preguntar_sin_aplicar_nada(self):
+        """Corregir empieza por volver a PREGUNTAR. La poda corre al contestar."""
+        booking = self._booking_fum(motivo='correctivo',
+                                    servicio_plaga=['rastreros'])
+        state = self.Tools.agent_booking_step({'booking': booking,
+                                               'ask': 'motivo'})
+        self.assertEqual(state['step'], 'motivo')
+        self.assertIsNone(state['error'])
+        self.assertEqual(state['selections'].get('servicio_plaga'), ['rastreros'],
+                         "preguntar no borra nada")
+
+    def test_ask_solo_admite_pasos_de_la_secuencia(self):
+        """Si el runtime pudiera pedir cualquier paso, estaria inventando
+        secuencia — que es justo lo que este RPC existe para impedir."""
+        booking = self._booking_fum(motivo='correctivo')
+        state = self.Tools.agent_booking_step({'booking': booking,
+                                               'ask': 'paso_que_no_existe'})
+        self.assertNotEqual(state['step'], 'paso_que_no_existe')
+
+    def test_el_estado_publica_los_pasos_editables(self):
+        state = self.Tools.agent_booking_step({
+            'booking': self._booking_fum(motivo='correctivo')})
+        self.assertTrue(state['steps'])
+        self.assertEqual([p['key'] for p in state['steps']], state['sequence'])
+        self.assertTrue(state['schedule_key'])
+
     def test_un_telefono_desconocido_pide_nombre(self):
         """La bandera se calcula en CADA llamada, no viaja en el estado.
 

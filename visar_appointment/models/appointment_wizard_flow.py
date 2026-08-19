@@ -96,6 +96,23 @@ VISAR_POLIZA_NONE = 0
 # `billing_period_display_sentence` NO sirve para el chat: su fuente es inglesa
 # ("per month") y se traduce con el idioma del USUARIO RPC, que es en_US. Aqui no
 # se depende de traducciones para un texto que ve el cliente.
+# Etiquetas CORTAS de cada paso, para el menú de "quiero cambiar algo". No sirve
+# el título del paso: son preguntas ("¿Qué servicio necesitas?") y una fila de
+# WhatsApp son 24 caracteres. Sin `_()` por lo mismo que las de abajo.
+_VISAR_STEP_LABELS = {
+    'services': "Servicio",
+    'motivo': "Preventivo o correctivo",
+    'plagas': "Plagas",
+    'cobertura': "Interior o exterior",
+    'interior': "Medidas de interior",
+    'exterior': "Medidas de exterior",
+    'dimensiones': "Medidas",
+    'address': "Dirección",
+    'nombre': "Nombre",
+    'extras': "Extras",
+    'poliza': "Póliza",
+}
+
 # Sin `_()`: a nivel de modulo se evaluaria una sola vez, al importar, con el
 # idioma que hubiera entonces. Son literales en el idioma en el que se habla con
 # el cliente, que es el mismo en los dos canales.
@@ -418,6 +435,77 @@ class AppointmentType(models.Model):
             if self._visar_wizard_poliza_context(booking):
                 steps.append(VISAR_STEP_POLIZA)
         return steps
+
+    @api.model
+    def _visar_wizard_step_label(self, step_key):
+        """Nombre corto de un paso, para ofrecerlo como "esto se puede cambiar"."""
+        if step_key.startswith('group_'):
+            group = self.env['visar.service.group'].sudo().browse(
+                self._visar_wizard_id_list(step_key[len('group_'):])).exists()
+            return group._visar_wizard_label() if group else step_key
+        return _VISAR_STEP_LABELS.get(step_key, step_key)
+
+    @api.model
+    def _visar_wizard_editable_steps(self, booking):
+        """Pasos que el cliente puede volver a contestar, en orden, con etiqueta.
+
+        Es la MISMA lista que el indicador "Paso X de Y" (`_visar_wizard_step_sequence`):
+        lo que se preguntó es exactamente lo que se puede corregir. Se publica con
+        etiqueta porque el runtime solo tiene claves (`group_12`, `tier_7`) y
+        traducirlas del otro lado sería otra regla duplicada.
+
+        Corregir un paso NO es un modo especial: se contesta como la primera vez,
+        `_visar_wizard_clear_downstream` tumba lo que dependía de la respuesta
+        vieja, y el flujo sigue desde ahí. Por eso no hay "rewind" en ningún lado
+        — solo volver a preguntar.
+        """
+        return [{'key': step, 'label': self._visar_wizard_step_label(step)}
+                for step in self._visar_wizard_step_sequence(booking)]
+
+    @api.model
+    def _visar_wizard_schedule_key(self, booking):
+        """Huella de lo que condiciona la AGENDA. Si no cambia, el horario sirve.
+
+        Existe para una pregunta muy concreta: el cliente corrigió algo desde la
+        pantalla de revisión — ¿hay que volver a elegir día y hora, o el horario
+        que ya tenía apartado sigue valiendo?
+
+        Depende de **quién puede hacer el trabajo**, y eso lo fija
+        `_visar_service_resource_pools`: la zona y, por cada dimensión, su tipo de
+        cita. Cambiar de interior a exterior cambia la dimensión y puede cambiar
+        el técnico; cambiar de tramo o de plan de póliza cambia el precio y no la
+        agenda (el bloque es de 1 h fija, decisión 7 del diseño 33).
+
+        Se publica como una **cadena opaca** a propósito. El runtime no tiene que
+        saber qué campos de un item importan: compara la de antes con la de ahora
+        y ya. Si mañana la duración dependiera de los items, se añade aquí y el
+        runtime no se entera.
+        """
+        booking = booking or {}
+        firma = sorted(
+            (int(item.get('dimension_id') or 0),
+             int(item.get('appointment_type_id') or 0))
+            for item in (booking.get('items') or [])
+        )
+        return '%s|%s' % (booking.get('zone_id') or 0, firma)
+
+    @api.model
+    def _visar_wizard_reapply_address(self, booking):
+        """Re-resuelve zona e items con la dirección que ya se capturó.
+
+        Cambiar un paso de arriba (cobertura, plagas, tamaño) invalida los items,
+        y el único sitio donde se recalculan es el paso de la dirección. Sin esto,
+        corregir "interior" por "ambos" obligaba al cliente a **volver a escribir
+        su dirección**, que es la pregunta más cara del cuestionario y la que ya
+        había contestado bien.
+
+        Devuelve (booking, error). Sin dirección guardada no hace nada: es el
+        cliente que todavía no ha llegado ahí.
+        """
+        address = (booking or {}).get('delivery_address') or {}
+        if not address:
+            return booking, None
+        return self._visar_wizard_answer_address(booking, address)
 
     # ------------------------------------------------------------------
     # Extras y póliza (dependen de zona + items, no solo de selections)
