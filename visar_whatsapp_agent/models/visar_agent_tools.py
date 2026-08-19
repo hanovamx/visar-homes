@@ -895,12 +895,32 @@ class VisarAgentTools(models.AbstractModel):
         }
 
     @api.model
+    def _agent_to_local(self, stamp, tz_info):
+        """UTC naive -> texto naive en la zona de Visar ('2026-08-20 16:00:00')."""
+        if not stamp or not tz_info:
+            return None
+        local = pytz.utc.localize(stamp).astimezone(tz_info).replace(tzinfo=None)
+        return fields.Datetime.to_string(local)
+
+    @api.model
     def agent_day_slots(self, payload):
         """Horarios disponibles de UN dia concreto.
 
         `payload` = el de `agent_available_days` + {"date": "2026-08-20"}.
-        Devuelve {"date", "slots": [{"start","stop","resource_ids"}]} en UTC naive
-        (el runtime los presenta en la zona del cliente).
+        Devuelve {"date", "slots": [{"start","stop","start_local","stop_local",
+        "resource_ids"}]}.
+
+        **Dos relojes, y no da igual cual se usa para que.** `start`/`stop` van en
+        UTC naive porque es lo que `agent_hold_slot` y `agent_prepare_booking`
+        esperan de vuelta (la misma convencion que `appointment.booking.line`).
+        `start_local`/`stop_local` van en la zona de Visar (`visar.agent.timezone`)
+        y son los UNICOS que se le pueden ensenar a una persona.
+
+        Sin los locales el runtime no tenia forma de saberlo y pintaba el UTC tal
+        cual: un servicio de las 4 de la tarde se ofrecia como "entre 22:00 y
+        23:00" -casi medianoche- y el cliente reservaba a ciegas. El runtime NO
+        puede convertirlo por su cuenta: la zona es configuracion de Odoo y
+        derivarla del otro lado seria otra regla duplicada.
         """
         payload = payload or {}
         wanted = fields.Date.to_date(payload.get('date'))
@@ -923,6 +943,8 @@ class VisarAgentTools(models.AbstractModel):
                 slots_payload.append({
                     'start': fields.Datetime.to_string(start),
                     'stop': fields.Datetime.to_string(stop),
+                    'start_local': self._agent_to_local(start, tz_info),
+                    'stop_local': self._agent_to_local(stop, tz_info),
                     'resource_ids': self._agent_slot_resource_ids(slot),
                 })
             break
