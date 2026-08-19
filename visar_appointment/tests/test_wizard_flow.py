@@ -20,6 +20,7 @@ la base no lo trae, en vez de dar un falso verde. Es la misma disciplina de
 """
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     VISAR_POLIZA_NONE,
+    VISAR_STEP_NAME,
 )
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
@@ -338,6 +339,51 @@ class TestWizardFlow(TransactionCase):
             self.assertIsNone(options.get('answer_key'), step)
         interior = self.AptType._visar_wizard_step_options(booking, 'interior')
         self.assertEqual(interior.get('mode_key'), 'interior_mode')
+
+    def test_el_nombre_solo_se_pregunta_si_el_canal_lo_pide(self):
+        """El paso existe para WhatsApp y NO para el web.
+
+        En el web la identidad se recoge en el formulario nativo del final; si el
+        paso apareciera siempre, el wizard preguntaria dos veces lo mismo. La
+        bandera la pone quien sabe (el canal), no el flujo.
+        """
+        booking = self._booking_fum(motivo='correctivo')
+        self.assertFalse(self.AptType._visar_wizard_needs_name(booking),
+                         "sin bandera, el paso no existe (es el caso del web)")
+
+        booking = dict(booking, needs_name=True)
+        self.assertTrue(self.AptType._visar_wizard_needs_name(booking))
+        self.assertEqual(
+            self.AptType._visar_wizard_step_after(booking, 'address'),
+            VISAR_STEP_NAME,
+            "y va justo despues de la direccion")
+
+    def test_el_nombre_ya_dado_no_se_vuelve_a_pedir(self):
+        """La cadena no puede rebotar al paso que se acaba de contestar."""
+        booking = dict(self._booking_fum(motivo='correctivo'), needs_name=True)
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, VISAR_STEP_NAME, {'nombre': '  María   López '})
+        self.assertIsNone(error)
+        self.assertEqual(booking['selections']['nombre'], 'María López',
+                         "y de paso se normalizan los espacios")
+        self.assertFalse(self.AptType._visar_wizard_needs_name(booking))
+
+    def test_un_nombre_que_no_lo_es_no_avanza(self):
+        """Este texto acaba siendo el `res.partner` con el que se factura."""
+        booking = dict(self._booking_fum(motivo='correctivo'), needs_name=True)
+        for basura in ('', '  ', '7', 'ab', '123456'):
+            _booking, error = self.AptType._visar_wizard_apply_answer(
+                booking, VISAR_STEP_NAME, {'nombre': basura})
+            self.assertEqual((error or {}).get('code'), 'bad_name', repr(basura))
+
+    def test_cambiar_de_servicio_no_borra_el_nombre(self):
+        """La poda tumba lo que depende de la respuesta; el nombre no depende de
+        nada del cuestionario."""
+        booking = dict(self._booking_fum(motivo='correctivo'), needs_name=True)
+        booking['selections']['nombre'] = 'María López'
+        pruned = self.AptType._visar_wizard_clear_downstream(
+            booking['selections'], 'services')
+        self.assertEqual(pruned.get('nombre'), 'María López')
 
     def test_la_poliza_siempre_tiene_salida(self):
         """Un menu sin "no" es una pregunta sin respuesta valida.

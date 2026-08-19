@@ -36,6 +36,65 @@ class TestAgentBookingStep(TransactionCase):
         base.update(selections)
         return {'mode': 'wizard', 'selections': base}
 
+    def test_un_telefono_desconocido_pide_nombre(self):
+        """La bandera se calcula en CADA llamada, no viaja en el estado.
+
+        Es un hecho del mundo -¿existe ya este cliente?- que puede cambiar entre
+        dos mensajes: si alguien lo da de alta en Odoo a media conversacion, el
+        paso tiene que dejar de aparecer solo.
+        """
+        Partner = self.env['res.partner'].sudo()
+        nuevo = '5219998887766'
+        self.assertTrue(self.Tools._agent_booking_needs_name(nuevo))
+
+        Partner.create({'name': 'Cliente Nuevo', 'phone': nuevo})
+        self.assertFalse(self.Tools._agent_booking_needs_name(nuevo),
+                         "una vez dado de alta, deja de preguntarse")
+
+    def test_sin_telefono_no_se_pregunta_el_nombre(self):
+        """Sin clave no se puede afirmar que sea alguien nuevo, y el paso seria
+        una pregunta gratis. `agent_prepare_booking` ya rechaza el numero malo."""
+        self.assertFalse(self.Tools._agent_booking_needs_name(None))
+        self.assertFalse(self.Tools._agent_booking_needs_name('123'))
+
+    def test_el_paso_del_nombre_sobrevive_a_la_direccion(self):
+        """REGRESION: la direccion REHACE el booking y se llevaba la bandera.
+
+        `_visar_wizard_answer_address` no muta el estado: devuelve un dict nuevo
+        con zona, items y direccion resueltos. Cualquier clave que no este en ese
+        contrato se pierde ahi — y el paso del nombre va justo DESPUES de la
+        direccion, asi que desaparecia exactamente donde tenia que aparecer.
+
+        El Odoo falso del runtime conservaba la clave, asi que sus pruebas pasaban
+        en verde. Se encontro recorriendo el cuestionario contra la base.
+        """
+        nuevo = '5219998887744'
+        state = self.Tools.agent_booking_step({
+            'booking': {'mode': 'wizard', 'selections': {},
+                        'zone_id': 1, 'items': [{'dimension_id': 1}]},
+            'step': 'nombre',
+            'answer': {'nombre': 'Maria Lopez'},
+            'phone': nuevo,
+        })
+        self.assertIsNone(state['error'])
+        self.assertEqual(state['selections'].get('nombre'), 'Maria Lopez')
+        self.assertNotEqual(state['step'], 'nombre',
+                            "contestado, no se vuelve a preguntar")
+
+    def test_el_nombre_llega_a_la_reserva_como_una_respuesta_mas(self):
+        """El runtime no tiene que saber que la clave se llama `nombre`.
+
+        Lo manda dentro de `selections`, igual que el resto del cuestionario, y
+        `agent_prepare_booking` lo recoge de ahi. Sin esto un cliente nuevo
+        contestaba todo y al final recibia "Falta el nombre del cliente."
+        """
+        result = self.Tools.agent_prepare_booking({
+            'phone': '5219998887755',
+            'selections': {'nombre': 'Maria Lopez'},
+        })
+        # Falla mas adelante (sin cobertura ni servicio), pero YA NO por el nombre.
+        self.assertNotEqual(result.get('reason'), 'name_required')
+
     def test_el_paso_que_devuelve_es_el_del_modelo(self):
         """El RPC no secuencia: pregunta."""
         state = self.Tools.agent_booking_step({

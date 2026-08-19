@@ -82,6 +82,7 @@ VISAR_PLAGA_CUTS = (
 VISAR_STEP_SERVICES = 'services'
 VISAR_STEP_VALUATION = 'valuation'
 VISAR_STEP_ADDRESS = 'address'
+VISAR_STEP_NAME = 'nombre'
 VISAR_STEP_EXTRAS = 'extras'
 VISAR_STEP_POLIZA = 'poliza'
 VISAR_STEP_SCHEDULE = 'schedule'
@@ -331,19 +332,42 @@ class AppointmentType(models.Model):
         return VISAR_STEP_ADDRESS
 
     @api.model
+    def _visar_wizard_needs_name(self, booking):
+        """¿Hay que preguntar el nombre del cliente?
+
+        Solo cuando **el llamador dice que no sabe quién es** (`needs_name`) y el
+        cliente no lo ha dado ya. Quién lo sabe es el canal, no el flujo: por
+        WhatsApp la identidad es el teléfono —y si no hay `res.partner` con ese
+        número, no hay nombre— mientras que el wizard web lo recoge en el
+        formulario nativo del final. El web nunca pone la bandera, así que para
+        él este paso no existe.
+        """
+        booking = booking or {}
+        if not booking.get('needs_name'):
+            return False
+        return not ((booking.get('selections') or {}).get('nombre') or '').strip()
+
+    @api.model
     def _visar_wizard_step_after(self, booking, step=VISAR_STEP_ADDRESS):
         """Siguiente paso del tramo POSTERIOR a la dirección.
 
-        Es una cadena lineal —dirección → extras → póliza → horario— donde cada
-        eslabón puede no existir. Se recorre desde el paso que se acaba de
-        contestar, y no desde el principio: extras y póliza se preguntan UNA vez,
-        y contestarlos no hace desaparecer la oferta (los add-ons se siguen
-        ofreciendo aunque el cliente ya haya dicho que no). Arrancar siempre
-        desde el principio devolvería al cliente al paso que acaba de contestar.
+        Es una cadena lineal —dirección → nombre → extras → póliza → horario—
+        donde cada eslabón puede no existir. Se recorre desde el paso que se acaba
+        de contestar, y no desde el principio: extras y póliza se preguntan UNA
+        vez, y contestarlos no hace desaparecer la oferta (los add-ons se siguen
+        ofreciendo aunque el cliente ya haya dicho que no). Arrancar siempre desde
+        el principio devolvería al cliente al paso que acaba de contestar.
+
+        El nombre va **aquí y no antes** a propósito: es el único dato que se pide
+        por gusto del sistema y no del cliente, así que se cobra cuando ya hay
+        algo que agendar, no en la puerta.
         """
-        chain = [VISAR_STEP_EXTRAS, VISAR_STEP_POLIZA, VISAR_STEP_SCHEDULE]
+        chain = [VISAR_STEP_NAME, VISAR_STEP_EXTRAS, VISAR_STEP_POLIZA,
+                 VISAR_STEP_SCHEDULE]
         start = chain.index(step) + 1 if step in chain else 0
         for candidate in chain[start:]:
+            if candidate == VISAR_STEP_NAME and not self._visar_wizard_needs_name(booking):
+                continue
             if candidate == VISAR_STEP_EXTRAS and not self._visar_wizard_extras_offers(booking):
                 continue
             if candidate == VISAR_STEP_POLIZA and not self._visar_wizard_poliza_context(booking):
@@ -385,6 +409,8 @@ class AppointmentType(models.Model):
             if mtype in measure_types:
                 steps.append(key)
         steps.append(VISAR_STEP_ADDRESS)
+        if self._visar_wizard_needs_name(booking):
+            steps.append(VISAR_STEP_NAME)
         # Extras y póliza solo existen tras resolver zona/items y si hay qué ofrecer.
         if booking.get('zone_id') and booking.get('items'):
             if self._visar_wizard_extras_offers(booking):
@@ -673,6 +699,7 @@ class AppointmentType(models.Model):
             'interior': self._visar_wizard_answer_interior,
             'exterior': self._visar_wizard_answer_exterior,
             VISAR_STEP_ADDRESS: self._visar_wizard_answer_address,
+            VISAR_STEP_NAME: self._visar_wizard_answer_nombre,
             VISAR_STEP_EXTRAS: self._visar_wizard_answer_extras,
             VISAR_STEP_POLIZA: self._visar_wizard_answer_poliza,
         }.get(step_key)
@@ -947,6 +974,23 @@ class AppointmentType(models.Model):
         }, None
 
     @api.model
+    def _visar_wizard_answer_nombre(self, booking, answer):
+        """Nombre del cliente nuevo. Valida poco, pero valida.
+
+        No se acepta cualquier cosa: este texto acaba siendo el `res.partner` con
+        el que se factura y el nombre que ve el técnico en su hoja de ruta. Una
+        respuesta de dos letras o un número suelto casi siempre es el cliente
+        contestando otra cosa (o tocando un botón viejo), y arreglarlo después es
+        una ficha duplicada que nadie limpia.
+        """
+        nombre = ' '.join((answer.get('nombre') or '').split())
+        if len(nombre) < 3 or not any(ch.isalpha() for ch in nombre):
+            return booking, self._visar_wizard_error(
+                'bad_name', _('¿Me confirmas tu nombre completo?'))
+        return self._visar_wizard_commit(
+            booking, VISAR_STEP_NAME, {'nombre': nombre}), None
+
+    @api.model
     def _visar_wizard_answer_extras(self, booking, answer):
         offers = self._visar_wizard_extras_offers(booking)
         offered_by_id = {o['product_id']: o for o in offers}
@@ -1146,6 +1190,17 @@ class AppointmentType(models.Model):
                     {'name': 'neighborhood', 'label': _('Colonia'), 'required': True},
                     {'name': 'zip', 'label': _('Código postal'), 'required': True},
                 ],
+            }
+
+        if step_key == VISAR_STEP_NAME:
+            # `free_text` = una sola respuesta escrita, sin opciones. Se distingue
+            # de `text` (la dirección) porque aquella son VARIOS campos y el canal
+            # tiene que guiarlos uno por uno.
+            return {
+                'step': step_key, 'kind': 'free_text', 'answer_key': 'nombre',
+                'title': _('¿A nombre de quién agendo el servicio?'),
+                'placeholder': _('Ej: María López'),
+                'options': [],
             }
 
         if step_key == VISAR_STEP_EXTRAS:

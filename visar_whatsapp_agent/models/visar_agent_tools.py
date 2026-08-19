@@ -1176,6 +1176,26 @@ class VisarAgentTools(models.AbstractModel):
         return Partner.create({'name': name.strip(), 'phone': phone}), None
 
     @api.model
+    def _agent_booking_needs_name(self, phone):
+        """¿Este telefono es de alguien a quien todavia no conocemos por nombre?
+
+        Es LECTURA: no crea nada (`_agent_booking_partner` si crea, y solo al
+        cerrar). Se usa para que el cuestionario incluya el paso del nombre en vez
+        de descubrirlo al final, que es lo que pasaba antes: el cliente nuevo
+        contestaba diez preguntas, elegia horario, y en vez de la liga de pago
+        recibia *"Falta el nombre del cliente."* — un callejon sin salida del que
+        ni siquiera se escalaba a un humano.
+
+        Ambiguo (varios partners con el mismo numero) devuelve False a proposito:
+        ahi el nombre no arregla nada, y `agent_prepare_booking` ya escala.
+        """
+        Partner = self.env['res.partner'].sudo()
+        key = Partner._visar_phone_nat10_value(phone)
+        if not key:
+            return False
+        return not Partner.search_count([('visar_phone_nat10', '=', key)])
+
+    @api.model
     def _agent_booking_context(self, payload):
         """(mode, appointment_type, items) para la reserva, o (mode, empty, []).
 
@@ -1314,6 +1334,9 @@ class VisarAgentTools(models.AbstractModel):
                                   # preguntar por el estado actual, sin aplicar nada
             "answer":  {...},     # la respuesta del cliente, tal cual la recogio
                                   # el runtime (ver `options.kind` del paso)
+            "phone":   "5218112345678",  # opcional; si el numero no es de ningun
+                                  # cliente, el cuestionario anade el paso del
+                                  # nombre. Sin el, ese paso no aparece.
         }
 
         Devuelve {"selections", "zone_id", "items", "delivery_address",
@@ -1331,7 +1354,12 @@ class VisarAgentTools(models.AbstractModel):
         """
         payload = payload or {}
         AptType = self._agent_flow_type()
-        booking = payload.get('booking') or {}
+        # La bandera NO viaja de ida y vuelta: se recalcula en cada llamada. Es
+        # un hecho del mundo (¿existe ya este cliente?) que puede cambiar entre
+        # dos mensajes -alguien lo da de alta en Odoo a media conversacion- y un
+        # estado guardado en el runtime lo dejaria congelado.
+        needs_name = self._agent_booking_needs_name(payload.get('phone'))
+        booking = dict(payload.get('booking') or {}, needs_name=needs_name)
         step = payload.get('step')
 
         # Sin paso: solo se pregunta "¿en que voy?". Util para retomar una
@@ -1350,6 +1378,15 @@ class VisarAgentTools(models.AbstractModel):
                 error={'code': 'step_failed',
                        'message': "No pude registrar esa respuesta."})
 
+        # La bandera se vuelve a poner DESPUES de aplicar la respuesta, y no es
+        # defensa gratuita: `_visar_wizard_answer_address` no muta el booking, lo
+        # **rehace** desde cero (es el paso que resuelve zona e items), asi que
+        # cualquier clave que no sea del contrato se pierde ahi. Sin esto el paso
+        # del nombre desaparecia justo despues de la direccion, que es donde
+        # tenia que aparecer. Encontrado recorriendo el cuestionario de verdad:
+        # el Odoo falso del runtime SI conservaba la clave, y mentia en verde.
+        booking = dict(booking or {}, needs_name=needs_name)
+
         if error:
             # Se vuelve a preguntar EL MISMO paso, con su mensaje.
             return self._agent_booking_state(booking, step=step, error=error)
@@ -1357,7 +1394,7 @@ class VisarAgentTools(models.AbstractModel):
         # El paso de direccion es el que resuelve zona e items; de ahi en adelante
         # la secuencia la marca lo que haya que ofrecer (extras, poliza) y no el
         # cuestionario, asi que se avanza por la cadena y no por `next_step`.
-        if step in ('address', 'extras', 'poliza'):
+        if step in ('address', 'nombre', 'extras', 'poliza'):
             return self._agent_booking_state(
                 booking, step=AptType._visar_wizard_step_after(booking, step))
 
@@ -1453,8 +1490,12 @@ class VisarAgentTools(models.AbstractModel):
         AptType = self.env['appointment.type'].sudo()
 
         # 1. Identidad. Sin cliente no hay reserva, y la ambiguedad no se adivina.
+        # El nombre puede venir suelto (`name`) o como una respuesta mas del
+        # cuestionario (`selections['nombre']`), que es por donde llega desde
+        # WhatsApp: asi el runtime no tiene que saber que esa clave existe.
         partner, error = self._agent_booking_partner(
-            payload.get('phone'), payload.get('name'))
+            payload.get('phone'),
+            payload.get('name') or (payload.get('selections') or {}).get('nombre'))
         if error:
             return self._agent_booking_fail(error, {
                 'phone_invalid': "El telefono no es valido.",
