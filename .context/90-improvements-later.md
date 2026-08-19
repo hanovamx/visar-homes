@@ -209,3 +209,47 @@
 - **Recomendación:** `sudo chown -R josegonzalez:josegonzalez /opt/custom` y no volver a correr
   git ni copiar archivos como root en el repo.
 - **Prioridad:** Baja, pero reaparece.
+
+---
+
+## I-15 — Cuatro planes de póliza se llaman igual
+
+- **Qué:** el paso de póliza ofrece **cinco** planes y cuatro comparten nombre:
+  *Póliza Mensual*, *Póliza Mensual*, *Póliza Mensual*, *Monthly*, *Póliza Mensual*.
+  Visto en `visar-db` al recorrer el cuestionario por RPC (19-ago-2026).
+- **Por qué importa:** por RPC da igual, se elige por `value`. En **WhatsApp no**:
+  el cliente vería cuatro botones idénticos y uno en inglés, en el paso de **mayor
+  valor** del flujo. Es la clase de detalle que hunde la conversión sin que nadie
+  sepa por qué. En el wizard web pasa lo mismo, solo que con más contexto visual.
+- **Recomendación:** nombrar los planes por lo que los distingue (periodicidad,
+  visitas incluidas, precio) y traducir *Monthly*. Es **dato, no código**: se
+  arregla en Suscripciones > Planes. Si algunos son planes viejos que ya no se
+  venden, sacarlos de la oferta con `visar.poliza_plan_ids`.
+- **Prioridad:** Media-alta si el agendado por WhatsApp llega a demo o a
+  producción; el paso de póliza es donde está el upsell.
+
+---
+
+## I-16 — Nadie se entera de que un servicio se cayó
+
+- **Qué:** `visar-fastapi` estuvo **caído ~2 días** (17-ago 20:43 → 19-ago) y se
+  descubrió de casualidad al preparar una demo. Durante ese tiempo el agente de
+  WhatsApp no contestó a nadie. Aparte, el 18-ago se hicieron commits con un
+  modelo nuevo (`visar.slot.hold`) que **nadie desplegó**: Odoo siguió sirviendo
+  el commit del 17 hasta el 19, y el reinicio de ese día arrastró dos días de
+  cambios de golpe contra una base sin migrar (500 en la página de horarios,
+  ~4 min, resuelto con `-u`).
+- **Por qué importa:** son dos huecos distintos con la misma consecuencia —
+  enterarse tarde. Uno es de **servicio caído**; el otro es de **deriva entre lo
+  que está en disco y lo que está corriendo**, que convierte cualquier reinicio
+  rutinario en un despliegue sorpresa.
+- **Recomendación:**
+  1. `Restart=always` en el unit de `visar-fastapi` (hoy es `on-failure`, y una
+     parada limpia no reintenta) + un chequeo externo de `/health`.
+  2. Antes de reiniciar Odoo, comparar lo desplegado con HEAD:
+     `systemctl show odoo --property=ActiveEnterTimestamp` contra `git log`. Si hay
+     commits de por medio, revisar si alguno necesita `-u` **antes** de reiniciar.
+  3. Que un `git pull` en `/opt/custom` no se quede sin reinicio: si no se
+     despliega en el momento, queda una mina puesta.
+- **Prioridad:** Alta la 1 (hay clientes escribiendo a un número que no contesta);
+  media las otras dos.

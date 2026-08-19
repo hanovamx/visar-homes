@@ -206,19 +206,44 @@ Para un día `D`, un técnico `R` (ya filtrado por zona y servicio) y un slot
 1. Paradas existentes de `R` en `D`, ordenadas por `event_start`
    (`appointment.booking.line` → `calendar.event` → partner → `partner_latitude/longitude`).
 2. `S` cabe entre las paradas *i* e *i+1* si
-   `viaje(i → nuevo) ≤ hueco antes` **y** `viaje(nuevo → i+1) ≤ hueco después`.
+   `viaje(i → nuevo) ≤ presupuesto antes` **y**
+   `viaje(nuevo → i+1) ≤ presupuesto después` (ver la fórmula abajo).
 3. Primera y última posición: ver §5.2.1 — el borde exterior **no** se restringe
-   por viaje en la v1.
+   por viaje.
 
 Sin paradas, cualquier slot con capacidad pasa (caso a).
 
-**Duración del servicio.** Se asume **≤ 1 hora** (es lo que permite ofrecer
-cualquier hora dentro de la ventana). El número **no se hornea**: sale de
-`appointment_type.appointment_duration`, que es de donde ya lo toma
-`_visar_filter_slots_multi_service`. Si mañana un servicio dura más, cambia la
-configuración y el predicado sigue funcionando. Lo que **no** está resuelto es si
-la duración debería variar por `items` (una fumigación de 800 m² no es una de 80);
-hoy no varía, y si algún día varía, el hueco a comparar cambia con ella.
+#### La hora se parte en 20 + 40 (confirmado con Visar, 19-ago-2026)
+
+El bloque de una hora **no** es una hora de servicio: son **20 min de traslado +
+40 min de servicio**. El técnico sale de la parada anterior, conduce hasta 20 min
+y trabaja 40. Eso deja la aritmética así, para un slot candidato que empieza en
+`T` cuando el compromiso anterior termina en `E`:
+
+```
+presupuesto de viaje = 20 min + (T − E)
+```
+
+- **Pegados** (`T = E`): 20 min justos. Es el caso que aprieta.
+- **Con hueco** (`T > E`): el hueco se suma al presupuesto. Un trayecto de 40 min
+  es perfectamente ofrecible si el técnico tiene la mañana libre antes.
+
+Lo mismo hacia adelante: la parada siguiente tiene su propio presupuesto, y meter
+una parada nueva no puede romperlo.
+
+> **Es un presupuesto, no un radio de servicio** (decisión 14). No existe un tope
+> duro de "nunca a más de 20 min": lo que no se puede es comerse el traslado de
+> otra cita. La consecuencia buscada es que **la disponibilidad dependa de quién
+> reservó antes** — el primero que llega, se lo lleva; el siguiente simplemente no
+> ve ese horario entre las opciones. No hay nada que explicarle al cliente,
+> porque nunca ve la opción que no cabe.
+
+**Duración.** Los dos números salen de configuración, no del código: el bloque de
+`appointment_type.appointment_duration` (hoy 1 h, que es de donde ya lo toma
+`_visar_filter_slots_multi_service`) y el reparto 20/40 dentro de él. Lo que
+**no** está resuelto es si la parte de servicio debería variar por `items` (una
+fumigación de 800 m² no es una de 80); hoy no varía, y si algún día varía, lo que
+cambia es el reparto, no el predicado.
 
 #### 5.2.1 Los bordes del día
 
@@ -234,30 +259,52 @@ mitades, y solo una sigue abierta:
   habría que medir el viaje desde su punto de origen (¿la oficina? ¿su casa?), y
   eso no está modelado en ningún lado.
 
-**Decisión v1: no restringir el borde exterior.** Solo se valida el viaje *entre*
+**Decisión: no restringir el borde exterior.** Solo se valida el viaje *entre*
 paradas:
 
-- si el slot cae **antes** de todas las paradas → solo se exige `viaje(nuevo → primera) ≤ hueco`;
-- si cae **después** de todas → solo `viaje(última → nuevo) ≤ hueco`;
+- si el slot cae **antes** de todas las paradas → solo se exige `viaje(nuevo → primera) ≤ presupuesto`;
+- si cae **después** de todas → solo `viaje(última → nuevo) ≤ presupuesto`;
 - en medio → las dos condiciones, como en §5.2.
 
-Es conservador en la dirección correcta: puede aceptar un primer servicio lejano
-que al técnico le cueste alcanzar desde su origen, pero **nunca** rechaza un
-horario por un dato que no tenemos. Si más adelante Visar quiere modelarlo, la
+> **Con el modelo de presupuesto (decisión 14), esto deja de ser una concesión y
+> pasa a ser lo correcto.** Un tope duro de 20 min sí habría obligado a modelar el
+> origen del técnico —y el primer trayecto del día es justo el más largo—, pero un
+> *presupuesto* mide lo que una parada nueva le quita a la siguiente, y la primera
+> parada del día no le quita el traslado a nadie: no hay cita anterior que
+> proteger. El técnico sale de donde salga y llega cuando llega.
+>
+> Efecto práctico: **no hace falta geocodificar "Visar Home"** para esta fase.
+> Sigue en el backlog (§13) por otras razones, pero ya no bloquea nada.
+
+Es conservador en la dirección correcta: nunca rechaza un horario por un dato que
+no tenemos. Si más adelante Visar quiere acotar también el primer trayecto, la
 dirección de la compañía como origen es un cambio de una línea en el predicado.
 
 ### 5.3 Control de costo
 
-Ingenuo, esto serían miles de llamadas a Mapbox. Tres medidas, en orden:
+Ingenuo, esto serían miles de llamadas a Mapbox. Dos medidas, y la primera es la
+que hace el trabajo:
 
-1. **Zona primero, geometría después.** `visar.zone.cp` → técnicos elegibles ya
-   poda casi todo el espacio **gratis**. Solo lo que sobrevive cuesta una llamada.
-2. **Una llamada de Matrix por (día, técnico), no por slot.** Se pide de una vez la
+1. **Una llamada de Matrix por (día, técnico), no por slot.** Se pide de una vez la
    matriz entre las paradas del día y la dirección nueva; después **todos** los
    slots del día se evalúan con aritmética. La Matrix API de Mapbox admite hasta
-   25 coordenadas por petición — de sobra para la jornada de un técnico.
-3. **Caché de tiempos de viaje** por par de coordenadas redondeadas. Entre dos
+   25 coordenadas por petición — de sobra para la jornada de un técnico (pico
+   medido: 9 paradas). Con ~10 días candidatos por conversación, son ~10 llamadas
+   por reserva.
+2. **Caché de tiempos de viaje** por par de coordenadas redondeadas. Entre dos
    direcciones fijas el tiempo casi no cambia; no vale la pena volver a pagarlo.
+
+> ⚠️ **Corrección (19-ago-2026).** La primera versión de esta sección decía "zona
+> primero, geometría después: `visar.zone.cp` → técnicos elegibles poda casi todo
+> el espacio gratis". **Eso era falso, y por una razón de fondo:** las zonas de
+> Visar son una **métrica de precio**, no de distancia ni de tiempo. No están
+> trazadas por cercanía, así que dos direcciones de la misma zona pueden estar a
+> 45 min una de otra, y la zona **no aproxima el presupuesto de viaje**.
+>
+> La zona sigue sirviendo para lo suyo —qué técnicos atienden esa dirección
+> (`_visar_eligible_resources`) y qué lista de precios aplica—, pero con **un solo
+> técnico usable** ese filtro casi no poda nada. El control de costo descansa
+> entero en la medida 1, que de todos modos era la buena.
 
 ### 5.3.1 Los datos reales (verificado en el servidor, 17-ago-2026)
 
@@ -327,6 +374,12 @@ Las dos formas, como se acordó:
 
 - **Lista de los próximos N días factibles** (rápido, fiable, un tap). Es el camino
   principal; el tope de 10 filas obliga a paginar ("Ver más fechas").
+
+> **Cómo se redacta la hora** (decisión 15): al cliente se le ofrece una
+> **ventana**, no una hora exacta — "entre 3 y 4 de la tarde", no "3:00 pm". El
+> bloque son 20 min de traslado + 40 de servicio, así que prometer una hora en
+> punto es prometer algo que la calle no respeta. `agent_day_slots` ya devuelve
+> `start` y `stop`: la ventana se redacta con esos dos, sin tocar el RPC.
 - **Texto libre** ("el jueves", "mañana", "el 20") con un parser acotado de fechas
   en español y **confirmación explícita** antes de consultar. Si no se entiende, se
   cae a la lista — nunca se adivina una fecha.
@@ -620,6 +673,23 @@ ocurran — meterlos después obliga a reabrir el hold, que es la pieza más del
    barato y el web lo aprovecha—, detrás de un flag, cuando entre el segundo
    técnico o suba el volumen.
 
+   > **Revisado el 19-ago-2026.** Con el 20/40 confirmado, esto **sube de
+   > categoría**: deja de ser una optimización de ruta y pasa a ser la regla que
+   > decide qué horarios se pueden ofrecer. Sigue en cuarto lugar —con 2.5 paradas
+   > al día el presupuesto casi nunca aprieta, y el chat es lo que falta para
+   > entregar algo—, pero ya no es opcional, y el flag es para desplegarlo con
+   > cuidado, no para dejarlo apagado.
+   >
+   > Lo que **abarata** este trabajo: Mapbox ya funciona en esta instalación
+   > (`visar_field_app._visar_enroute_eta_minutes` llama a Directions con perfil
+   > `driving-traffic` y cae a un fijo si falla). Hay token vivo y camino probado;
+   > lo que falta es la Matrix API y el predicado, no la integración.
+   >
+   > Lo que lo **encarece**: las zonas no aproximan distancia (§5.3), así que no
+   > hay pre-filtro gratis. Y el 22.4% de direcciones sin geocodificar (§5.3.1)
+   > cae a la rama de degradar (§5.4), que con esta regla significa **ofrecer el
+   > horario igual**: nunca rechazar por un dato que no tenemos.
+
 > El cambio de orden respecto a la primera versión de este doc sale de dos datos:
 > la concurrencia todavía no existe (§3) y la ruta casi nunca aprieta (§5.3.2).
 > Si mañana entran técnicos o volumen, 4 sube.
@@ -851,8 +921,10 @@ debe vivir en el controlador web ni en el runtime: van al modelo.
 5. **Hold de slot: 10 minutos.**
 6. **El CP se pide temprano**, y se usa para **precalentar** zona, pools, agenda y
    matrices de viaje mientras el cliente contesta el resto (§4.0).
-7. **Duración del servicio: ≤ 1 h**, leída de `appointment_duration` (no horneada).
-   Puede cambiar a futuro.
+7. **El bloque de 1 h se parte en 20 min de traslado + 40 min de servicio**
+   (confirmado con Visar el 19-ago-2026). El bloque sale de
+   `appointment_duration` (no horneado); el reparto es configuración. La parte de
+   servicio puede cambiar a futuro; el predicado no depende de ello (§5.2).
 8. **La liga de pago vive y muere con el hold** (modelo butaca de cine): al caducar
    el apartado, la liga deja de pagar (§6.1). Esto cierra el hueco del pago tardío.
 9. **Bordes del día: sin restricción de viaje en v1** — el horario laboral ya lo
@@ -867,6 +939,15 @@ debe vivir en el controlador web ni en el runtime: van al modelo.
     construye y prueba con *Demo*. Pero la UI/UX contempla **pago rechazado** y
     **pago pendiente** desde el primer día, y el apartado **se congela mientras
     haya una transacción en vuelo** (§7.3, §7.3.1).
+14. **Los 20 min de traslado son un PRESUPUESTO entre paradas consecutivas, no un
+    radio de servicio** (19-ago-2026). Con hueco por delante, el hueco se suma al
+    presupuesto y un trayecto más largo sí se ofrece. La disponibilidad depende de
+    quién reservó antes —primero que llega, primero que se atiende— y al cliente
+    no hay nada que explicarle: **nunca ve la opción que no cabe**.
+15. **Al cliente se le da una VENTANA de llegada, no una hora exacta** (19-ago-2026).
+    "3 pm" significa *entre 3 y 4*. Es honesto con lo que pasa en la calle y evita
+    la conversación de "dijeron a las 3 en punto". El chat redacta la ventana con
+    el `start`/`stop` que ya devuelve `agent_day_slots` — no hace falta tocar el RPC.
 
 ## 13. Abierto
 
