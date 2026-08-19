@@ -306,6 +306,36 @@ class TestWizardFlow(TransactionCase):
         self.assertNotIn('termitas', valores)
         self.assertIn('proteccion_general', valores)
 
+    def test_cada_paso_dice_con_que_clave_se_contesta(self):
+        """`answer_key` evita que el runtime mantenga su propio mapa paso → clave.
+
+        Sin esto el otro lado tendría que saber que "plagas" se contesta con
+        `servicio_plaga` y "cobertura" con `cobertura` — otra regla duplicada,
+        que es justo lo que este refactor vino a eliminar.
+        """
+        esperado = {
+            'services': 'group_ids', 'motivo': 'motivo',
+            'plagas': 'servicio_plaga', 'cobertura': 'cobertura',
+            'exterior': 'band_id', 'extras': 'extra_ids', 'poliza': 'plan_id',
+        }
+        booking = self._booking_fum(motivo='correctivo')
+        for step, key in esperado.items():
+            options = self.AptType._visar_wizard_step_options(booking, step)
+            self.assertEqual(options.get('answer_key'), key, step)
+
+        # Los sub-pasos de grupo comparten clave.
+        options = self.AptType._visar_wizard_step_options(
+            booking, 'group_%s' % self.fum_group.id)
+        self.assertEqual(options.get('answer_key'), 'dimension_ids')
+
+        # Medición y texto NO tienen una sola clave: la llevan las secciones y
+        # los campos. Se marca explícitamente para que el runtime no adivine.
+        for step in ('dimensiones', 'interior', 'address'):
+            options = self.AptType._visar_wizard_step_options(booking, step)
+            self.assertIsNone(options.get('answer_key'), step)
+        interior = self.AptType._visar_wizard_step_options(booking, 'interior')
+        self.assertEqual(interior.get('mode_key'), 'interior_mode')
+
     def test_las_opciones_son_serializables(self):
         """Van por JSON-RPC: un recordset colado aquí revienta en el transporte.
 

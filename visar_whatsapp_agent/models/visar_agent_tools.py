@@ -1255,6 +1255,9 @@ class VisarAgentTools(models.AbstractModel):
             'step': step,
             'options': AptType._visar_wizard_step_options(booking, step),
             'sequence': AptType._visar_wizard_step_sequence(booking),
+            # Para la pantalla de revision: que lleva y cuanto cuesta, en texto.
+            # El runtime no puede armarlo (`selections` trae ids, no nombres).
+            'summary': AptType._visar_wizard_summary(booking),
             'requires_valuation': AptType._visar_wizard_requires_valuation(
                 booking.get('selections') or {}),
             'done': step == 'schedule',

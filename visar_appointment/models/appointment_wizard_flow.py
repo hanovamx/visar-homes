@@ -490,6 +490,55 @@ class AppointmentType(models.Model):
         return offers
 
     # ------------------------------------------------------------------
+    # Resumen para la pantalla de revisión
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _visar_wizard_summary(self, booking):
+        """Qué lleva el cliente, en texto legible, y cuánto cuesta.
+
+        Existe para la **pantalla de revisión antes de cobrar**: pedir "¿lo
+        confirmo?" sin decir qué se está comprando ni cuánto cuesta es pedir un
+        cheque en blanco. El runtime no puede armar esto por su cuenta —
+        `selections` trae `group_ids` y `tier_7`, no nombres— y decodificarlo del
+        otro lado sería otra regla duplicada.
+
+        Devuelve {'lines': [str], 'total': float|None, 'currency': str|None}.
+        El total es **con IVA incluido** (`amount_total`), que es el único que el
+        cliente reconoce; nunca el subtotal.
+        """
+        booking = booking or {}
+        selections = booking.get('selections') or {}
+        lines = [group._visar_wizard_label()
+                 for group in self._visar_wizard_selected_groups(selections)]
+
+        items = booking.get('items') or []
+        if items:
+            lines += [label for label in self._visar_metros_labels(items) if label]
+
+        if self._visar_wizard_requires_valuation(selections):
+            lines.append(_('Visita de valoración técnica'))
+
+        zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
+        total = currency = None
+        if items and zone:
+            plan = self.env['sale.subscription.plan'].sudo().browse(
+                int(selections.get('poliza_plan_id') or 0)).exists()
+            quote = self._visar_quote_booking(
+                items, zone,
+                include_roedores=self._visar_wizard_has_roedores(booking),
+                extra_addons=booking.get('extras_accepted'),
+                plan=plan or None)
+            if quote:
+                # Con póliza, lo que se cobra HOY no es lo recurrente: enseñar el
+                # "al mes" como si fuera el cargo sería mentir sobre el cobro.
+                total = quote.get('upfront_total') or quote.get('total')
+                currency = (zone.company_id or self.env.company).currency_id.name
+                if plan and quote.get('recurring_total'):
+                    lines.append(_('Póliza: %(plan)s') % {'plan': plan.name})
+        return {'lines': lines, 'total': total, 'currency': currency}
+
+    # ------------------------------------------------------------------
     # Dirección
     # ------------------------------------------------------------------
 
@@ -900,7 +949,7 @@ class AppointmentType(models.Model):
 
         if step_key == VISAR_STEP_SERVICES:
             return {
-                'step': step_key, 'kind': 'multi',
+                'step': step_key, 'kind': 'multi', 'answer_key': 'group_ids',
                 'title': _('¿Qué servicio necesitas?'),
                 'options': [{
                     'value': group.id,
@@ -911,7 +960,7 @@ class AppointmentType(models.Model):
 
         if step_key == 'motivo':
             return {
-                'step': step_key, 'kind': 'single',
+                'step': step_key, 'kind': 'single', 'answer_key': 'motivo',
                 'title': _('¿Es preventivo o correctivo?'),
                 'options': [
                     {'value': 'preventivo', 'label': _('Preventivo'),
@@ -951,7 +1000,7 @@ class AppointmentType(models.Model):
                      'description': '', 'is_valuation': True},
                 ]
             return {
-                'step': step_key, 'kind': 'multi',
+                'step': step_key, 'kind': 'multi', 'answer_key': 'servicio_plaga',
                 'title': (_('¿Qué estás viendo en casa?') if correctivo
                           else _('¿Contra qué te gustaría protegerte?')),
                 'options': options,
@@ -959,7 +1008,7 @@ class AppointmentType(models.Model):
 
         if step_key == 'cobertura':
             return {
-                'step': step_key, 'kind': 'single',
+                'step': step_key, 'kind': 'single', 'answer_key': 'cobertura',
                 'title': _('¿Dónde fumigamos?'),
                 'options': [
                     {'value': 'interior', 'label': _('Interior'), 'description': ''},
@@ -972,7 +1021,7 @@ class AppointmentType(models.Model):
             group = self.env['visar.service.group'].sudo().browse(
                 self._visar_wizard_id_list(step_key[len('group_'):])).exists()
             return {
-                'step': step_key, 'kind': 'multi',
+                'step': step_key, 'kind': 'multi', 'answer_key': 'dimension_ids',
                 'title': (_('¿Qué necesitas de %s?') % group._visar_wizard_label()
                           if group else _('¿Qué necesitas?')),
                 'options': [{
@@ -985,7 +1034,7 @@ class AppointmentType(models.Model):
         if step_key in ('dimensiones', 'interior'):
             measure = 'direct' if step_key == 'dimensiones' else 'interior'
             payload = {
-                'step': step_key, 'kind': 'measure',
+                'step': step_key, 'kind': 'measure', 'answer_key': None,
                 'title': _('¿De qué tamaño es el área?'),
                 'sections': self._visar_wizard_measure_sections(selections, measure),
                 'options': [],
@@ -993,6 +1042,7 @@ class AppointmentType(models.Model):
             if step_key == 'interior':
                 # El paso interior admite dos caminos, y el segundo evita que el
                 # cliente que no sabe sus m² se caiga del flujo.
+                payload['mode_key'] = 'interior_mode'
                 payload['modes'] = [
                     {'value': 'sabe', 'label': _('Sé mis metros cuadrados')},
                     {'value': 'estima', 'label': _('Prefiero estimarlos')},
@@ -1009,7 +1059,7 @@ class AppointmentType(models.Model):
         if step_key == 'exterior':
             bands = self.env['visar.measure.band'].sudo()._visar_exterior_bands()
             return {
-                'step': step_key, 'kind': 'single',
+                'step': step_key, 'kind': 'single', 'answer_key': 'band_id',
                 'title': _('¿De qué tamaño es tu jardín o exterior?'),
                 'options': [{
                     'value': band.id,
@@ -1021,7 +1071,7 @@ class AppointmentType(models.Model):
 
         if step_key == VISAR_STEP_ADDRESS:
             return {
-                'step': step_key, 'kind': 'text',
+                'step': step_key, 'kind': 'text', 'answer_key': None,
                 'title': _('¿A qué dirección vamos?'),
                 'options': [],
                 'fields': [
@@ -1035,7 +1085,7 @@ class AppointmentType(models.Model):
 
         if step_key == VISAR_STEP_EXTRAS:
             return {
-                'step': step_key, 'kind': 'multi',
+                'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
                 'title': _('¿Quieres agregar algo más?'),
                 'options': [{
                     'value': offer['product_id'],
@@ -1049,7 +1099,7 @@ class AppointmentType(models.Model):
 
         if step_key == VISAR_STEP_POLIZA:
             return {
-                'step': step_key, 'kind': 'single',
+                'step': step_key, 'kind': 'single', 'answer_key': 'plan_id',
                 'title': _('¿Te interesa contratarlo como póliza?'),
                 'options': [{
                     'value': offer['plan_id'],
@@ -1064,4 +1114,5 @@ class AppointmentType(models.Model):
                 } for offer in self._visar_wizard_poliza_offers(booking)],
             }
 
-        return {'step': step_key, 'kind': 'terminal', 'title': '', 'options': []}
+        return {'step': step_key, 'kind': 'terminal', 'answer_key': None,
+                'title': '', 'options': []}
