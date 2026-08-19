@@ -35,6 +35,7 @@ Tres cosas que NO son evidentes:
   `selections` por su cuenta, esas reglas se pierden.
 """
 from odoo import _, api, models
+from odoo.tools import format_amount
 
 # Grupos de claves de selección por área del wizard.
 _VISAR_INTERIOR_KEYS = ('interior_niveles', 'interior_estimado_m2', 'interior_proxy')
@@ -84,6 +85,24 @@ VISAR_STEP_ADDRESS = 'address'
 VISAR_STEP_EXTRAS = 'extras'
 VISAR_STEP_POLIZA = 'poliza'
 VISAR_STEP_SCHEDULE = 'schedule'
+
+# Valor de la opcion "no quiero poliza". Cero porque no puede ser el id de ningun
+# plan, y porque `_visar_wizard_id_list` ya lo descarta: la respuesta acaba en
+# `poliza_plan_id = False`, exactamente igual que si el cliente no eligiera nada.
+VISAR_POLIZA_NONE = 0
+
+# Periodicidad en espanol, por (unidad, singular/plural). El campo nativo
+# `billing_period_display_sentence` NO sirve para el chat: su fuente es inglesa
+# ("per month") y se traduce con el idioma del USUARIO RPC, que es en_US. Aqui no
+# se depende de traducciones para un texto que ve el cliente.
+# Sin `_()`: a nivel de modulo se evaluaria una sola vez, al importar, con el
+# idioma que hubiera entonces. Son literales en el idioma en el que se habla con
+# el cliente, que es el mismo en los dos canales.
+_VISAR_PERIOD_LABELS = {
+    'week': ("a la semana", "cada %s semanas"),
+    'month': ("al mes", "cada %s meses"),
+    'year': ("al año", "cada %s años"),
+}
 
 
 class AppointmentType(models.Model):
@@ -417,6 +436,41 @@ class AppointmentType(models.Model):
         return pricelists.mapped('visar_plan_id').sorted('billing_period_value')
 
     @api.model
+    def _visar_wizard_plan_period_label(self, plan):
+        """Periodicidad de un plan, en espanol: "al mes", "cada 3 meses".
+
+        NO se usa `billing_period_display_sentence`: su fuente es inglesa
+        ("per month") y se traduce con el idioma del usuario que hace la llamada.
+        Por RPC ese usuario esta en `en_US`, asi que el cliente recibia
+        *"per year"* en mitad de una conversacion en espanol.
+        """
+        singular, plural = _VISAR_PERIOD_LABELS.get(
+            plan.billing_period_unit, ("", "cada %s periodos"))
+        value = plan.billing_period_value or 1
+        return singular if value <= 1 else plural % value
+
+    @api.model
+    def _visar_wizard_poliza_description(self, offer):
+        """Que dice de un plan la linea de debajo del nombre.
+
+        Antes decia `billing_period_display_sentence` — *"per month"*, en ingles y
+        sin aportar nada que el nombre no dijera ya. Aqui dice lo unico que el
+        cliente necesita para decidir: **cuanto y cada cuanto**, y cuanto se ahorra.
+
+        Con cuatro planes que hoy se llaman igual en el catalogo (I-15 del
+        backlog), esta linea es ademas lo unico que los distingue en el chat.
+        """
+        currency = self.env['res.currency'].browse(offer.get('currency_id'))
+        if not currency:
+            currency = self.env.company.currency_id
+        partes = ['%s %s' % (format_amount(self.env, offer['period_total'], currency),
+                             offer.get('period_label') or '')]
+        if offer.get('saving'):
+            partes.append(_('ahorras %s') % format_amount(
+                self.env, offer['saving'], currency))
+        return ' · '.join(p.strip() for p in partes if p.strip())
+
+    @api.model
     def _visar_wizard_poliza_context(self, booking):
         """(zone, master, plans) si la reserva puede volverse póliza; None si no.
 
@@ -473,6 +527,11 @@ class AppointmentType(models.Model):
                 'plan_id': plan.id,
                 'name': plan.name,
                 'billing_label': plan.billing_period_display_sentence,
+                # La moneda sale de la cotizacion, que ya la resuelve bien (lista
+                # de la zona -> website -> compania). Sin ella no se puede
+                # redactar el precio del plan.
+                'currency_id': quote.get('currency_id'),
+                'period_label': self._visar_wizard_plan_period_label(plan),
                 'periods': quote['periods'],
                 # Precio de la PÓLIZA = solo el servicio recurrente. Los add-ons son
                 # cargo único y no se repiten cada periodo, así que meterlos en el
@@ -1104,20 +1163,30 @@ class AppointmentType(models.Model):
             }
 
         if step_key == VISAR_STEP_POLIZA:
+            options = [{
+                'value': offer['plan_id'],
+                'label': offer['name'],
+                'description': self._visar_wizard_poliza_description(offer),
+                # Recurrente y "lo que se paga hoy" van SEPARADOS: meter los
+                # add-ons en el "al mes" infla un precio que no se va a cobrar
+                # en el mes 3 (fue un bug real del primer corte del paso).
+                'period_total': offer['period_total'],
+                'upfront_total': offer['upfront_total'],
+                'saving': offer['saving'],
+            } for offer in self._visar_wizard_poliza_offers(booking)]
+            # Sin esta opcion el paso no tenia salida en el chat: el web deja
+            # seguir sin elegir, pero en WhatsApp un menu de un solo sentido es
+            # una pregunta sin respuesta valida. El cliente se quedaba atrapado
+            # justo antes del horario.
+            options.append({
+                'value': VISAR_POLIZA_NONE,
+                'label': _('No, gracias'),
+                'description': _('Contrato solo este servicio'),
+            })
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'plan_id',
                 'title': _('¿Te interesa contratarlo como póliza?'),
-                'options': [{
-                    'value': offer['plan_id'],
-                    'label': offer['name'],
-                    'description': offer['billing_label'] or '',
-                    # Recurrente y "lo que se paga hoy" van SEPARADOS: meter los
-                    # add-ons en el "al mes" infla un precio que no se va a cobrar
-                    # en el mes 3 (fue un bug real del primer corte del paso).
-                    'period_total': offer['period_total'],
-                    'upfront_total': offer['upfront_total'],
-                    'saving': offer['saving'],
-                } for offer in self._visar_wizard_poliza_offers(booking)],
+                'options': options,
             }
 
         return {'step': step_key, 'kind': 'terminal', 'answer_key': None,

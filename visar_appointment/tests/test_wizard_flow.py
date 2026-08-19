@@ -18,6 +18,9 @@ Las pruebas que necesitan catálogo real (tramos, productos, zonas) se saltan si
 la base no lo trae, en vez de dar un falso verde. Es la misma disciplina de
 `visar_whatsapp_agent/tests/test_agent_prepare_booking.py`.
 """
+from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
+    VISAR_POLIZA_NONE,
+)
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -335,6 +338,65 @@ class TestWizardFlow(TransactionCase):
             self.assertIsNone(options.get('answer_key'), step)
         interior = self.AptType._visar_wizard_step_options(booking, 'interior')
         self.assertEqual(interior.get('mode_key'), 'interior_mode')
+
+    def test_la_poliza_siempre_tiene_salida(self):
+        """Un menu sin "no" es una pregunta sin respuesta valida.
+
+        El web deja seguir sin elegir plan (hay boton de continuar); en WhatsApp
+        el paso ES el menu, asi que sin esta opcion el cliente se quedaba
+        atrapado justo antes de elegir horario. Da igual que haya ofertas o no:
+        la salida tiene que estar siempre.
+        """
+        options = self.AptType._visar_wizard_step_options(
+            self._booking_fum(motivo='correctivo'), 'poliza')
+        valores = [o['value'] for o in options['options']]
+        self.assertIn(VISAR_POLIZA_NONE, valores,
+                      "el paso de poliza siempre ofrece no contratarla")
+        self.assertEqual(valores[-1], VISAR_POLIZA_NONE,
+                         "y va al final, despues de las ofertas")
+
+    def test_no_contratar_poliza_deja_el_plan_vacio(self):
+        """Contestar "no" no puede parecerse a no haber contestado."""
+        booking = self._booking_fum(motivo='correctivo')
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'poliza', {'plan_id': VISAR_POLIZA_NONE})
+        self.assertIsNone(error)
+        self.assertFalse(booking['selections'].get('poliza_plan_id'))
+
+    def test_la_periodicidad_se_redacta_en_espanol(self):
+        """`billing_period_display_sentence` da "per month": ingles, y traducido
+        con el idioma del usuario RPC (en_US). No sirve para hablarle al cliente."""
+        Plan = self.env['sale.subscription.plan']
+        mensual = Plan.create({'name': "Prueba mensual",
+                               'billing_period_unit': 'month',
+                               'billing_period_value': 1})
+        trimestral = Plan.create({'name': "Prueba trimestral",
+                                  'billing_period_unit': 'month',
+                                  'billing_period_value': 3})
+        anual = Plan.create({'name': "Prueba anual",
+                             'billing_period_unit': 'year',
+                             'billing_period_value': 1})
+        self.assertEqual(
+            self.AptType._visar_wizard_plan_period_label(mensual), "al mes")
+        self.assertEqual(
+            self.AptType._visar_wizard_plan_period_label(trimestral), "cada 3 meses")
+        self.assertEqual(
+            self.AptType._visar_wizard_plan_period_label(anual), "al año")
+
+    def test_la_descripcion_del_plan_dice_cuanto_y_cada_cuanto(self):
+        """Con cuatro planes que hoy se llaman igual (I-15), esta linea es lo
+        unico que los distingue en el chat."""
+        plan = self.env['sale.subscription.plan'].create({
+            'name': "Prueba mensual", 'billing_period_unit': 'month',
+            'billing_period_value': 1})
+        texto = self.AptType._visar_wizard_poliza_description({
+            'period_total': 450.0, 'saving': 150.0,
+            'currency_id': self.env.company.currency_id.id,
+            'period_label': self.AptType._visar_wizard_plan_period_label(plan),
+        })
+        self.assertIn("450", texto)
+        self.assertIn("al mes", texto)
+        self.assertIn("150", texto, "y cuanto se ahorra frente a pagarlo suelto")
 
     def test_las_opciones_son_serializables(self):
         """Van por JSON-RPC: un recordset colado aquí revienta en el transporte.

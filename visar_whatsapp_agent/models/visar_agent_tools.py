@@ -1263,9 +1263,26 @@ class VisarAgentTools(models.AbstractModel):
     # Es LECTURA: no escribe nada en Odoo. El estado se lo queda el runtime.
 
     @api.model
+    def _agent_flow_type(self):
+        """`appointment.type` para conducir el cuestionario, EN ESPANOL.
+
+        El idioma no es cosmetica aqui. Los titulos y las opciones fijas son
+        literales en espanol en el codigo, asi que se veian bien; pero todo lo que
+        sale del CATALOGO -nombres de grupo, de dimension, de tramo, de add-on, de
+        plan de poliza- se lee en el idioma del usuario que hace la llamada, y el
+        usuario RPC del agente esta en `en_US`.
+
+        El caso mas visible era el paso de poliza: la periodicidad llegaba como
+        *"per month"* en mitad de una conversacion en espanol, en el paso de mayor
+        valor del flujo. Es la misma correccion que ya llevaba
+        `_agent_partner_services`, por la misma razon.
+        """
+        return self.env['appointment.type'].sudo().with_context(lang=SERVICES_LANG)
+
+    @api.model
     def _agent_booking_state(self, booking, step=None, error=None):
         """Respuesta tipada de agent_booking_step. Nunca lanza."""
-        AptType = self.env['appointment.type'].sudo()
+        AptType = self._agent_flow_type()
         booking = booking or {}
         step = step or AptType._visar_wizard_next_step(booking)
         return {
@@ -1313,7 +1330,7 @@ class VisarAgentTools(models.AbstractModel):
         §7.1 — emparejar mal un tramo cobra un tercio del precio SIN error).
         """
         payload = payload or {}
-        AptType = self.env['appointment.type'].sudo()
+        AptType = self._agent_flow_type()
         booking = payload.get('booking') or {}
         step = payload.get('step')
 
