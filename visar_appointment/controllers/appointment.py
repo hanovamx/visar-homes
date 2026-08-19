@@ -17,38 +17,19 @@ _logger = logging.getLogger(__name__)
 
 SESSION_KEY = 'visar_booking'
 
-# Grupos de claves de selección por área del wizard.
-_VISAR_INTERIOR_KEYS = ('interior_niveles', 'interior_estimado_m2', 'interior_proxy')
-_VISAR_EXTERIOR_KEYS = ('exterior_band_id', 'exterior_rodea')
-_VISAR_CUT_KEYS = ('requiere_valoracion', 'motivo_valoracion')
-_VISAR_PLAGA_KEYS = (
-    'servicio_plaga', 'roedores', 'upsell_cebaderos', 'upsell_tapon',
-    'upsell_guardapolvo') + _VISAR_CUT_KEYS
-
-# Al (re)enviar un paso, se limpian estas claves de selección (dependencias que quedan
-# inválidas si esa respuesta cambia). Además, los pasos en _VISAR_CLEARS_TIERS limpian
-# todos los tramos elegidos (tier_*). Solo se limpia lo realmente dependiente: cambiar
-# interior NO invalida exterior (mediciones independientes).
-# La póliza se cotiza sobre los items resueltos: cualquier paso que los cambie
-# invalida el plan elegido, o se cobraría el precio de otra configuración.
-_VISAR_POLIZA_KEYS = ('poliza_plan_id',)
-_VISAR_STEP_CLEARS = {
-    'services': ('motivo',) + _VISAR_PLAGA_KEYS + ('cobertura',)
-                + _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_POLIZA_KEYS,
-    'motivo': _VISAR_PLAGA_KEYS,
-    'plagas': _VISAR_PLAGA_KEYS + _VISAR_POLIZA_KEYS,
-    'cobertura': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS
-                 + _VISAR_POLIZA_KEYS,
-    'group': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS
-             + _VISAR_POLIZA_KEYS,
-    'interior': _VISAR_INTERIOR_KEYS + _VISAR_POLIZA_KEYS,
-    'exterior': _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS + _VISAR_POLIZA_KEYS,
-    'dimensiones': _VISAR_POLIZA_KEYS,
-}
-_VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
+# El grafo de dependencias, la secuencia de pasos, la normalización de respuestas
+# y las opciones válidas viven en `appointment.type` (models/appointment_wizard_flow.py).
+# Bajaron de aquí porque el agente de WhatsApp conduce EL MISMO cuestionario por
+# RPC: con las reglas atadas a `request.session` habría tenido que reimplementarlas.
+# Este controlador ya solo hace lo suyo — sesión HTTP, formularios y URLs.
 
 
 class VisarAppointmentController(WebsiteAppointmentSale):
+
+    # El flujo del wizard (podar, secuenciar, normalizar, ofrecer) vive en el
+    # modelo, compartido con el agente de WhatsApp. Atajo para no repetirlo.
+    def _visar_flow(self):
+        return request.env['appointment.type'].sudo()
 
     # ------------------------------------------------------------------
     # Sesión wizard
@@ -191,11 +172,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
     # True si algún item del wizard resuelto requiere visita de valoración técnica.
     def _visar_selections_require_valuation(self, selections):
-        # Corte por calificación (termitas/chinches/plaga no identificada) marcado en el paso de plagas.
-        if (selections or {}).get('requiere_valoracion'):
-            return True
-        items = request.env['appointment.type'].sudo()._visar_resolve_wizard_items(selections)
-        return any(item.get('is_valuation') for item in items)
+        return self._visar_flow()._visar_wizard_requires_valuation(selections)
 
     # Razón por la que el wizard cortó a valoración (para registrar en la cita).
     def _visar_resolve_valuation_reason(self, selections):
@@ -211,10 +188,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
 
     # Devuelve los grupos de servicio activos y visibles en el paso 1 del wizard.
     def _visar_wizard_groups(self):
-        return request.env['visar.service.group'].sudo().search([
-            ('active', '=', True),
-            ('show_in_wizard', '=', True),
-        ])
+        return self._visar_flow()._visar_wizard_groups()
 
     # Inicializa la sesión wizard con el tipo maestro y selecciones vacías.
     def _visar_init_wizard_session(self):
@@ -256,269 +230,64 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     def _visar_form_id_list(self, field):
         return self._visar_parse_id_list(request.httprequest.form.getlist(field))
 
-    # Devuelve el recordset de grupos actualmente seleccionados en el wizard.
-    def _visar_selected_groups(self, selections):
-        Group = request.env['visar.service.group'].sudo()
-        return Group.browse(selections.get('group_ids') or []).exists()
-
     # True si entre los grupos elegidos está fumigación (dispara motivo/plagas/cobertura).
     def _visar_fumigacion_selected(self, selections):
-        return any(g.code == 'fumigacion' for g in self._visar_selected_groups(selections))
+        return self._visar_flow()._visar_wizard_fumigacion_selected(selections)
 
     # Grupo cuyas dimensiones se eligen por el paso de cobertura (interior/exterior/ambos).
     def _visar_coverage_group(self):
-        return request.env['visar.service.group'].sudo().search(
-            [('code', '=', 'fumigacion')], limit=1)
+        return self._visar_flow()._visar_wizard_coverage_group()
 
     # Dimensiones del grupo fumigación que corresponden a la cobertura elegida.
     def _visar_fum_dimensions_for_coverage(self, coverage):
-        group = self._visar_coverage_group()
-        if not group:
-            return request.env['visar.service.dimension']
-        dims = group.dimension_ids.filtered('active')
-        interior = dims.filtered(lambda d: d.measure_type == 'interior')
-        exterior = dims.filtered(lambda d: d.measure_type == 'exterior')
-        if coverage == 'interior':
-            return interior
-        if coverage == 'exterior':
-            return exterior
-        return interior | exterior
-
-    # True si la dimensión ya tiene un tramo elegido en las selecciones.
-    def _visar_dim_has_tier(self, selections, dimension):
-        key = dimension._visar_tier_field_name()
-        return bool(
-            (selections or {}).get(key)
-            or ((selections or {}).get('tiers') or {}).get(str(dimension.id)))
+        return self._visar_flow()._visar_wizard_fum_dimensions_for_coverage(coverage)
 
     # True si el cliente declaró problema de roedores en el paso de calificación.
     def _visar_booking_has_roedores(self, booking):
-        # La regla vive en el modelo: la comparte el agente de WhatsApp, que arma
-        # el mismo pedido sin pasar por aqui.
-        return request.env['appointment.type'].sudo()._visar_selections_has_roedores(
-            booking.get('selections'))
+        return self._visar_flow()._visar_wizard_has_roedores(booking)
 
     # Add-ons opcionales ofrecibles como extras para la reserva actual.
     def _visar_extras_offers(self, booking):
-        booking = booking or {}
-        zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
-        items = booking.get('items') or []
-        if not zone or not items:
-            return []
-        return request.env['appointment.type'].sudo()._visar_offered_addons(
-            items, zone, include_roedores=self._visar_booking_has_roedores(booking))
+        return self._visar_flow()._visar_wizard_extras_offers(booking)
 
     # ------------------------------------------------------------------
     # Paso de póliza (upsell de suscripción)
     # ------------------------------------------------------------------
-    def _visar_poliza_plans(self):
-        """Planes ofrecibles en el paso de póliza, en orden de presentación.
-
-        Se leen de un parámetro de sistema para no hornear ids en el código; por
-        defecto, los planes que ya tienen lista (zona × plan) configurada.
-        """
-        Plan = request.env['sale.subscription.plan'].sudo()
-        param = request.env['ir.config_parameter'].sudo().get_param(
-            'visar.poliza_plan_ids')
-        if param:
-            ids = self._visar_parse_id_list(param.replace(',', ' ').split())
-            plans = Plan.browse(ids).exists()
-            if plans:
-                return plans
-        pricelists = request.env['product.pricelist'].sudo().search(
-            [('visar_plan_id', '!=', False)])
-        return pricelists.mapped('visar_plan_id').sorted('billing_period_value')
-
     def _visar_poliza_context(self, booking):
-        """(zone, master, plans) si la reserva puede volverse póliza; None si no.
-
-        Comprobación barata, sin cotizar: la usa `_visar_wizard_steps`, que corre en
-        CADA página del wizard para el indicador "Paso X de Y".
-        """
-        booking = booking or {}
-        if booking.get('mode') != 'wizard':
-            return None
-        zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
-        items = booking.get('items') or []
-        if not zone or not items:
-            return None
-        if self._visar_selections_require_valuation(booking.get('selections') or {}):
-            return None
-        master = request.env['appointment.type'].sudo().browse(
-            booking.get('master_appointment_type_id')).exists()
-        if not master:
-            return None
-        # Sin lista (zona × plan) no hay precio de póliza que ofrecer.
-        plans = self._visar_poliza_plans().filtered(
-            lambda p: zone._visar_poliza_pricelist(p).visar_plan_id)
-        if not plans:
-            return None
-        sale_lines = master._visar_build_sale_lines(
-            items, zone, include_roedores=self._visar_booking_has_roedores(booking),
-            extra_addons=booking.get('extras_accepted'))
-        Product = request.env['product.product'].sudo()
-        if not any(Product.browse(l['product_id']).recurring_invoice for l in sale_lines):
-            return None
-        return zone, master, plans
+        """(zone, master, plans) si la reserva puede volverse póliza; None si no."""
+        return self._visar_flow()._visar_wizard_poliza_context(booking)
 
     def _visar_poliza_offers(self, booking):
-        """Ofertas de póliza para la reserva actual (una por plan ofrecible).
-
-        Cotiza de verdad, así que se llama solo en el paso; para saber si el paso
-        existe basta `_visar_poliza_context`.
-        """
-        context = self._visar_poliza_context(booking)
-        if not context:
-            return []
-        zone, master, plans = context
-        items = booking.get('items') or []
-        include_roedores = self._visar_booking_has_roedores(booking)
-        extras = booking.get('extras_accepted')
-
-        base = master._visar_quote_booking(
-            items, zone, include_roedores=include_roedores, extra_addons=extras)
-        offers = []
-        for plan in plans:
-            quote = master._visar_quote_booking(
-                items, zone, include_roedores=include_roedores,
-                extra_addons=extras, plan=plan)
-            if not quote:
-                continue
-            offers.append({
-                'plan': plan,
-                'plan_id': plan.id,
-                'name': plan.name,
-                'billing_label': plan.billing_period_display_sentence,
-                'periods': quote['periods'],
-                # Precio de la PÓLIZA = solo el servicio recurrente. Los add-ons son
-                # cargo único y no se repiten cada periodo, así que meterlos en el
-                # precio "al mes" lo infla y no es lo que se va a cobrar en el mes 3.
-                'period_total': quote['recurring_total'],
-                'addons_total': quote['addons_total'],
-                'upfront_service_total': quote['upfront_service_total'],
-                'upfront_total': quote['upfront_total'],
-                # Ahorro frente a contratar el mismo servicio una sola vez: se compara
-                # solo la parte recurrente, que es la única que la póliza abarata.
-                'saving': max(0.0, (base or {}).get('recurring_total', 0.0)
-                              - quote['recurring_total']),
-                'quote': quote,
-            })
-        return offers
+        """Ofertas de póliza para la reserva actual (una por plan ofrecible)."""
+        return self._visar_flow()._visar_wizard_poliza_offers(booking)
 
     def _visar_auto_dimensions_for_groups(self, groups, dimension_ids):
         """Añade dimensiones únicas de grupos con una sola opción."""
-        Dimension = request.env['visar.service.dimension'].sudo()
-        result = set(dimension_ids or [])
-        for group in groups:
-            dims = group.dimension_ids.filtered('active')
-            if len(dims) == 1:
-                result.add(dims.id)
-        return list(result)
-
-    # True si el grupo tiene más de una dimensión activa y requiere un sub-paso.
-    def _visar_group_needs_substep(self, group):
-        return len(group.dimension_ids.filtered('active')) > 1
-
-    def _visar_next_group_substep(self, selections):
-        """Primer grupo seleccionado que aún no tiene dimensiones elegidas.
-
-        Excluye el grupo de fumigación: sus dimensiones se eligen en el paso de
-        cobertura (interior/exterior/ambos), no en el sub-paso genérico.
-        """
-        selected_groups = self._visar_selected_groups(selections)
-        coverage_group = self._visar_coverage_group()
-        dimension_ids = set(selections.get('dimension_ids') or [])
-        for group in selected_groups.sorted('sequence'):
-            if group == coverage_group:
-                continue
-            if not self._visar_group_needs_substep(group):
-                continue
-            group_dim_ids = set(group.dimension_ids.filtered('active').ids)
-            if not group_dim_ids.intersection(dimension_ids):
-                return group
-        return request.env['visar.service.group']
+        return self._visar_flow()._visar_wizard_auto_dimensions(groups, dimension_ids)
 
     def _visar_dimension_sections(self, selections, measure_type='direct'):
-        """Secciones de tramos (radio por rango) para las dimensiones del tipo dado.
-
-        - 'direct': paso de rango directo (fallback / legacy).
-        - 'interior': modo 'sé mis m²' del paso interior (mismos rangos del tabulador).
-        Las dimensiones de exterior no usan secciones: se resuelven por banda unificada.
-        """
-        ProductTemplate = request.env['product.template'].sudo()
-        sections = []
-        for dimension in self._visar_selection_dimension_ids(selections).filtered(
-                lambda d: d.measure_type == measure_type):
-            template = ProductTemplate._visar_get_service_template_for_dimension(dimension)
-            if not template:
-                continue
-            sections.append({
-                'dimension': dimension,
-                'dimension_id': dimension.id,
-                'label': dimension._visar_wizard_label(),
-                'field_name': dimension._visar_tier_field_name(),
-                'tiers': template._visar_tiers_for_dimension(dimension),
-            })
-        return sections
+        """Secciones de tramos (radio por rango) para las dimensiones del tipo dado."""
+        return self._visar_flow()._visar_wizard_dimension_sections(
+            selections, measure_type=measure_type)
 
     # Dimensiones seleccionadas con el tipo de medición dado.
     def _visar_dims_by_measure(self, selections, measure_type):
-        return self._visar_selection_dimension_ids(selections).filtered(
-            lambda d: d.measure_type == measure_type)
+        return self._visar_flow()._visar_wizard_dims_by_measure(selections, measure_type)
 
     # Tramo cuyo rango de m² contiene el valor dado, para una dimensión concreta.
-    # (Acotado por measure_scope; ante solapes gana el rango más angosto.)
     def _visar_tier_for_dimension_m2(self, dimension, m2):
-        ProductTemplate = request.env['product.template'].sudo()
-        template = ProductTemplate._visar_get_service_template_for_dimension(dimension)
-        if not template:
-            return request.env['visar.service.tier']
-        return template._visar_tier_for_dimension_m2(dimension, m2)
-
-    # Delega en el modelo para obtener las dimensiones activas de las selecciones actuales.
-    def _visar_selection_dimension_ids(self, selections):
-        return request.env['appointment.type'].sudo()._visar_selection_dimension_ids(selections)
+        return self._visar_flow()._visar_wizard_tier_for_m2(dimension, m2)
 
     def _visar_wizard_steps(self, selections):
-        """Lista ordenada de claves de paso aplicables a las selecciones actuales.
+        """Lista ordenada de claves de paso aplicables al estado actual.
 
-        Sirve para el indicador 'Paso X de Y'. Los pasos de medición se infieren
-        de los measure_type de las dimensiones elegidas; si aún no se eligió la
-        cobertura, se anticipan los de fumigación.
+        Sirve para el indicador 'Paso X de Y'. La secuencia la decide el modelo;
+        aquí solo se le entrega el estado que vive en la sesión, porque extras y
+        póliza dependen de zona/items, no solo de `selections`.
         """
-        selections = selections or {}
-        steps = ['services']
-        fum = self._visar_fumigacion_selected(selections)
-        if fum:
-            steps += ['motivo', 'plagas', 'cobertura']
-
-        coverage_group = self._visar_coverage_group()
-        for group in self._visar_selected_groups(selections).sorted('sequence'):
-            if group == coverage_group:
-                continue
-            if self._visar_group_needs_substep(group):
-                steps.append('group_%s' % group.id)
-
-        measure_types = {
-            d.measure_type for d in self._visar_selection_dimension_ids(selections)
-        }
-        if fum and not selections.get('cobertura') and coverage_group:
-            measure_types |= {
-                d.measure_type for d in coverage_group.dimension_ids.filtered('active')
-            }
-        for mtype, key in (('interior', 'interior'), ('exterior', 'exterior'),
-                           ('direct', 'dimensiones')):
-            if mtype in measure_types:
-                steps.append(key)
-        steps.append('address')
-        # Extras y póliza solo existen tras resolver zona/items y si hay qué ofrecer.
-        booking = self._visar_get_booking_session()
-        if booking.get('zone_id') and booking.get('items'):
-            if self._visar_extras_offers(booking):
-                steps.append('extras')
-            if self._visar_poliza_context(booking):
-                steps.append('poliza')
-        return steps
+        booking = dict(self._visar_get_booking_session())
+        booking['selections'] = selections or {}
+        return self._visar_flow()._visar_wizard_step_sequence(booking)
 
     # Devuelve (índice 1-based, total) del paso actual para el indicador de progreso.
     def _visar_wizard_position(self, selections, step_key):
@@ -542,6 +311,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'address': base + '/wizard/direccion',
             'extras': base + '/wizard/extras',
             'poliza': base + '/wizard/poliza',
+            # No es un paso del cuestionario (no aparece en la secuencia), pero sí
+            # un destino al que el flujo puede mandar desde varios puntos.
+            'valuation': base + '/wizard/valoracion-aviso',
         }.get(step_key, base)
 
     # URL del paso anterior al actual (para el botón "Volver"); None si es el primero.
@@ -554,75 +326,22 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return None
         return self._visar_step_url(steps[idx - 1])
 
-    # Limpia las selecciones que quedan inválidas al (re)enviar el paso dado.
-    def _visar_clear_downstream(self, selections, step_key):
-        norm = 'group' if step_key.startswith('group_') else step_key
-        keys = set(_VISAR_STEP_CLEARS.get(norm, ()))
-        clears_tiers = norm in _VISAR_CLEARS_TIERS
-        result = {}
-        for key, value in (selections or {}).items():
-            if key in keys:
-                continue
-            if clears_tiers and key.startswith('tier_'):
-                continue
-            result[key] = value
-        return result
-
-    # Aplica la respuesta de un paso: limpia estado aguas abajo y fusiona los nuevos valores.
+    # Aplica la respuesta de un paso: limpia estado aguas abajo y fusiona los nuevos
+    # valores. El qué lo decide el modelo; aquí solo se persiste en la sesión.
     def _visar_commit_step(self, step_key, updates):
-        booking = self._visar_get_booking_session()
-        if not booking.get('mode'):
-            master = self._visar_master_appointment_type()
-            booking['mode'] = 'wizard'
-            booking['master_appointment_type_id'] = master.id if master else False
-        selections = self._visar_clear_downstream(booking.get('selections') or {}, step_key)
-        selections.update(updates)
-        booking['selections'] = selections
+        booking = self._visar_flow()._visar_wizard_commit(
+            self._visar_get_booking_session(), step_key, updates)
         self._visar_persist_booking(booking)
-        return selections
+        return booking.get('selections') or {}
 
     # Ruta del siguiente paso incompleto del wizard según las selecciones actuales.
+    # La secuencia la decide el modelo; aquí solo se traduce a URL.
     def _visar_wizard_next(self, selections=None):
         booking = self._visar_get_booking_session()
-        selections = selections if selections is not None else (booking.get('selections') or {})
-        base = '/appointment/visar/booking'
-        if not selections.get('group_ids'):
-            return base
-
-        # Corte a valoración (plaga compleja o banda de exterior fuera de rango):
-        # atajo global para no re-preguntar mediciones cuando ya se decidió valoración.
-        if selections.get('requiere_valoracion'):
-            return base + '/wizard/valoracion-aviso'
-
-        if self._visar_fumigacion_selected(selections):
-            if not selections.get('motivo'):
-                return base + '/wizard/motivo'
-            if not selections.get('servicio_plaga'):
-                return base + '/wizard/plagas'
-            if not selections.get('cobertura'):
-                return base + '/wizard/cobertura'
-
-        next_group = self._visar_next_group_substep(selections)
-        if next_group:
-            return base + '/wizard/group/%s' % next_group.id
-
-        dims = self._visar_selection_dimension_ids(selections)
-
-        def needs(measure_type):
-            return any(
-                d.measure_type == measure_type and not self._visar_dim_has_tier(selections, d)
-                for d in dims)
-
-        if needs('interior'):
-            return base + '/wizard/interior'
-        if needs('exterior'):
-            return base + '/wizard/exterior'
-        if needs('direct'):
-            return base + '/wizard/dimensiones'
-
-        if self._visar_selections_require_valuation(selections):
-            return base + '/wizard/valoracion-aviso'
-        return base + '/wizard/direccion'
+        if selections is not None:
+            booking = dict(booking, selections=selections)
+        return self._visar_step_url(
+            self._visar_flow()._visar_wizard_next_step(booking))
 
     # Renderiza el paso de dirección (último paso del wizard).
     def _visar_render_address(self, selections, values=None, error=None):
@@ -630,30 +349,11 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             'address', selections=selections, error=error, values=values or {})
         return request.render('visar_appointment.visar_wizard_zona', ctx)
 
-    # Extrae y normaliza los campos de dirección de entrega del formulario.
-    def _visar_extract_address(self, post):
-        keys = ('street', 'ext_num', 'int_num', 'neighborhood', 'zip')
-        return {key: (post.get(key) or '').strip() for key in keys}
-
     # Resuelve la zona desde el CP y completa ciudad/estado.
     # Devuelve (zone, address, error): el número interior es opcional; ciudad y
     # estado se derivan del CP en el servidor (no se confía en el cliente).
     def _visar_resolve_address_zone(self, post):
-        address = self._visar_extract_address(post)
-        required = ('street', 'ext_num', 'neighborhood', 'zip')
-        if any(not address.get(key) for key in required):
-            return request.env['visar.zone'], address, _(
-                'Completa calle, número exterior, colonia y código postal.')
-        CpModel = request.env['visar.zone.cp'].sudo()
-        cp_record = CpModel._get_cp_record(address['zip'])
-        if not cp_record or not cp_record.zone_id:
-            return request.env['visar.zone'], address, _(
-                'No damos servicio en el código postal %s. Contáctanos.'
-            ) % address['zip']
-        address['zip'] = CpModel._normalize_cp(address['zip'])
-        address['city'] = cp_record.municipality or ''
-        address['state'] = 'Nuevo León'
-        return cp_record.zone_id, address, None
+        return self._visar_flow()._visar_wizard_resolve_address(post)
 
     # Construye el dict de contexto base común a todos los pasos del wizard.
     def _visar_wizard_context_base(self, step_key, selections=None, error=None, values=None):
@@ -1267,8 +967,11 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         return self._visar_after_extras_redirect(booking)
 
     # Tras los extras: ofrece la póliza si aplica, si no va directo al horario.
+    # La cadena (dirección → extras → póliza → horario) la decide el modelo, que
+    # es el mismo camino que recorre el agente de WhatsApp.
     def _visar_after_extras_redirect(self, booking):
-        if self._visar_poliza_context(booking):
+        step = self._visar_flow()._visar_wizard_step_after(booking, 'extras')
+        if step == 'poliza':
             return request.redirect('/appointment/visar/booking/wizard/poliza')
         return self._visar_schedule_redirect(booking)
 

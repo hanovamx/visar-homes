@@ -766,6 +766,69 @@ rechaza: apartar sin comprobar es justo el bug que esa validación vino a cerrar
    (**SQLite**) + el render de pasos en WhatsApp. Todo lo de Odoo que necesita ya
    está en pie y verificado.
 
+## 10.5 El flujo del cuestionario baja al modelo (19-ago-2026)
+
+> **Escrito, compila, SIN correr contra una BD.** Encargo de verificación en
+> [`briefs/2026-08-19-verificacion-motor-de-flujos.md`](./briefs/2026-08-19-verificacion-motor-de-flujos.md).
+
+Al empezar a diseñar los pasos del runtime (§2.3 del plan del runtime) apareció
+que **faltaba más de lo que decía el plan**. El plan pedía dos cosas —
+`agent_booking_options` y exponer `_VISAR_STEP_CLEARS` (§4.1)—; en el código hay
+**cuatro** reglas del cuestionario, y las cuatro estaban en el controlador web:
+
+| Regla | Dónde estaba | Por qué no se puede duplicar |
+|---|---|---|
+| **Podar** | `_VISAR_STEP_CLEARS` + `_visar_clear_downstream` | La tabla no lo dice todo: `_VISAR_CLEARS_TIERS` añade una regla de **prefijo** (`tier_*`) |
+| **Secuenciar** | `_visar_wizard_next` | *No estaba en el plan.* Saber que plagas va tras motivo, y que un corte a valoración se salta las mediciones, es tan duplicable como los precios |
+| **Normalizar** | inline en cada handler POST | *No estaba en el plan.* "Protección general" activa las tres categorías; "termitas" corta a valoración **solo en la rama correctiva** |
+| **Ofrecer** | repartido entre handlers y plantillas | Es lo que el plan llamaba `agent_booking_options` |
+
+Las cuatro viven ahora en `appointment.type`
+(`visar_appointment/models/appointment_wizard_flow.py`). El controlador delega y
+se queda con lo suyo —sesión HTTP, formularios, URLs—: **1961 → 1664 líneas**.
+
+**Decisión: se expone la operación, no la tabla.** Publicar `_VISAR_STEP_CLEARS`
+por RPC obligaría al runtime a reimplementar la regla de prefijo de los tramos,
+que es exactamente la divergencia que esto viene a cerrar. Lo mismo con la
+secuencia y con la normalización: el runtime **pregunta**, no deriva.
+
+**Decisión: un solo RPC, no dos.** `agent_booking_step(payload)` sustituye al
+`agent_booking_options` del plan y le añade la secuencia y la normalización.
+Recibe `{booking, step, answer}` y devuelve `{selections, zone_id, items,
+delivery_address, extras_accepted, step, options, sequence, requires_valuation,
+done, error}`. Es **lectura**: no escribe nada en Odoo, el estado se lo queda el
+runtime. Sin `step` solo consulta —para retomar una conversación estacionada sin
+tocar nada—. Con `error` lleno, el paso **no se mueve**: se vuelve a preguntar lo
+mismo con el motivo.
+
+Esto **cierra la decisión abierta §4.1** por la opción (a), que era la
+recomendada.
+
+Un fallo encontrado al escribirlo, y corregido: la cadena posterior a la
+dirección (extras → póliza → horario) **rebotaba**. Contestar los extras no hace
+desaparecer la oferta, así que arrancar la cadena desde el principio devolvía al
+cliente al paso que acababa de contestar, para siempre. Ahora se recorre **desde
+el paso contestado** (`_visar_wizard_step_after`), y el web usa la misma cadena.
+
+Pruebas escritas (sin ejecutar): `visar_appointment/tests/test_wizard_flow.py`
+(poda por prefijo, independencia interior/exterior, cortes por motivo, secuencia,
+la cadena que no rebota, serializabilidad de las opciones) y
+`visar_whatsapp_agent/tests/test_agent_booking_step.py` (round-trip del estado,
+que el RPC no decide nada por su cuenta, que nunca lanza con payload basura).
+
+**Sin bump de versión en ninguno de los dos módulos:** es Python puro —ni campos,
+ni modelos, ni ACL, ni vistas, ni datos—, así que basta reiniciar.
+
+Dos cosas que quedan anotadas para la verificación, no resueltas:
+
+- **Costo.** `_visar_wizard_step_sequence` llama a `_visar_wizard_poliza_context`,
+  que cotiza de verdad. Después de la dirección, una respuesta del RPC puede
+  correr eso hasta 3 veces. El web ya pagaba algo parecido por render; se mide
+  antes de cachear (V7 del encargo).
+- **Cosmético.** El contador "Paso X de Y" de la página de error del paso 1 puede
+  dar un total distinto al de antes: esa ruta nunca le pasó las selecciones al
+  contador. No afecta al `back_url` ni al flujo.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio

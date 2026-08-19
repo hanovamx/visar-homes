@@ -4,6 +4,7 @@ from . import product_template
 from . import appointment_resource
 from . import visar_slot_hold
 from . import appointment_type
+from . import appointment_wizard_flow
 from . import calendar_booking
 from . import calendar_event
 from . import payment_transaction

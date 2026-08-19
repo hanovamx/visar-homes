@@ -1222,6 +1222,105 @@ class VisarAgentTools(models.AbstractModel):
             })
         return values
 
+    # ------------------------------------------------------------------
+    # El cuestionario, paso a paso (agent_booking_step)
+    # ------------------------------------------------------------------
+    #
+    # Es el metodo que permite que el runtime NO tenga logica de flujo. Le manda
+    # el estado y la respuesta del cliente; Odoo poda lo que quedo invalido,
+    # normaliza la respuesta, decide que sigue y devuelve las opciones validas
+    # del paso nuevo.
+    #
+    # Sin esto el runtime tendria que derivar las opciones del catalogo y
+    # reimplementar tres reglas: que se invalida al cambiar un paso, en que orden
+    # van, y como se normaliza cada respuesta ("proteccion general" activa las
+    # tres categorias; "termitas" corta a valoracion). Serian dos copias
+    # divergiendo — el riesgo de "dos front-ends" del diseno 33 §11, que ya se
+    # cobro una vez (I-11).
+    #
+    # Es LECTURA: no escribe nada en Odoo. El estado se lo queda el runtime.
+
+    @api.model
+    def _agent_booking_state(self, booking, step=None, error=None):
+        """Respuesta tipada de agent_booking_step. Nunca lanza."""
+        AptType = self.env['appointment.type'].sudo()
+        booking = booking or {}
+        step = step or AptType._visar_wizard_next_step(booking)
+        return {
+            'selections': booking.get('selections') or {},
+            'zone_id': booking.get('zone_id') or None,
+            'items': booking.get('items') or [],
+            'delivery_address': booking.get('delivery_address') or {},
+            'extras_accepted': booking.get('extras_accepted') or [],
+            'step': step,
+            'options': AptType._visar_wizard_step_options(booking, step),
+            'sequence': AptType._visar_wizard_step_sequence(booking),
+            'requires_valuation': AptType._visar_wizard_requires_valuation(
+                booking.get('selections') or {}),
+            'done': step == 'schedule',
+            'error': error,
+        }
+
+    @api.model
+    def agent_booking_step(self, payload):
+        """Avanza el cuestionario un paso y devuelve el estado + las opciones.
+
+        `payload` = {
+            "booking": {...},     # el estado que devolvio la llamada anterior;
+                                  # vacio o ausente = empezar de cero
+            "step":    "plagas",  # el paso que se esta contestando; ausente = solo
+                                  # preguntar por el estado actual, sin aplicar nada
+            "answer":  {...},     # la respuesta del cliente, tal cual la recogio
+                                  # el runtime (ver `options.kind` del paso)
+        }
+
+        Devuelve {"selections", "zone_id", "items", "delivery_address",
+        "extras_accepted", "step", "options", "sequence", "requires_valuation",
+        "done", "error"}.
+
+        `error` es None o {"code", "message", ...}: el runtime se lo dice al
+        cliente y vuelve a preguntar EL MISMO paso. No es una excepcion — el
+        agente tiene que poder seguir la conversacion.
+
+        El `booking` que se devuelve es el que hay que mandar en la llamada
+        siguiente. Se pasa entero a `agent_prepare_booking` al cerrar: por eso
+        `selections` viaja tal cual y nunca se arman `items` a mano (diseno 33
+        §7.1 — emparejar mal un tramo cobra un tercio del precio SIN error).
+        """
+        payload = payload or {}
+        AptType = self.env['appointment.type'].sudo()
+        booking = payload.get('booking') or {}
+        step = payload.get('step')
+
+        # Sin paso: solo se pregunta "¿en que voy?". Util para retomar una
+        # conversacion estacionada sin tocar el estado.
+        if not step:
+            return self._agent_booking_state(booking)
+
+        try:
+            booking, error = AptType._visar_wizard_apply_answer(
+                booking, step, payload.get('answer'))
+        except Exception:  # noqa: BLE001 - el flujo nunca tumba la respuesta
+            _logger.exception(
+                "agent_booking_step: fallo al aplicar el paso %s", step)
+            return self._agent_booking_state(
+                booking, step=step,
+                error={'code': 'step_failed',
+                       'message': "No pude registrar esa respuesta."})
+
+        if error:
+            # Se vuelve a preguntar EL MISMO paso, con su mensaje.
+            return self._agent_booking_state(booking, step=step, error=error)
+
+        # El paso de direccion es el que resuelve zona e items; de ahi en adelante
+        # la secuencia la marca lo que haya que ofrecer (extras, poliza) y no el
+        # cuestionario, asi que se avanza por la cadena y no por `next_step`.
+        if step in ('address', 'extras', 'poliza'):
+            return self._agent_booking_state(
+                booking, step=AptType._visar_wizard_step_after(booking, step))
+
+        return self._agent_booking_state(booking)
+
     @api.model
     def agent_hold_slot(self, payload):
         """Aparta un horario unos minutos a nombre de un telefono.
