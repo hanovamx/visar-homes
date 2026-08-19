@@ -533,7 +533,13 @@ class AppointmentType(models.Model):
                 # Con póliza, lo que se cobra HOY no es lo recurrente: enseñar el
                 # "al mes" como si fuera el cargo sería mentir sobre el cobro.
                 total = quote.get('upfront_total') or quote.get('total')
-                currency = (zone.company_id or self.env.company).currency_id.name
+                # La moneda sale de la cotizacion, que ya la resuelve bien
+                # (lista de la zona -> website -> compania). `visar.zone` NO
+                # tiene `company_id`: calcularla aqui por segunda vez reventaba
+                # el paso de la direccion con AttributeError.
+                currency = (
+                    self.env['res.currency'].browse(quote.get('currency_id'))
+                    or self.env.company.currency_id).name
                 if plan and quote.get('recurring_total'):
                     lines.append(_('Póliza: %(plan)s') % {'plan': plan.name})
         return {'lines': lines, 'total': total, 'currency': currency}
