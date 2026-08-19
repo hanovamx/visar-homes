@@ -466,6 +466,30 @@ class VisarAgentTools(models.AbstractModel):
             lang_code=SERVICES_LANG)
 
     @api.model
+    def _agent_window_label(self, start, stop):
+        """'21 de agosto de 2026, entre 15:00 y 16:00' — ventana, no hora exacta.
+
+        Al cliente se le da una VENTANA de llegada (decision 15 del diseno 33): el
+        bloque son 20 min de traslado + 40 de servicio, asi que prometer una hora
+        en punto es prometer algo que la calle no respeta.
+
+        En la zona de Visar y en espanol, pase lo que pase con el idioma del
+        usuario que llame: esto lo lee un cliente.
+        """
+        if not start:
+            return ""
+        tz = self.env['ir.config_parameter'].sudo().get_param(TZ_PARAM, DEFAULT_TZ)
+        dia = format_datetime(self.env, start, tz=tz, dt_format="d 'de' MMMM 'de' y",
+                              lang_code=SERVICES_LANG)
+        desde = format_datetime(self.env, start, tz=tz, dt_format="HH:mm",
+                                lang_code=SERVICES_LANG)
+        if not stop:
+            return "%s, %s" % (dia, desde)
+        hasta = format_datetime(self.env, stop, tz=tz, dt_format="HH:mm",
+                                lang_code=SERVICES_LANG)
+        return "%s, entre %s y %s" % (dia, desde, hasta)
+
+    @api.model
     def _agent_service_bucket(self, line, date, today_start):
         """Clasifica un servicio en 'upcoming' o 'history'.
 
@@ -1494,6 +1518,10 @@ class VisarAgentTools(models.AbstractModel):
                     'reason': 'slot_taken'}
 
         hold = self.env['visar.slot.hold']._visar_hold(resource, start, stop, owner)
+        # El wa_id EXACTO, no el nacional de 10 digitos: es la clave con la que el
+        # runtime encuentra la conversacion para avisar si el apartado vence.
+        if hold:
+            hold.sudo().visar_wa_phone = payload.get('phone') or False
         return {
             'held': bool(hold),
             'hold_id': hold.id if hold else None,
@@ -1585,6 +1613,9 @@ class VisarAgentTools(models.AbstractModel):
         # 5. Apartar antes de cobrar.
         hold = self.env['visar.slot.hold']._visar_hold(
             resources[0], start, stop, owner_key, capacity=asked_capacity)
+        wa_phone = payload.get('phone') or False
+        if hold:
+            hold.sudo().visar_wa_phone = wa_phone
 
         # 6. Reserva pendiente + pedido, por los mismos metodos que el web.
         booking_payload = {
@@ -1604,6 +1635,9 @@ class VisarAgentTools(models.AbstractModel):
             asked_capacity=asked_capacity,
             booking_line_values=booking_line_values)
         hold.sudo().calendar_booking_id = calendar_booking.id
+        # Marca la reserva como venida de WhatsApp y con QUE numero: es lo que
+        # permite confirmarle el pago por donde escribio.
+        calendar_booking.sudo().visar_wa_phone = wa_phone
 
         order = self.env['sale.order'].sudo().create({
             'partner_id': partner.id,

@@ -206,3 +206,56 @@ class TestSlotHold(TransactionCase):
         self.assertEqual(self._remaining(), 0)
         self.Hold._visar_release(owner_key=self.owner)
         self.assertEqual(self._remaining(), 1)
+
+    # --- la liga de pago vive y muere con el apartado (diseño 33 §6.1) --------
+    #
+    # Estaba decidido y sin implementar, y el hueco era el peor del flujo: la
+    # reserva pendiente NO consume capacidad, así que un pago tardío pasaba, el
+    # nativo descartaba la reserva en `_filter_unavailable_bookings` y el cliente
+    # se quedaba **pagado y sin cita**, en silencio.
+
+    def _booking_con_hold(self, **hold_vals):
+        booking = self.env['calendar.booking'].create({
+            'appointment_type_id': self.apt_type.id,
+            'name': 'Reserva Test Guardia',
+            'partner_id': self.env['res.partner'].create({'name': 'X Guardia'}).id,
+            'product_id': self.product.id,
+            'start': self.start,
+            'stop': self.stop,
+        })
+        hold = self._hold(**hold_vals)
+        hold.calendar_booking_id = booking.id
+        return booking, hold
+
+    def test_con_apartado_vivo_el_cobro_pasa(self):
+        booking, _hold = self._booking_con_hold()
+        self.assertTrue(booking._visar_ensure_hold_for_payment())
+
+    def test_apartado_vencido_pero_horario_libre_el_cobro_pasa(self):
+        """El cliente pagó tarde y su lugar seguía ahí: cobrarle y darle la cita
+        es exactamente lo correcto (decisión de negocio, agosto 2026)."""
+        booking, hold = self._booking_con_hold(
+            expire_at=fields.Datetime.subtract(fields.Datetime.now(), minutes=1))
+        self.assertTrue(booking._visar_ensure_hold_for_payment())
+        self.assertGreater(hold.expire_at, fields.Datetime.now(),
+                           "y se vuelve a apartar: sin apartado, el nativo puede "
+                           "descartar la reserva DESPUES de cobrar")
+
+    def test_apartado_vencido_y_horario_tomado_el_cobro_se_rechaza(self):
+        booking, _hold = self._booking_con_hold(
+            expire_at=fields.Datetime.subtract(fields.Datetime.now(), minutes=1))
+        # Otro cliente se lo llevó mientras tanto.
+        self._hold(owner='9999999999')
+        self.assertFalse(booking._visar_ensure_hold_for_payment())
+
+    def test_una_reserva_sin_apartado_no_pasa_por_la_regla(self):
+        """El wizard web no crea apartados y no tiene por qué verse afectado."""
+        booking = self.env['calendar.booking'].create({
+            'appointment_type_id': self.apt_type.id,
+            'name': 'Reserva Web',
+            'partner_id': self.env['res.partner'].create({'name': 'Y Web'}).id,
+            'product_id': self.product.id,
+            'start': self.start,
+            'stop': self.stop,
+        })
+        self.assertTrue(booking._visar_ensure_hold_for_payment())

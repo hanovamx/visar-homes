@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Reserva pendiente de pago: creacion compartida y liberacion del apartado."""
-from odoo import Command, api, models
+from odoo import Command, api, fields, models
 
 
 class CalendarBooking(models.Model):
@@ -39,6 +39,54 @@ class CalendarBooking(models.Model):
             'start': date_start,
             'stop': date_end,
         }])
+
+    def _visar_ensure_hold_for_payment(self):
+        """¿Se puede cobrar esta reserva? Y si sí, se vuelve a apartar el horario.
+
+        Se llama justo antes de crear la transacción (ver
+        `payment_transaction.py`). Tres casos:
+
+          * **apartado vivo** → nada que hacer, adelante;
+          * **apartado vencido pero el horario libre** → se vuelve a apartar y
+            adelante. El cliente pagó tarde y su lugar seguía ahí: cobrarle y
+            darle la cita es exactamente lo correcto;
+          * **horario ocupado por otro** → False, y el cobro se rechaza antes de
+            que haya dinero de por medio.
+
+        Volver a apartar no es un detalle: sin apartado,
+        `_filter_unavailable_bookings` no tiene qué ignorar y el nativo puede
+        descartar la reserva **después** de cobrar.
+
+        Devuelve True para todo lo que no sea una reserva con apartado: el wizard
+        web no crea apartados y no tiene por qué pasar por esta regla.
+        """
+        self.ensure_one()
+        Hold = self.env['visar.slot.hold'].sudo()
+        holds = Hold.search([('calendar_booking_id', '=', self.id)])
+        if not holds:
+            return True
+        vivo = holds.filtered(
+            lambda h: h.is_frozen or h.expire_at > fields.Datetime.now())
+        if vivo:
+            return True
+
+        # Venció. ¿Sigue libre? El apartado propio ya no cuenta (venció), así que
+        # lo que quede ocupado lo ocupa otro.
+        hold = holds[0]
+        resource = hold.appointment_resource_id
+        apt_type = self.appointment_type_id
+        if not apt_type or resource not in apt_type.resource_ids:
+            return True  # configuración rara: no se bloquea un cobro por dudar
+        remaining = apt_type._get_resources_remaining_capacity(
+            resource, hold.start, hold.stop, with_linked_resources=False)
+        if remaining.get('total_remaining_capacity', 0) < (hold.capacity or 1):
+            return False
+
+        holds.write({
+            'expire_at': fields.Datetime.add(
+                fields.Datetime.now(), minutes=Hold._visar_hold_minutes()),
+        })
+        return True
 
     def _filter_unavailable_bookings(self):
         """Una reserva NO compite contra su propio apartado.

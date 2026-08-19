@@ -16,11 +16,59 @@ apartado se mide contra el INICIO del pago, no contra su final.
                               cliente pueda reintentar sin perder su lugar
   * pagado                  → lo libera `calendar.booking`, al crear la cita
 """
-from odoo import fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import ValidationError
 
 
 class PaymentTransaction(models.Model):
     _inherit = 'payment.transaction'
+
+    # ------------------------------------------------------------------
+    # La liga de pago vive y muere con el apartado (diseño 33 §6.1)
+    # ------------------------------------------------------------------
+    #
+    # Estaba **decidido y sin implementar**, y el hueco era real: la reserva
+    # pendiente de pago no consume capacidad, así que un pago tardío pasaba, el
+    # nativo descartaba la reserva en `_filter_unavailable_bookings` y el cliente
+    # se quedaba **pagado y sin cita**, en silencio. Es el peor final del flujo.
+    #
+    # La regla no es "al vencer, la liga muere". Es más útil y más honesta:
+    #
+    #   * el apartado venció y **nadie tomó el horario** → se vuelve a apartar y
+    #     el pago pasa. El cliente ni se entera; su lugar seguía ahí.
+    #   * el apartado venció y **el horario ya es de otro** → se rechaza ANTES de
+    #     cobrar, con un mensaje que dice qué pasó.
+    #
+    # Se engancha en `create` y no en el controlador del portal porque por ahí no
+    # pasan todas las rutas de pago: aquí pasan todas. La transacción se crea en
+    # borrador antes de hablar con el proveedor, así que rechazar aquí es
+    # rechazar antes de que haya dinero de por medio.
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        transactions = super().create(vals_list)
+        for transaction in transactions:
+            transaction._visar_check_slot_available()
+        return transactions
+
+    def _visar_check_slot_available(self):
+        """Rechaza el cobro si el horario de la reserva ya es de otro cliente.
+
+        Silencioso para todo lo que no sea una reserva Visar con apartado: el
+        canal web no crea apartados y no tiene por qué pasar por aquí.
+        """
+        self.ensure_one()
+        bookings = (self.sale_order_ids | self.source_transaction_id.sale_order_ids
+                    ).order_line.calendar_booking_ids
+        for booking in bookings:
+            if not booking._visar_ensure_hold_for_payment():
+                # Sin la hora: aquí solo hay UTC, y decírsela al cliente sería
+                # peor que no decirle ninguna. Ya la tiene en el chat.
+                raise ValidationError(_(
+                    "El horario que habías apartado ya no está disponible: se "
+                    "acabó el tiempo del apartado y lo tomó otro cliente. No se "
+                    "hizo ningún cargo. Escríbenos por WhatsApp y elegimos otro "
+                    "horario."))
 
     def _visar_holds(self):
         """Apartados ligados a las órdenes de estas transacciones."""

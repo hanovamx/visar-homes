@@ -22,3 +22,5 @@ access_agent_product_category,agent.product.category.readonly,product.model_prod
 access_agent_uom_uom,agent.uom.uom.readonly,uom.model_uom_uom,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_optional_line,agent.optional.line.readonly,visar_base.model_visar_product_optional_line,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_website,agent.website.readonly,website.model_website,group_whatsapp_agent_readonly,1,0,0,0
+access_wa_booking_message_user,visar.wa.booking.message user,model_visar_wa_booking_message,base.group_user,1,0,0,0
+access_wa_booking_message_manager,visar.wa.booking.message manager,model_visar_wa_booking_message,base.group_system,1,1,1,1

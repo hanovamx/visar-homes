@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from . import wa_outbox_mixin
 from . import visar_zone
 from . import visar_zone_cp
 from . import visar_service_group

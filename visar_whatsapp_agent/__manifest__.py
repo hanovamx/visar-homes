@@ -29,7 +29,7 @@ Ver .context/31-whatsapp-crm-lead-mapping.md y 32-...-implementation.md.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.3.0',
+    'version': '19.0.1.4.0',
     'license': 'LGPL-3',
     # visar_appointment: motor de precios (_visar_quote_booking). visar_crm:
     # pipeline/etapas y campos de crm.lead que llena agent_track_lead.
@@ -38,6 +38,8 @@ Ver .context/31-whatsapp-crm-lead-mapping.md y 32-...-implementation.md.
         'security/visar_whatsapp_agent_groups.xml',
         'security/ir.model.access.csv',
         'views/visar_agent_config_views.xml',
+        'views/wa_booking_outbox_views.xml',
+        'data/wa_booking_outbox_cron.xml',
     ],
     'installable': True,
     'application': False,
