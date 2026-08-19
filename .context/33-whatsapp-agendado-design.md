@@ -899,6 +899,103 @@ Dos cosas que quedan anotadas para la verificación, no resueltas:
   dar un total distinto al de antes: esa ruta nunca le pasó las selecciones al
   contador. No afecta al `back_url` ni al flujo.
 
+## 10.6 Tres fallos del primer uso real por WhatsApp (19-ago-2026)
+
+Salieron de recorrer el agendado **como cliente**, no de las pruebas. Los tres
+estaban en el tramo final del cuestionario, que es el que menos se había
+ejercitado.
+
+### (a) Los horarios se ofrecían en UTC
+
+`agent_day_slots` devolvía `start`/`stop` en UTC naive y nada más. El runtime no
+puede saber en qué zona está Visar —es configuración de Odoo
+(`visar.agent.timezone`)—, así que pintaba esa cadena tal cual: un servicio de
+las **4 de la tarde** se ofrecía como *"entre 22:00 y 23:00"*.
+
+Ahora cada slot viaja con **dos relojes**, y cada uno sirve para una cosa:
+
+| Campo | Zona | Para qué |
+|---|---|---|
+| `start` / `stop` | UTC naive | lo que se le devuelve a Odoo (`agent_hold_slot`, `agent_prepare_booking`) |
+| `start_local` / `stop_local` | zona de Visar | lo único que se le puede enseñar a una persona |
+
+La conversión se hace en Odoo a propósito: derivar la zona del otro lado sería
+otra regla duplicada (§11).
+
+### (b) La póliza no tenía forma de decir que no
+
+El paso ofrecía los planes y nada más. En el web da igual —hay botón de
+continuar—, pero en WhatsApp **el paso ES el menú**: sin una fila de "no", la
+única respuesta válida era contratar, y el cliente que no quería póliza se
+quedaba atrapado justo antes de elegir horario.
+
+Ahora la última opción es siempre "No, gracias" (`VISAR_POLIZA_NONE = 0`). No
+hizo falta tocar la normalización: `_visar_wizard_answer_poliza` ya descartaba
+cualquier valor que no fuera un plan ofrecido.
+
+De paso, la descripción decía `billing_period_display_sentence` — *"per month"*,
+en **inglés**, porque su fuente es inglesa y se traduce con el idioma del usuario
+que hace la llamada (`__system__`, `en_US`). Ahora dice precio y periodicidad en
+español, que además es lo único que distingue a cuatro planes que hoy se llaman
+casi igual (I-15). Y `agent_booking_step` sirve todo el cuestionario con
+`lang='es_MX'`, como ya hacía `_agent_partner_services`.
+
+### (c) Un cliente nuevo no podía reservar
+
+**El caso que el agendado por WhatsApp existe para capturar.** Un teléfono sin
+`res.partner` contestaba las diez preguntas, elegía horario, confirmaba la
+revisión, y en vez de la liga recibía *"Falta el nombre del cliente."* — sin
+salida, y sin escalar (`name_required` no estaba entre los motivos de hand-off).
+
+Ahora `nombre` es **un paso más del cuestionario**, justo después de la
+dirección, con `kind: 'free_text'` (una sola respuesta escrita; se distingue de
+`text`, que son varios campos guiados). Va ahí y no en la puerta porque es el
+único dato que se pide por gusto del sistema y no del cliente.
+
+**Quién sabe si hace falta es el canal, no el flujo.** `agent_booking_step`
+recibe `phone`, mira si hay cliente con ese número y pone `needs_name`. El
+wizard web nunca la pone —allí la identidad la recoge el formulario nativo del
+final—, así que para el web el paso no existe.
+
+> ⚠️ Trampa encontrada al recorrerlo contra la base: `_visar_wizard_answer_address`
+> no muta el booking, lo **rehace** desde cero (es el paso que resuelve zona e
+> items), así que se llevaba `needs_name` por delante y el paso desaparecía justo
+> donde tenía que aparecer. La bandera se repone después de aplicar la respuesta.
+> **El Odoo falso del runtime sí conservaba la clave**, así que sus pruebas
+> pasaban en verde: es el modo de fallo que avisa `60-conventions-testing.md`.
+
+## 10.7 ⛔ La rama de valoración NO llega a horarios por WhatsApp
+
+Encontrado al verificar lo anterior, **sin corregir todavía**. Contradice la
+decisión 3 de §12 ("valoración: SÍ la maneja el agente, hasta el mismo paso de
+horarios").
+
+`_visar_wizard_next_step` corta a `valuation` en cuanto `requiere_valoracion`, y
+`valuation` es un paso **terminal**: la dirección nunca se pregunta. Verificado
+por RPC contra una copia de `visar-db`, eligiendo *correctivo → termitas*:
+
+```
+paso: valuation | requires_valuation: True
+zone_id: None   | items: []
+dias ofrecidos: {'days': [], 'message': 'No hay cobertura o servicio para esa consulta.'}
+```
+
+Sin dirección no hay zona; sin zona `_agent_slot_tree` no puede resolver
+técnicos, así que **no hay ni un día que ofrecer** y el runtime escala a un
+humano ("no encontré fechas disponibles"). Degrada con dignidad, pero el cliente
+que reporta termitas, chinches o "no sé qué es" —los tres cortes a valoración—
+**no puede agendar por WhatsApp**.
+
+Falta además que el runtime mande `mode: 'valuation'` en `agent_available_days`,
+`agent_day_slots` y `agent_prepare_booking`: hoy no lo manda en ninguno, así que
+aunque hubiera zona se cotizaría como reserva normal.
+
+Lo que hay que decidir antes de arreglarlo: en la rama de valoración **la
+dirección sigue haciendo falta** (el técnico va a ir), pero no hay items que
+resolver. O el paso de dirección se vuelve parte de la rama de valoración, o la
+zona se pide por CP suelto (que es lo que ya proponía la decisión 6: *"el CP se
+pide temprano"*). Ver I-17 del backlog.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio

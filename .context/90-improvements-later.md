@@ -253,3 +253,33 @@
      despliega en el momento, queda una mina puesta.
 - **Prioridad:** Alta la 1 (hay clientes escribiendo a un número que no contesta);
   media las otras dos.
+
+---
+
+## I-17 — La rama de valoración no llega a horarios por WhatsApp
+
+- **Qué:** un cliente que reporta **termitas**, **chinches** o **"no sé qué es"**
+  (los tres cortes a valoración de la rama correctiva) no puede agendar por
+  WhatsApp. El cuestionario termina en el paso terminal `valuation` **sin
+  preguntar la dirección**, así que nunca hay zona; sin zona no hay técnicos que
+  resolver y `agent_available_days` devuelve cero días. El runtime escala a un
+  humano ("no encontré fechas disponibles para ese servicio").
+- **Por qué importa:** contradice la **decisión 3** del diseño 33 §12
+  (*"valoración: SÍ la maneja el agente, como modo propio, hasta el mismo paso de
+  horarios"*). Y son justo los casos donde el cliente está peor: reportando una
+  plaga que no sabe identificar. Degrada con dignidad —no cuelga, escala— pero la
+  ruta no existe.
+- **Verificado por RPC** contra una copia de `visar-db` (19-ago-2026):
+  `paso: valuation | zone_id: None | items: [] | dias: []`.
+- **Falta también, del lado del runtime:** `mode: 'valuation'` no se manda en
+  `agent_available_days`, `agent_day_slots` ni `agent_prepare_booking`. Aunque
+  hubiera zona, se cotizaría como reserva normal en vez de como visita de
+  valoración (que tiene su propio tipo de cita y su propio precio fijo).
+- **A decidir antes de construir:** en valoración **la dirección sigue haciendo
+  falta** (el técnico va a ir) pero no hay items que resolver, y
+  `_visar_wizard_answer_address` los exige. O el paso de dirección entra en la
+  rama de valoración con esa validación relajada, o la zona se pide por CP suelto
+  — que es lo que ya proponía la decisión 6 (*"el CP se pide temprano"*) y que
+  serviría para las dos ramas.
+- **Prioridad:** Alta si el agendado por WhatsApp va a demo o producción. Hoy es
+  la única rama del cuestionario que no cierra.
