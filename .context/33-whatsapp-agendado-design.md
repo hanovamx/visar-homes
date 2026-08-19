@@ -996,6 +996,118 @@ resolver. O el paso de dirección se vuelve parte de la rama de valoración, o l
 zona se pide por CP suelto (que es lo que ya proponía la decisión 6: *"el CP se
 pide temprano"*). Ver I-17 del backlog.
 
+## 10.8 Segunda tanda: multi-selección, corrección y avisos (19-ago-2026)
+
+Cuatro cosas más del mismo recorrido como cliente. Las dos primeras son de
+conversación; las dos últimas cierran huecos que este diseño ya había decidido y
+nunca se implementaron.
+
+### (a) Elegir varias cosas sin repetir la pregunta
+
+WhatsApp **no tiene menús de selección múltiple**: una lista se cierra al primer
+toque. Elegir tres plagas eran tres mensajes y tres veces la misma pregunta.
+
+No hizo falta nada nuevo del lado de Odoo: `classify` ya existía desde la etapa B
+para mapear texto libre a las opciones del momento. `classify_multi` es el mismo
+clasificador **sin el desempate** — en un paso de multi-selección un empate no es
+ambigüedad, es lo que el cliente quiso decir. Y contestar por escrito ahora
+*contesta* el paso, sin rematar con "Listo".
+
+Dos afinados que salieron de probarlo con el catálogo real:
+
+* **La descripción es la segunda fila.** Nadie escribe "Rastreros"; escriben
+  "cucarachas" — y esa palabra ya estaba en la descripción de esa misma opción,
+  sin usarse. Va en un campo aparte (`Option.hints`) y **no mezclada** con las de
+  la etiqueta, porque la descripción de "Protección general" nombra a las otras
+  tres: sumarlas haría que escribir "roedores" eligiera dos cosas.
+* **Las raíces se recortan a 5.** El catálogo no trae sinónimos y sus nombres
+  están en la forma en que Visar los escribe: *"quiero fumigar"* no encontraba
+  "Fumigación", porque la comparación es por prefijo. El menú principal no pasa
+  por ahí — sus raíces están escritas a mano contra el corpus real.
+
+### (b) Corregir UN paso, no volver a empezar
+
+"Cambiar algo" en la revisión reiniciaba el cuestionario entero: diez preguntas
+otra vez por haberse equivocado en una. Es lo que hace que nadie corrija nada y
+confirme cosas mal, justo antes de pagar.
+
+Tres piezas, las tres en el modelo:
+
+| Pieza | Qué es |
+|---|---|
+| `steps` | la misma secuencia del indicador "Paso X de Y", con etiqueta corta |
+| `ask` | volver a **preguntar** un paso sin contestarlo (solo de `steps`) |
+| `schedule_key` | cadena **opaca**: si no cambia, el horario apartado sigue valiendo |
+
+No hay modo "corrección" en ningún lado: se contesta como la primera vez y
+`_visar_wizard_clear_downstream` tumba lo que dependía de la respuesta vieja.
+
+`schedule_key` resume lo que condiciona la agenda —zona + tipo de cita por
+dimensión, que es de donde salen los pools— y se publica opaca a propósito: el
+runtime la compara y no sabe qué campos importan. Cambiar de tramo o de plan de
+póliza cambia el precio y no la agenda, así que no se le cobran al cliente dos
+toques por corregirlos.
+
+> **Y la dirección no se vuelve a pedir.** Corregir un paso de arriba invalida
+> los items, y el único sitio donde se recalculan es el paso de la dirección.
+> Sin `_visar_wizard_reapply_address`, cambiar "interior" por "ambos" obligaba a
+> **reescribir la dirección**: la pregunta más cara del cuestionario, y la que ya
+> estaba bien contestada.
+
+### (c) El agendado dejaba de hablar en los dos finales
+
+Pagaba y nadie le confirmaba nada. O pasaban los diez minutos y su apartado moría
+en silencio, con una liga que él seguía creyendo buena.
+
+El transporte no se copió: subió a `visar.wa.outbox.mixin` (en `visar_base`), que
+es lo que ya sabía hacer el buzón de la app de campo — encolar, cron, reintentar,
+caducar, avisar en el chatter. `visar.wa.message` lo hereda sin cambiar un nombre
+de campo; el buzón nuevo del agendado (`visar.wa.booking.message`) también.
+
+Tres claves nuevas, y la tercera **dice la verdad sobre la liga**:
+
+| Clave | Cuándo | Qué dice |
+|---|---|---|
+| `booking_confirmed` | la reserva se volvió cita | día y ventana confirmados |
+| `hold_expired` | venció en la revisión, sin liga | "se soltó tu horario, ¿buscamos otro?" |
+| `hold_expired_link` | venció con la liga enviada | depende de si el horario sigue libre |
+
+**El `wa_id` exacto, no el nacional.** `owner_key` son los 10 dígitos, que es lo
+que hace que "el mismo cliente" signifique lo mismo en todo Odoo; el runtime
+identifica la conversación por el número completo, y de 10 dígitos no se
+reconstruye. Campos `visar_wa_phone` en `calendar.booking` y `visar.slot.hold`.
+
+Del lado del runtime, `/internal/booking-event` **no es un `send-notification`
+más**: primero aplica el aviso a la conversación y luego envía. Un
+"¿elegimos otro horario?" sin rebobinar el estado es una pregunta cuya respuesta
+cae en el menú principal. El apartado vencido suelta `slot` y `hold` y **conserva
+el cuestionario**: el cliente ya contestó diez preguntas.
+
+### (d) La liga deja de cobrar lo que no puede entregar — §6.1, por fin
+
+La decisión 8 estaba tomada desde agosto y **nunca se implementó**. El hueco era
+el peor del flujo: la reserva pendiente no consume capacidad, así que un pago
+tardío pasaba, `_filter_unavailable_bookings` descartaba la reserva y el cliente
+se quedaba **pagado y sin cita**, en silencio.
+
+La regla implementada afina la decisión, y es la que cierra también la pregunta
+abierta de §6.1 sobre **renovar el apartado**:
+
+* venció y **nadie tomó el horario** → se vuelve a apartar y el pago pasa. El
+  cliente ni se entera; su lugar seguía ahí.
+* venció y **el horario ya es de otro** → se rechaza ANTES de cobrar.
+
+Volver a apartar no es cosmética: sin apartado, `_filter_unavailable_bookings` no
+tiene qué ignorar y el nativo puede descartar la reserva *después* del cobro.
+
+Se engancha en `payment.transaction.create` y no en el controlador del portal
+porque por ahí no pasan todas las rutas de pago. Las reservas sin apartado (el
+wizard web) no pasan por la regla.
+
+> ⚠️ **Esta tanda SÍ necesita `-u`**, a diferencia de las anteriores: campos
+> nuevos, modelo nuevo, cron, vistas y ACL. `visar_base`, `visar_appointment`,
+> `visar_field_app` y `visar_whatsapp_agent`, y reiniciar `visar-fastapi`.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio
@@ -1059,8 +1171,10 @@ debe vivir en el controlador web ni en el runtime: van al modelo.
 - **Validación defensiva en `_visar_combined_variant_for_tiers`** para que un
   emparejamiento tramo/eje incorrecto lance en vez de cobrar de menos (§7.1).
 - ¿La duración debería variar por `items`? Hoy es 1 h fija y confirmada (§5.3.1).
-- **Renovación del apartado**: reglas exactas cuando el cliente pide más tiempo y
-  el slot sigue libre (§6.1).
+- ~~**Renovación del apartado**: reglas exactas cuando el cliente pide más tiempo
+  y el slot sigue libre (§6.1).~~ → **cerrado** (§10.8d): si el slot sigue libre
+  se vuelve a apartar solo, al ir a pagar; si ya es de otro, se rechaza el cobro
+  antes de que haya dinero de por medio.
 - Punto de origen del técnico (§5.2.1). Más barato de lo que parecía: ya existen
   `hr.work.location` (3 registros) y `res.company`, pero **todos apuntan al mismo
   partner "Visar Home" y sin geocodificar (0,0)**, y ningún empleado tiene
