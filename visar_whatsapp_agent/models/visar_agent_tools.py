@@ -1223,6 +1223,32 @@ class VisarAgentTools(models.AbstractModel):
         return not Partner.search_count([('visar_phone_nat10', '=', key)])
 
     @api.model
+    def _agent_booking_mode(self, payload):
+        """Modo de venta: `wizard` o `valuation`.
+
+        **Se DERIVA del cuestionario; no lo manda el runtime.** "Un corte a
+        valoracion se vende como valoracion" es regla de negocio, y las reglas de
+        negocio viven en el modelo (diseno 33 §11).
+
+        El runtime ya recibe `requires_valuation` en cada estado; pedirle ademas
+        que devuelva un `mode` serian dos representaciones del mismo hecho, justo
+        en el sitio donde este proyecto ya se quemo dos veces con reglas
+        duplicadas (I-11, y la regla de "elige al menos una" de `6999839`).
+
+        Un `mode` explicito sigue ganando: lo usan el web —que resuelve el modo por
+        su cuenta— y las pruebas.
+        """
+        payload = payload or {}
+        mode = payload.get('mode')
+        if mode:
+            return mode
+        selections = payload.get('selections') or {}
+        if self.env['appointment.type'].sudo()._visar_wizard_requires_valuation(
+                selections):
+            return 'valuation'
+        return 'wizard'
+
+    @api.model
     def _agent_booking_context(self, payload):
         """(mode, appointment_type, items) para la reserva, o (mode, empty, []).
 
@@ -1230,16 +1256,13 @@ class VisarAgentTools(models.AbstractModel):
         `valuation` (visita de valoracion, precio fijo y sin medidas).
         """
         AptType = self.env['appointment.type'].sudo()
-        mode = payload.get('mode') or 'wizard'
+        mode = self._agent_booking_mode(payload)
         if mode == 'valuation':
             apt_type = AptType._visar_get_valuation_appointment_type()
-            template = self.env['product.template'].sudo()._visar_get_valuation_template()
-            variant = template.product_variant_id if template else False
-            items = [{
-                'dimension_id': False,
-                'variant_id': variant.id if variant else False,
-                'is_valuation': True,
-            }] if variant else []
+            # La lista la arma el flujo, no este metodo: es la MISMA que usa el
+            # paso de la direccion para resolver items, y dos definiciones del
+            # "que se vende en una valoracion" acabarian divergiendo.
+            items = AptType._visar_wizard_valuation_items()
             return mode, apt_type, items
         apt_type = AptType._visar_get_master_appointment_type()
         # SIEMPRE se resuelven desde `selections`. Armar `items` a mano puede
@@ -1401,7 +1424,13 @@ class VisarAgentTools(models.AbstractModel):
         # dos mensajes -alguien lo da de alta en Odoo a media conversacion- y un
         # estado guardado en el runtime lo dejaria congelado.
         needs_name = self._agent_booking_needs_name(payload.get('phone'))
-        booking = dict(payload.get('booking') or {}, needs_name=needs_name)
+        # Igual que `needs_name`: la pone el CANAL, no el runtime, y se recalcula
+        # en cada llamada. Dice que en el chat el aviso de valoracion es un paso
+        # mas -se acusa y se sigue a la direccion- en vez de un corte a un flujo
+        # aparte, que es lo que hace el web. Sin esto la rama de valoracion no
+        # llega a horarios (I-17); con esto puesta solo aqui, el web no se entera.
+        booking = dict(payload.get('booking') or {},
+                       needs_name=needs_name, valuation_inline=True)
         step = payload.get('step')
 
         # Volver a preguntar un paso ya contestado (el cliente quiere corregirlo).
@@ -1438,7 +1467,7 @@ class VisarAgentTools(models.AbstractModel):
         # del nombre desaparecia justo despues de la direccion, que es donde
         # tenia que aparecer. Encontrado recorriendo el cuestionario de verdad:
         # el Odoo falso del runtime SI conservaba la clave, y mentia en verde.
-        booking = dict(booking or {}, needs_name=needs_name)
+        booking = dict(booking or {}, needs_name=needs_name, valuation_inline=True)
 
         if error:
             # Se vuelve a preguntar EL MISMO paso, con su mensaje.
@@ -1453,7 +1482,7 @@ class VisarAgentTools(models.AbstractModel):
                 and AptType._visar_wizard_next_step(booking) == VISAR_STEP_ADDRESS
                 and (booking.get('delivery_address') or {})):
             booking, error = AptType._visar_wizard_reapply_address(booking)
-            booking = dict(booking or {}, needs_name=needs_name)
+            booking = dict(booking or {}, needs_name=needs_name, valuation_inline=True)
             if error:
                 # La direccion guardada ya no sirve para lo que ahora se pide
                 # (p. ej. no hay tecnicos para ese servicio en esa zona): se
@@ -1505,7 +1534,7 @@ class VisarAgentTools(models.AbstractModel):
         # a ciegas). Si no se puede determinar, se rechaza: apartar sin comprobar
         # es justo el bug que este bloque vino a cerrar.
         AptType = self.env['appointment.type'].sudo()
-        mode = payload.get('mode') or 'wizard'
+        mode = self._agent_booking_mode(payload)
         apt_type = (AptType._visar_get_valuation_appointment_type()
                     if mode == 'valuation'
                     else AptType._visar_get_master_appointment_type())

@@ -83,11 +83,11 @@
 - **Por qué se difirió:** al refinar el Req 2 (etapas nativas + timesheet oculto) se decidió **dejarlo
   fuera por ahora**; el **único cronómetro visible** es el de "esperando cliente" (10 min, configurable).
 - **Para qué revisitarlo:** insumo del futuro **aviso automático por WhatsApp** al cliente ("el técnico
-  va en camino / ETA"). El módulo `whatsapp` **ya está instalado** en `visar_prod`.
+  va en camino / ETA"). El módulo `whatsapp` **ya está instalado** en `visar-db`.
 - **Prioridad:** Baja.
 
 ## I-09 — App de campo: PINs duplicados / sin unicidad
-- **Qué:** `hr.employee.visar_field_pin` no es único. En `visar_prod` el PIN **`123`** está en **dos**
+- **Qué:** `hr.employee.visar_field_pin` no es único. En `visar-db` el PIN **`123`** está en **dos**
   empleados (Pedro Martínez id 2 y Administrator id 1). `_visar_field_find_by_pin` devuelve uno
   arbitrario (devolvió Administrator), así que la **atribución** del cierre/timesheet/reagenda
   (`visar_field_closed_by_id`, empleado del timesheet) sale **no determinista**.
@@ -256,7 +256,13 @@
 
 ---
 
-## I-17 — La rama de valoración no llega a horarios por WhatsApp
+## I-17 — La rama de valoración no llega a horarios por WhatsApp — ⏳ **CORREGIDO, pendiente de verificar**
+
+> **Escrito el 20-ago-2026**, sin verificar en servidor todavía. Ver §10.10 del
+> diseño 33 y el encargo
+> [`briefs/2026-08-20-valoracion-y-factibilidad-de-ruta.md`](./briefs/2026-08-20-valoracion-y-factibilidad-de-ruta.md).
+> Lo de abajo describe el problema tal y como se encontró; se conserva porque la
+> ampliación del final es donde está lo que costó descubrir.
 
 - **Qué:** un cliente que reporta **termitas**, **chinches** o **"no sé qué es"**
   (los tres cortes a valoración de la rama correctiva) no puede agendar por
@@ -283,3 +289,37 @@
   serviría para las dos ramas.
 - **Prioridad:** Alta si el agendado por WhatsApp va a demo o producción. Hoy es
   la única rama del cuestionario que no cierra.
+
+> ### Ampliación (20-ago-2026) — al diseñar el arreglo salieron tres cosas más
+>
+> **Decidido:** `valuation` deja de ser terminal y se vuelve un **aviso** que el cliente acusa;
+> de ahí sigue por el paso de dirección que ya existe. **No** se construye el CP temprano para
+> esto (sigue siendo la fase siguiente, y sigue valiendo la pena por el precalentado).
+>
+> **1. Hay que acotar el cambio al chat, o el web se mueve.** Hacer `valuation` no-terminal
+> globalmente hace que `_visar_wizard_next(selections)` devuelva `/wizard/direccion`, que a su
+> vez hace 302 a `/wizard/valoracion-aviso`: misma página, un salto de más y otros modos de
+> fallo. Se acota con una bandera de canal en el booking (`valuation_inline`), que es el patrón
+> que ya usa `needs_name` — *"quién lo sabe es el canal, no el flujo"*.
+>
+> **2. `valuation` es terminal DOS veces, no una.** Además de la secuencia,
+> `_visar_wizard_step_options` **no tiene rama** para `valuation`: cae al genérico
+> `{'kind': 'terminal', 'title': '', 'options': []}`. Arreglar solo la secuencia deja un paso
+> sin título y sin opciones.
+>
+> **3. El arreglo de la dirección no es "relajar la validación": es cambiar de dónde salen los
+> items.** `_visar_resolve_wizard_items` solo emite items para dimensiones con clave `tier_*`, y
+> el corte por calificación **nunca pone una**. En la rama de valoración los items salen de un
+> helper propio (un item, precio fijo, `is_valuation: True`) — la misma lista que hoy arma
+> `_agent_booking_context` a mano. Y si falta el producto o el tipo de cita de valoración, el
+> error es `config_missing`, no `no_items`: eso es configuración, no culpa del cliente.
+>
+> **Un bug de cobro que aparece al abrir la rama.** En el corte **mixto** (`cobertura='ambos'` +
+> banda de exterior con `is_valuation`), `booking['items']` guarda el item de *interior*: el
+> resumen cotiza el servicio de interior mientras `agent_prepare_booking` cobra la valoración.
+> **La pantalla de revisión miente sobre el total.** No estaba documentado en ningún lado.
+>
+> **Sobre `mode: 'valuation'`.** Este backlog dice que falta que **el runtime** lo mande. Se hace
+> al revés: **lo deriva Odoo** de `selections`. El runtime ya lleva `requires_valuation`, y
+> hacerle llevar además un modo son dos representaciones del mismo hecho justo donde este
+> proyecto ya se quemó dos veces (I-11, `6999839`). Un `mode` explícito sigue ganando.

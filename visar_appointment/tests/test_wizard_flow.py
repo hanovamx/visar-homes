@@ -580,3 +580,144 @@ class TestWizardFlow(TransactionCase):
                             check(step, 'sections.options', tier)
                         continue
                     check(step, 'sections', {key: value})
+
+    # ------------------------------------------------------------------
+    # La rama de valoración llega a horarios (I-17 / diseño 33 §10.7)
+    # ------------------------------------------------------------------
+    #
+    # El corte a valoración era un paso TERMINAL: nunca se preguntaba la
+    # dirección, así que no había zona, no había técnicos y no había ni un día
+    # que ofrecer. Los clientes que reportan termitas, chinches o "no sé qué es"
+    # -los tres cortes- no podían agendar por WhatsApp.
+    #
+    # El aviso pasa a ser un paso que se acusa, y solo EN EL CHAT: el web tiene
+    # su propia página de aviso y su propio flujo, y ahí no cambia nada.
+
+    def _booking_chat(self, **selections):
+        """Como `_booking_fum`, pero con la bandera que pone el canal de chat."""
+        booking = self._booking_fum(**selections)
+        booking['valuation_inline'] = True
+        return booking
+
+    def test_el_web_sigue_cortando_en_valoracion(self):
+        """La regresión que importa: sin la bandera, `valuation` es terminal.
+
+        Es lo único que puede romper clientes hoy. Si esto se pone en verde con
+        el aviso acusado, el web se movió y el cambio no está acotado.
+        """
+        booking = self._booking_fum(
+            motivo='correctivo', servicio_plaga=[], requiere_valoracion=True,
+            motivo_valoracion='termitas')
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'valuation')
+
+        # Incluso con el acuse puesto a mano: sin canal que lo pregunte en línea,
+        # el acuse no significa nada.
+        booking['selections']['valuation_ack'] = True
+        self.assertEqual(
+            self.AptType._visar_wizard_next_step(booking), 'valuation',
+            "El web no debe avanzar: corta a su propio flujo de valoración")
+
+    def test_el_aviso_de_valoracion_no_es_terminal_en_el_chat(self):
+        booking = self._booking_chat(
+            motivo='correctivo', servicio_plaga=[], requiere_valoracion=True,
+            motivo_valoracion='termitas')
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'valuation')
+
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'valuation', {'valuation_ack': 'continuar'})
+        self.assertIsNone(error)
+        self.assertTrue(booking['selections']['valuation_ack'])
+        # Acusado: se sigue a la dirección, sin pasar por mediciones.
+        booking['valuation_inline'] = True
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'address')
+
+    def test_el_aviso_trae_precio_motivo_y_una_salida(self):
+        """Un aviso sin botón es un callejón sin salida: eso era el bug."""
+        booking = self._booking_chat(
+            motivo='correctivo', servicio_plaga=[], requiere_valoracion=True,
+            motivo_valoracion='termitas')
+        options = self.AptType._visar_wizard_step_options(booking, 'valuation')
+        self.assertEqual(options['kind'], 'single')
+        self.assertEqual(options['answer_key'], 'valuation_ack')
+        self.assertTrue(options['title'], "El aviso tiene que decir algo")
+        self.assertIn('termitas', options['title'].lower(),
+                      "El cliente tiene que leer POR QUÉ se le pide una valoración")
+        self.assertEqual(len(options['options']), 1,
+                         "Una sola salida: continuar")
+
+    def test_el_aviso_del_web_sigue_sin_opciones(self):
+        booking = self._booking_fum(
+            motivo='correctivo', servicio_plaga=[], requiere_valoracion=True,
+            motivo_valoracion='termitas')
+        options = self.AptType._visar_wizard_step_options(booking, 'valuation')
+        self.assertEqual(options['kind'], 'terminal')
+        self.assertEqual(options['options'], [])
+
+    def test_cambiar_de_plaga_suelta_el_acuse(self):
+        """Si el corte se cae, el aviso que se acusó ya no aplica."""
+        booking = self._booking_chat(
+            motivo='correctivo', servicio_plaga=[], requiere_valoracion=True,
+            motivo_valoracion='termitas', valuation_ack=True)
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'plagas', {'servicio_plaga': ['rastreros']})
+        self.assertIsNone(error)
+        self.assertFalse(booking['selections'].get('requiere_valoracion'))
+        self.assertNotIn('valuation_ack', booking['selections'],
+                         "El acuse muere con el corte que lo motivó")
+
+    def test_acusar_sin_corte_no_marca_nada(self):
+        """Contestar un aviso que ya no aplica no es un error, pero no marca."""
+        booking = self._booking_chat(motivo='correctivo',
+                                     servicio_plaga=['rastreros'])
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'valuation', {'valuation_ack': 'continuar'})
+        self.assertIsNone(error)
+        self.assertFalse((booking['selections'] or {}).get('valuation_ack'))
+
+    def test_la_huella_de_agenda_distingue_valoracion_de_wizard(self):
+        """Sin esto, corregir termitas→cucarachas conservaba el horario apartado.
+
+        La valoración tiene tipo de cita y pool de técnicos propios: el horario
+        que valía para una no vale para la otra.
+        """
+        base = {'zone_id': 1, 'items': []}
+        wizard = dict(base, selections={'group_ids': [self.fum_group.id]})
+        valoracion = dict(base, selections={
+            'group_ids': [self.fum_group.id], 'requiere_valoracion': True})
+        self.assertNotEqual(
+            self.AptType._visar_wizard_schedule_key(wizard),
+            self.AptType._visar_wizard_schedule_key(valoracion))
+
+    def test_valoracion_no_ofrece_extras(self):
+        """Se ofrecían y luego `_visar_build_sale_lines` los tiraba.
+
+        El cliente aceptaba unos add-ons que nunca aparecían en el total.
+        """
+        booking = {
+            'mode': 'valuation', 'zone_id': 1,
+            'items': [{'dimension_id': False, 'is_valuation': True}],
+            'selections': {'group_ids': [self.fum_group.id],
+                           'requiere_valoracion': True},
+        }
+        self.assertEqual(self.AptType._visar_wizard_extras_offers(booking), [])
+        self.assertIsNone(self.AptType._visar_wizard_poliza_context(booking))
+
+    def test_los_items_de_valoracion_no_dependen_de_tramos(self):
+        """El corte por calificación NUNCA elige tramo: sin esto, `no_items`.
+
+        `_visar_resolve_wizard_items` solo emite items para dimensiones con
+        `tier_*`, y el corte existe justamente para no medir. Era el segundo
+        motivo por el que la rama no cerraba, y no estaba en I-17.
+        """
+        selections = {'group_ids': [self.fum_group.id], 'motivo': 'correctivo',
+                      'requiere_valoracion': True, 'motivo_valoracion': 'termitas'}
+        self.assertFalse(
+            self.AptType._visar_resolve_wizard_items(selections),
+            "Premisa: el corte por calificación no resuelve items por tramo")
+
+        items = self.AptType._visar_wizard_valuation_items()
+        if not items:
+            self.skipTest("La base no trae producto/tipo de cita de valoración")
+        self.assertEqual(len(items), 1, "Una valoración es UNA visita")
+        self.assertTrue(items[0]['is_valuation'])
+        self.assertTrue(items[0]['variant_id'])

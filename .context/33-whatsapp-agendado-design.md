@@ -1,6 +1,29 @@
-# WhatsApp — Agendado completo en el chat (DISEÑO)
+# WhatsApp — Agendado completo en el chat
 
-> **Estado: DISEÑO, no implementado.** Escrito 17-ago-2026. Retoma las etapas E/F
+> ## Estado: **IMPLEMENTADO Y EN PRODUCCIÓN** (19/20-ago-2026), con dos huecos
+>
+> La cabecera original decía *"DISEÑO, no implementado"* y se quedó ahí mientras las §10.1–§10.9
+> documentaban cuatro rondas de verificación en servidor, tres fallos del primer uso real y un
+> despliegue. Hoy **un cliente puede reservar escribiendo por WhatsApp**, de punta a punta, sin
+> salir del chat salvo para pagar.
+>
+> **Lo que funciona:** cuestionario por RPC, dirección, nombre, extras, póliza, días y horarios en
+> hora local, apartado de 10 min, pantalla de revisión con corrección por paso, liga de pago que
+> vive y muere con el apartado, avisos salientes y hand-off humano.
+>
+> **Lo que NO cierra:**
+> - ⛔ **§10.7 / I-17 — la rama de valoración no llega a horarios.** `valuation` es terminal.
+>   Termitas, chinches y "no sé qué es" **no pueden agendar por WhatsApp**.
+> - ⛔ **§5 — la factibilidad de traslado no existe en código.** Decisiones 7 y 14 son prosa. Hoy
+>   se ofrece cualquier horario con capacidad sin mirar si el técnico llega. Sostenible solo
+>   mientras haya **un** técnico usable (§5.3.2).
+> - **§4.0 — el CP temprano** está marcado "decidido" y **sin construir**.
+>
+> **Cómo leer este documento:** §1–§9 son el diseño; §10.1–§10.9 son el diario de a bordo, en
+> orden cronológico, y son la fuente de verdad sobre qué está hecho. §12 son las 15 decisiones,
+> §13 lo abierto.
+
+> **Estado original: DISEÑO, no implementado.** Escrito 17-ago-2026. Retoma las etapas E/F
 > que quedaron **en pausa** el 31-jul (ver `visar_fastapi/.context/50-status-roadmap.md`),
 > cuando se decidió que agendar fuera solo una **liga al wizard web**.
 >
@@ -95,20 +118,36 @@ chatter. WhatsApp no crea el problema: lo ensancha, porque el intervalo entre
 
 ## 4. Los pasos, y su equivalente en WhatsApp
 
-Orden real del wizard, según `_visar_wizard_next` y el grafo `_VISAR_STEP_CLEARS`:
+Orden real del wizard, según `_visar_wizard_next_step` y el grafo `_VISAR_STEP_CLEARS`:
 
-| # | Paso web | Clave en `selections` | En WhatsApp |
+| # | Paso | Clave en `selections` | En WhatsApp |
 |---|---|---|---|
 | 1 | `services` | `group_ids` | Lista: Fumigación / Áreas verdes / Ambos |
 | 2 | `motivo` (solo si hay fumigación) | `motivo` | Botones (≤3) |
 | 3 | `plagas` | `servicio_plaga`, `requiere_valoracion`, `motivo_valoracion` | Lista (ojo al tope de 10) |
 | 4 | `cobertura` | `cobertura` | Botones: interior / exterior / ambos |
-| 5 | `group/<id>`, `dimensiones` | dimensiones por grupo | Lista |
+| 5 | `group_<id>`, `dimensiones` | dimensiones por grupo | Lista |
 | 6 | `interior` / `exterior` | tramo por eje | Lista de bandas de m² (**paginar**) |
-| 7 | `direccion` | `delivery_address`, `zone_id` | Texto libre + confirmación |
-| 8 | `extras` | `extras_accepted` | Lista multi-selección → varios turnos |
-| 9 | `poliza` | `poliza_plan_id` | Lista de planes con comparativa |
-| 10 | horarios | — | §5 |
+| — | `valuation` | `requiere_valoracion` | **Corte.** Ver §4.1 y ⛔ §10.7 |
+| 7 | `address` | `delivery_address`, `zone_id` | Varios campos, guiados de uno en uno |
+| 8 | **`nombre`** | `nombre` | Texto libre. **Solo si el teléfono no resuelve a un `res.partner`** — ver §10.6(c) |
+| 9 | `extras` | `extras_ids` (marca) / `extras_accepted` (lo que se compra) | Lista multi-selección |
+| 10 | `poliza` | `poliza_plan_id` | Lista de planes con comparativa |
+| 11 | `schedule` | — | §5 |
+
+> **Nombres reales, porque esta sección usaba los viejos.** Los métodos son
+> `_visar_wizard_next_step` (no `_visar_wizard_next`) y `_visar_wizard_requires_valuation` (no
+> `_visar_selections_require_valuation`). Las constantes son `VISAR_STEP_*` en
+> `visar_appointment/models/appointment_wizard_flow.py`.
+
+> **El paso `nombre` no estaba en esta tabla** y se añadió en §10.6(c): un cliente nuevo no tenía
+> forma de dar su nombre y la reserva moría al final. Va **después** de la dirección a propósito:
+> es el único dato que se pide por gusto del sistema y no del cliente, así que se cobra cuando ya
+> hay algo que agendar, no en la puerta.
+
+> **`extras_ids` y `poliza_plan_id` marcan "contestado" por PRESENCIA de la clave**, no por su
+> valor. *"No quiero extras"* y *"no me lo han preguntado"* tienen que ser estados distintos, o al
+> corregir cualquier cosa se vuelve a preguntar todo (§10.9).
 
 ### 4.0 El CP se pide TEMPRANO (decidido)
 
@@ -171,7 +210,18 @@ calificación (termitas, chinches, plaga no identificada) o porque un tramo trae
 
 El agente lo trata como el web: al detectar el corte, **avisa** (precio de la
 valoración y por qué) y continúa por la rama de valoración hasta el mismo paso de
-horarios. La factibilidad de ruta (§5) aplica idéntica.
+horarios.
+
+> ⛔ **Esto es la intención, no lo que hace el código.** Hoy `valuation` es **terminal** y la rama
+> no llega a horarios — ver §10.7 e I-17.
+
+> ⚠️ **Corrección (20-ago-2026).** Esta sección decía *"la factibilidad de ruta (§5) aplica
+> idéntica"*. **No aplica en absoluto, a ninguna de las dos ramas**: el predicado del §5 no está
+> construido. Y cuando se construya **no** saldrá gratis en valoración: el §5.5 dice que se
+> engancha en `_visar_filter_slots_multi_service`, y la rama de valoración **no pasa por ahí**
+> (`_agent_slot_tree` llama a `_get_appointment_slots` directo). Es exactamente el mismo tropiezo
+> que ya documenta `visar_slot_hold.py` en su docstring. Hacen falta **dos** enganches — ver la
+> corrección del §5.5.
 
 ### 4.2 Extras y póliza
 
@@ -367,6 +417,45 @@ Como un predicado más dentro de `_visar_filter_slots_multi_service`, que ya rec
 el árbol de slots y ya decide qué recursos sirven. Consecuencia: **el wizard web
 hereda la factibilidad sin tocarlo**. Es el argumento para construir esto primero,
 del lado del servidor, con independencia de WhatsApp.
+
+> ⚠️ **Corrección (20-ago-2026) — un solo enganche NO basta.**
+>
+> `_visar_filter_slots_multi_service` cubre el web y el agente en `mode='wizard'`. **La rama de
+> valoración no pasa por ahí:** `_agent_slot_tree` llama a `_get_appointment_slots` directo con
+> `_visar_eligible_resources(zone)`. El repo ya se tropezó con esto y lo dejó escrito en
+> `visar_appointment/models/visar_slot_hold.py`:
+>
+> > *"Filtrar solo en `_visar_filter_slots_multi_service` no habría bastado — la rama de
+> > valoración no pasa por ahí (`_visar_wizard_active()` solo es cierto con `mode == 'wizard'`)."*
+>
+> El predicado se construye como **una pasada aparte** llamada desde **los dos** sitios.
+>
+> **Y las dos tienen semántica distinta, que es la trampa de verdad:**
+>
+> | Árbol | Lista de recursos | Regla | Por qué |
+> |---|---|---|---|
+> | Multi-servicio | `available_resources`, ya **elegidos** para cubrir todos los servicios | **todos** deben ser factibles; la lista **no se poda** | podarla rompería la cobertura y obligaría a reescribir `url_parameters` |
+> | Valoración | `available_resource_ids`, **candidatos** | basta **uno**; los no factibles **se podan** | el runtime toma `resource_ids[0]` y si no apartaría un técnico que no llega |
+>
+> Con un solo técnico las dos reglas coinciden, así que la realidad no las distingue todavía. De
+> ahí que cada una lleve su prueba.
+>
+> **Cómo llega la dirección: parámetro explícito, no clave de contexto.** `visar_hold_cache` y
+> `visar_hold_owner` son contexto porque su consumidor se alcanza desde código **nativo** de
+> Odoo y no hay firma que extender. Aquí los dos llamadores son código de Visar y **ya tienen el
+> booking en la mano**. Habiendo parámetro, parámetro: se prueba sin `env` y no puede filtrarse a
+> una llamada que no le toca.
+>
+> **Un ahorro que esta sección no menciona:** un día **sin paradas** no necesita ninguna llamada a
+> Mapbox — es el caso (a) del §5.1, pasa trivialmente. Con mediana de 2.5 paradas/día, la mayoría
+> de los días candidatos cuestan **cero**.
+>
+> **Y un aviso de perfil:** para la Matrix conviene `mapbox/driving`, **no** `driving-traffic`.
+> Este último está limitado a **10 coordenadas** por petición, y 9 paradas + 1 destino son
+> exactamente 10 — el pico medido quedaría justo en el límite. Además, con
+> `min_schedule_hours = 24` nunca se reserva a menos de un día vista, así que el tráfico *de
+> ahora* es ruido. `_visar_enroute_eta_minutes` se queda con `driving-traffic` porque **ahí** el
+> técnico sale ahora mismo.
 
 ### 5.6 Cómo se pide la fecha
 
@@ -1108,6 +1197,149 @@ wizard web) no pasan por la regla.
 > nuevos, modelo nuevo, cron, vistas y ACL. `visar_base`, `visar_appointment`,
 > `visar_field_app` y `visar_whatsapp_agent`, y reiniciar `visar-fastapi`.
 
+## 10.9 Retomar y corregir: los dos fallos del despliegue (20-ago-2026)
+
+Salieron **de producción**, no de las pruebas, y los dos son la misma familia: el cuestionario
+sabía avanzar, pero no sabía contestar *"¿qué me queda por preguntar?"*.
+
+### (a) Retomar devolvía al paso de la dirección
+
+Un cliente toca "Agendar" y lo primero que recibe es *"¿A qué dirección vamos?"*, sin haber
+elegido servicio.
+
+`_visar_wizard_next_step` **siempre** termina en la dirección, y no puede saber si ya se
+contestó: el tramo posterior —extras, póliza, horario— lo marca `_visar_wizard_step_after`, y ese
+solo corre **al contestar** un paso. Así que para cualquier estado con el cuestionario completo,
+*"¿en qué voy?"* respondía *"en la dirección"*.
+
+Retomando una conversación estacionada eso significa pedir otra vez **la pregunta más cara del
+cuestionario**, que además ya estaba bien contestada. Ahora, si la zona y los items están
+resueltos, se sigue por la cadena. **No** se re-aplica la dirección: retomando no ha cambiado
+nada que obligue a recalcular items — a diferencia de corregir un paso de arriba, donde sí.
+
+### (b) Corregir un paso re-preguntaba todo desde ahí
+
+Reportado tras el despliegue: *"volver atrás a cambiar algo te hace contestar TODO otra vez desde
+esa pregunta"*. La intención era la contraria — cambiar **ese** paso, re-preguntar solo lo que
+dependía de él, y si no queda nada pendiente volver derecho al resumen.
+
+**Faltaba la pregunta entera.** Había dos funciones para avanzar y ninguna para saber qué queda:
+
+* `_visar_wizard_next_step` cubre hasta la dirección y nada más;
+* `_visar_wizard_step_after` es *"sigue la cadena DESDE el paso que acabas de contestar"* — útil
+  yendo hacia adelante, **inservible al corregir**: reanudaba la cadena en `nombre` y volvía a
+  ofrecer extras y póliza aunque no dependieran de lo corregido.
+
+`_visar_wizard_next_pending_step` contesta la que hace falta: **el primer paso sin contestar de
+TODO el cuestionario**, tramo final incluido. Y con eso la regla que pedía el cliente sale sola,
+porque la poda ya hacía su parte: lo que dependía de la respuesta vieja la perdió y aparece
+pendiente; lo que no, conserva la suya y se salta.
+
+### La semántica que esto obligó a fijar
+
+Cómo se sabe que un paso del tramo final está contestado:
+
+| Paso | Marca |
+|---|---|
+| `nombre` | `selections['nombre']` |
+| `extras` | la **CLAVE** `extras_ids` existe (aunque esté vacía) |
+| `poliza` | la **CLAVE** `poliza_plan_id` existe (aunque sea `False`) |
+
+**Es la presencia de la clave, no su valor.** *"Dije que no"* y *"no me lo has preguntado"* tienen
+que ser estados distintos, y la poda borra la clave justo cuando la respuesta deja de valer.
+
+`extras_ids` **no** es lo que se compra —eso es `booking['extras_accepted']`— sino la marca de
+"este paso ya se contestó".
+
+> **Quien lea §10.8(b) sin esto se lleva el comportamiento anterior a `1199db5`**, que el propio
+> commit describe como lo contrario de la intención.
+
+---
+
+## 10.10 La valoración cierra y la ruta se construye (20-ago-2026)
+
+**Escrito, sin verificar en servidor.** Encargo en
+[`briefs/2026-08-20-valoracion-y-factibilidad-de-ruta.md`](./briefs/2026-08-20-valoracion-y-factibilidad-de-ruta.md).
+
+### (a) §10.7 / I-17 — el aviso deja de ser un callejón
+
+`valuation` ya no es terminal **en el chat**: es un paso que se acusa (precio +
+motivo, una opción) y de ahí se sigue al paso de dirección que ya existía. En el
+web no cambia nada, porque la bandera que lo habilita —`valuation_inline`— la pone
+**solo** `agent_booking_step`, igual que `needs_name`.
+
+**Al construirlo salieron dos bloqueadores que este documento no nombraba**, y sin
+ellos arreglar la secuencia no habría servido de nada:
+
+1. **El paso de la dirección devolvía `no_items`.**
+   `_visar_resolve_wizard_items` solo emite items para dimensiones con un tramo
+   elegido (`tier_*`), y el corte por calificación **nunca elige tramo** — el corte
+   existe justamente para no medir. Los items de la rama salen ahora de
+   `_visar_wizard_valuation_items()`: un item, precio fijo, `is_valuation: True`.
+   Es la misma lista que `_agent_booking_context` armaba a mano, subida al modelo
+   para que no haya dos definiciones de "qué se vende en una valoración".
+2. **Sin técnicos de valoración en la zona no había error tipado.** Se devolvía
+   cero días en silencio, que es el mismo síntoma que I-17. Ahora es
+   `no_resources`, como en el web.
+
+**Y un bug de cobro que solo se ve con la rama abierta.** En el corte **mixto**
+(`cobertura='ambos'` + banda de exterior con `is_valuation`), `booking['items']`
+guardaba el item de *interior*: el resumen cotizaba el servicio de interior
+mientras `agent_prepare_booking` cobraba la valoración. **La pantalla de revisión
+mentía sobre el total.** Se cierra solo al cambiar de dónde salen los items.
+
+De paso, dos cosas que faltaban por coherencia:
+
+- **Los extras tampoco se ofrecen** cuando hay corte. Se ofrecían y luego
+  `_visar_build_sale_lines` los tiraba, así que el cliente aceptaba add-ons que
+  nunca aparecían en el total. La póliza ya estaba guardada (§4.1); los extras se
+  habían quedado fuera.
+- **`_visar_wizard_schedule_key` lleva el flag de valoración**: la valoración tiene
+  tipo de cita y pool propios, así que corregir *termitas → cucarachas* no puede
+  conservar el horario apartado.
+
+**Quién decide el `mode` — desviación deliberada.** §10.7 e I-17 dicen que falta
+que **el runtime** mande `mode: 'valuation'`. Se hizo al revés: **lo deriva Odoo**
+(`_agent_booking_mode`). El runtime ya lleva `requires_valuation`, y hacerle llevar
+además un modo son dos representaciones del mismo hecho, en el sitio donde este
+proyecto ya se quemó dos veces (§11). Un `mode` explícito sigue ganando, para el web
+y las pruebas. Usado desde `_agent_booking_context` **y** `agent_hold_slot`, ese
+único cambio deja correctos los cuatro RPC de golpe.
+
+**El runtime quedó más pequeño.** Desapareció `_valuation_notice` y el atajo de
+`app/agent.py` que cortaba toda respuesta de paso al ver la bandera — y que habría
+seguido saltándose la dirección aunque Odoo dejara de ser terminal. El aviso lo
+pinta `render_step` como cualquier otro paso, y **el texto lo redacta Odoo**, que es
+donde vive el precio.
+
+### (b) §5 — la factibilidad de ruta, construida
+
+- **`visar_base`**: `visar.mapbox.service` (token, Matrix, geocode) y
+  `visar.travel.cache` (clave direccional, coordenadas redondeadas, TTL y cron).
+  Va ahí porque `visar_appointment` y `visar_field_app` son **hermanos** y no se
+  conocen: el único antepasado común es `visar_base`. No hizo falta añadir
+  `base_geolocalize` — el servicio solo recibe y devuelve coordenadas.
+- **`visar.zone.cp`** gana centroide perezoso: es el respaldo del §5.4 para el 22.4%
+  de direcciones que no geocodifican, y cuesta **una** llamada por CP en toda la vida
+  del sistema.
+- **`visar_appointment`**: el predicado, con `presupuesto = 20 + (T − E)`, bordes sin
+  restringir (decisión 9) y degradación en cada nivel.
+- **Dos enganches**, no uno — ver la corrección del §5.5.
+- **Un día sin paradas no gasta ni una llamada.** Es el caso (a) del §5.1 y, con
+  mediana de 2.5 paradas/día, el caso más frecuente. Es lo que hace esto barato.
+- **Tope de llamadas + interruptor de circuito**: el web pinta un **mes**, no los ~10
+  días de una conversación, y un token muerto no puede volverse 30 timeouts.
+
+**Lo que deliberadamente NO se hizo: re-validar el traslado al apartar o al cobrar.**
+El filtro es del *listado*. Rechazar un horario ya pagado porque el presupuesto
+cambió desde que se listó es el fallo T3f otra vez —dinero dentro, cita fuera— y es
+peor que servir una ruta apretada.
+
+> ⚠️ **Sigue sin comprobarse que el token de Mapbox SIRVA** (§13, I-07). Es V0 del
+> encargo, y va antes que todo lo demás.
+
+---
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio
@@ -1118,6 +1350,24 @@ ambos canales llaman. Es exactamente por lo que hoy los precios del agente
 coinciden al peso con los del wizard (paridad verificada en `visar-db`, ver
 `visar_fastapi/.context/50-status-roadmap.md`). Ninguna regla nueva de negocio
 debe vivir en el controlador web ni en el runtime: van al modelo.
+
+### El riesgo se materializó dos veces, y conviene tenerlas contadas
+
+1. **I-11** — el web cobra 2,400 donde la cotización dice 1,900.
+2. **`6999839` (20-ago-2026)** — el runtime llevaba **duplicada** una regla de *"elige al menos
+   una"* que Odoo **no tiene**, y dejaba el paso de extras **sin salida**: a *"¿quieres agregar
+   algo más?"* no se podía contestar que no. Visto en producción.
+3. **`aec86cf` (20-ago-2026)** — el Odoo falso del runtime espejaba `_visar_wizard_step_after`
+   en vez de `_visar_wizard_next_pending_step`. No es una regla duplicada, es su prima: **el
+   fake divergió del real y las pruebas siguieron en verde**.
+
+El caso 3 es el modo de fallo del que avisa `60-conventions-testing.md`, y ya había mordido
+antes: en §10.6(c) el fake conservaba `needs_name` donde Odoo lo tiraba, así que el paso del
+nombre desaparecía **en producción** mientras las pruebas pasaban.
+
+> **La regla operativa que sale de esto:** al tocar el contrato RPC se tocan **los dos lados** —
+> método de Odoo **y** protocolo/cliente/**fake** del runtime. Un fake que no espeja al real no
+> es una prueba: es una prueba que miente en verde.
 
 ## 12. Decisiones tomadas (17-ago-2026)
 
@@ -1197,6 +1447,25 @@ Salidas de la verificación en servidor que **contradicen** lo que dicen otros d
   además indica `ODOO_DB=visar_prod` en el `.env`) usan el nombre equivocado.
 - **Los módulos viven en `/opt/custom`**, no en una ruta `visar-homes/` del server.
 - **I-07 del backlog está obsoleto** en su punto 1: el token de Mapbox sí existe.
+  ⚠️ Pero **sigue sin comprobarse que SIRVA**: nadie ha hecho una llamada en vivo a Mapbox
+  todavía. Es la primera tarea antes de encender la factibilidad de ruta.
 - **I-11 del backlog no se arregla como propone** — ver la nota añadida ahí: el
   enlace `calendar_booking_ids` cae en **una sola** línea (la última agregada), así
   que filtrar por ese campo no protege la línea descontada.
+
+### Añadidos el 20-ago-2026, al barrer la carpeta entera
+
+- **`91-reunion-2026-06-22.md` contradecía el 20/40, invertido** (L83 y L176: *"40 min = 20 min
+  de servicio efectivo + 20 min de traslado"*). Este documento no lo señalaba, así que la carpeta
+  tenía **dos repartos opuestos del bloque de cita**. Corregido con una nota de superseded; el
+  texto original se conserva porque es un **acta de reunión**.
+- **`90-improvements-later.md` también usaba `visar_prod`** (I-08 e I-09) y no estaba en la lista
+  de arriba. Corregido.
+- **`00-overview.md`, `20-architecture.md` y `27-whatsapp-agent.md` decían "Fase 1: solo lectura,
+  no agenda citas"**, falso desde `9e606c9`. `20-architecture.md` además afirmaba que el proyecto
+  son **tres módulos**: son **siete**, y no en cadena lineal.
+- **`40-decisions.md` no tenía ni una de las 15 decisiones del §12.** Espejadas.
+- **`50-status-roadmap.md` no mencionaba el agendado en absoluto**, y su sección de entorno local
+  describía la máquina de otra persona.
+- **`29-`, `30-`, `31-` y `32-` seguían con cabecera "DISEÑO, no implementado" / "PLAN"** estando
+  todos ejecutados. La decisión 10 del doc 29 no advertía de estar superada por el §7 de aquí.

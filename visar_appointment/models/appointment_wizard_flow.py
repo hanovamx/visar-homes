@@ -40,7 +40,12 @@ from odoo.tools import format_amount
 # Grupos de claves de selección por área del wizard.
 _VISAR_INTERIOR_KEYS = ('interior_niveles', 'interior_estimado_m2', 'interior_proxy')
 _VISAR_EXTERIOR_KEYS = ('exterior_band_id', 'exterior_rodea')
-_VISAR_CUT_KEYS = ('requiere_valoracion', 'motivo_valoracion')
+# El acuse del aviso de valoración. Separado de las claves del corte porque no se
+# limpia en los mismos sitios: donde muere el corte muere el acuse (va dentro de
+# `_VISAR_CUT_KEYS`), pero además hay pasos que NO tumban el corte y sí tienen que
+# volver a avisar — cambiar de tramo puede meter un corte por área nuevo.
+_VISAR_ACK_KEYS = ('valuation_ack',)
+_VISAR_CUT_KEYS = ('requiere_valoracion', 'motivo_valoracion') + _VISAR_ACK_KEYS
 _VISAR_PLAGA_KEYS = (
     'servicio_plaga', 'roedores', 'upsell_cebaderos', 'upsell_tapon',
     'upsell_guardapolvo') + _VISAR_CUT_KEYS
@@ -66,9 +71,13 @@ _VISAR_STEP_CLEARS = {
                  + _VISAR_POLIZA_KEYS,
     'group': _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS
              + _VISAR_POLIZA_KEYS,
-    'interior': _VISAR_INTERIOR_KEYS + _VISAR_POLIZA_KEYS,
+    # Interior y dimensiones NO limpian el corte por calificación —cambiar unos
+    # metros no desdice que el cliente reportó termitas— pero SI el acuse: un
+    # tramo nuevo puede meter un corte por área (`is_valuation`), y el aviso de
+    # ese corte todavía no se ha dado.
+    'interior': _VISAR_INTERIOR_KEYS + _VISAR_ACK_KEYS + _VISAR_POLIZA_KEYS,
     'exterior': _VISAR_EXTERIOR_KEYS + _VISAR_CUT_KEYS + _VISAR_POLIZA_KEYS,
-    'dimensiones': _VISAR_POLIZA_KEYS,
+    'dimensiones': _VISAR_ACK_KEYS + _VISAR_POLIZA_KEYS,
 }
 _VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
 
@@ -82,6 +91,16 @@ VISAR_PLAGA_CUTS = (
     ('chinches', 'chinches'),
     ('no_se', 'plaga_no_identificada'),
 )
+
+# Cómo se le nombra al cliente el motivo del corte, en el aviso de valoración.
+# Sin `_()` a nivel de módulo por lo mismo que `_VISAR_STEP_LABELS`: se evaluaría
+# al importar, con el idioma equivocado. Encajan en "Para ___ necesitamos…".
+_VISAR_VALUATION_REASONS = {
+    'termitas': "atender termitas",
+    'chinches': "atender chinches de cama",
+    'plaga_no_identificada': "identificar qué plaga es",
+    'area_excede_limite': "un área de ese tamaño",
+}
 
 # Claves de paso que el flujo puede devolver como "el siguiente".
 VISAR_STEP_SERVICES = 'services'
@@ -284,6 +303,61 @@ class AppointmentType(models.Model):
                    for item in self._visar_resolve_wizard_items(selections))
 
     @api.model
+    def _visar_wizard_valuation_inline(self, booking):
+        """¿Este canal pregunta el aviso de valoración EN LÍNEA, o corta ahí?
+
+        Quién lo sabe es el canal, no el flujo — igual que `needs_name`. El web
+        tiene a dónde cortar: una página de aviso propia (`/wizard/valoracion-aviso`)
+        y un flujo de valoración con su propia URL. El chat no tiene páginas: si el
+        cuestionario se para, la conversación se para, y eso es exactamente el fallo
+        que describe I-17.
+
+        El web NUNCA pone la bandera, así que para él este paso sigue siendo
+        terminal y su recorrido no cambia ni un byte.
+        """
+        return bool((booking or {}).get('valuation_inline'))
+
+    @api.model
+    def _visar_wizard_valuation_ack(self, booking):
+        """True si el cliente ya acusó el aviso (precio + motivo)."""
+        selections = (booking or {}).get('selections') or {}
+        return bool(selections.get('valuation_ack'))
+
+    @api.model
+    def _visar_wizard_valuation_items(self):
+        """El único `item` de una visita de valoración: precio fijo, sin medidas.
+
+        `_visar_resolve_wizard_items` no sirve aquí y no es un descuido suyo: solo
+        emite items para dimensiones con un tramo elegido (`tier_*`), y el corte por
+        calificación —termitas, chinches, "no sé qué es"— **nunca elige tramo**. El
+        corte existe justamente para no medir.
+
+        Sin esto, el paso de la dirección devuelve `no_items` y la rama sigue sin
+        cerrar aunque la secuencia ya llegue hasta él.
+
+        Es la misma lista que `_agent_booking_context` armaba a mano en el módulo
+        del agente. Vive aquí para que resumen, extras, cotización y horarios lean
+        todos de un solo sitio.
+        """
+        template = self.env['product.template'].sudo()._visar_get_valuation_template()
+        apt_type = self._visar_get_valuation_appointment_type()
+        if not template or not apt_type:
+            return []
+        variant = template.product_variant_id
+        if not variant:
+            return []
+        return [{
+            'dimension_id': False,
+            'tier_id': False,
+            'variant_id': variant.id,
+            'product_id': variant.id,
+            'product_tmpl_id': template.id,
+            'appointment_type_id': apt_type.id,
+            'is_valuation': True,
+            'quantity': 1,
+        }]
+
+    @api.model
     def _visar_wizard_dimension_sections(self, selections, measure_type='direct'):
         """Secciones de tramos por dimensión, para los pasos de medición."""
         ProductTemplate = self.env['product.template'].sudo()
@@ -318,10 +392,19 @@ class AppointmentType(models.Model):
         if not selections.get('group_ids'):
             return VISAR_STEP_SERVICES
 
+        inline = self._visar_wizard_valuation_inline(booking)
+        acked = self._visar_wizard_valuation_ack(booking)
+
         # Corte a valoración: atajo global para no re-preguntar mediciones cuando
-        # ya se decidió que va valoración.
+        # ya se decidió que va valoración. En el chat el aviso es un paso más y,
+        # una vez acusado, se sigue a la dirección (el técnico va a ir igual). En
+        # el web sigue siendo terminal: allí se corta a un flujo propio.
         if selections.get('requiere_valoracion'):
-            return VISAR_STEP_VALUATION
+            if not (inline and acked):
+                return VISAR_STEP_VALUATION
+            # Acusado: se salta el resto del cuestionario —no hay nada que medir—
+            # y se va derecho a la dirección.
+            return VISAR_STEP_ADDRESS
 
         if self._visar_wizard_fumigacion_selected(selections):
             if not selections.get('motivo'):
@@ -349,7 +432,9 @@ class AppointmentType(models.Model):
         if needs('direct'):
             return 'dimensiones'
 
-        if self._visar_wizard_requires_valuation(selections):
+        # Corte por tramo (área fuera del tabulador): mismo trato que el de
+        # calificación, pero aquí las mediciones ya se contestaron.
+        if self._visar_wizard_requires_valuation(selections) and not (inline and acked):
             return VISAR_STEP_VALUATION
         return VISAR_STEP_ADDRESS
 
@@ -543,7 +628,14 @@ class AppointmentType(models.Model):
              int(item.get('appointment_type_id') or 0))
             for item in (booking.get('items') or [])
         )
-        return '%s|%s' % (booking.get('zone_id') or 0, firma)
+        # El corte a valoración entra en la huella porque cambia el POOL: la
+        # valoración tiene tipo de cita y técnicos propios. Sin esto, corregir
+        # "termitas" por "cucarachas" podía dejar la misma huella —si los items
+        # coincidían— y el runtime conservaría un horario apartado sobre un técnico
+        # que ya no es el que va a ir.
+        valuation = self._visar_wizard_requires_valuation(
+            booking.get('selections') or {})
+        return '%s|%s|%s' % (booking.get('zone_id') or 0, int(valuation), firma)
 
     @api.model
     def _visar_wizard_reapply_address(self, booking):
@@ -575,6 +667,13 @@ class AppointmentType(models.Model):
     def _visar_wizard_extras_offers(self, booking):
         """Add-ons opcionales ofrecibles para la reserva actual."""
         booking = booking or {}
+        # En valoración no hay add-ons: lo que se vende es la visita. Sin esto se
+        # le ofrecían al cliente y luego `_visar_build_sale_lines` los tiraba
+        # —corta en seco al ver `is_valuation`—, así que aceptaba unos extras que
+        # nunca aparecían en el total. La póliza ya se guardaba así (§4.1); los
+        # extras se habían quedado fuera.
+        if self._visar_wizard_requires_valuation(booking.get('selections') or {}):
+            return []
         zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
         items = booking.get('items') or []
         if not zone or not items:
@@ -842,6 +941,7 @@ class AppointmentType(models.Model):
             'dimensiones': self._visar_wizard_answer_dimensiones,
             'interior': self._visar_wizard_answer_interior,
             'exterior': self._visar_wizard_answer_exterior,
+            VISAR_STEP_VALUATION: self._visar_wizard_answer_valuation,
             VISAR_STEP_ADDRESS: self._visar_wizard_answer_address,
             VISAR_STEP_NAME: self._visar_wizard_answer_nombre,
             VISAR_STEP_EXTRAS: self._visar_wizard_answer_extras,
@@ -1089,19 +1189,44 @@ class AppointmentType(models.Model):
             return booking, self._visar_wizard_error(
                 'config_missing', _('Falta configurar el tipo de cita.'))
 
-        items = self._visar_resolve_wizard_items(selections)
-        if not items:
-            return booking, self._visar_wizard_error(
-                'no_items',
-                _('No se pudieron resolver los servicios seleccionados.'),
-                address=address)
+        # En valoración lo que se vende es la VISITA, no los servicios: no hay
+        # tramos elegidos que resolver, y los técnicos salen del pool de valoración
+        # y no del cruce por dimensión. Es la misma bifurcación que ya hace
+        # `_agent_slot_tree` al ofrecer horarios.
+        valuation = self._visar_wizard_requires_valuation(selections)
+        if valuation:
+            items = self._visar_wizard_valuation_items()
+            if not items:
+                # Falta el producto o el tipo de cita de valoración: es
+                # configuración, no una respuesta mala del cliente. Decirle
+                # "no se pudieron resolver los servicios" le haría corregir algo
+                # que no está mal.
+                return booking, self._visar_wizard_error(
+                    'config_missing',
+                    _('Falta configurar la visita de valoración.'))
+            pools = {}
+            valuation_type = self._visar_get_valuation_appointment_type()
+            if not valuation_type._visar_eligible_resources(zone):
+                return booking, self._visar_wizard_error(
+                    'no_resources',
+                    _('No tenemos técnicos disponibles para una valoración en tu zona.'),
+                    address=address,
+                    missing_services=[_('Visita de valoración técnica')],
+                    zone_id=zone.id)
+        else:
+            items = self._visar_resolve_wizard_items(selections)
+            if not items:
+                return booking, self._visar_wizard_error(
+                    'no_items',
+                    _('No se pudieron resolver los servicios seleccionados.'),
+                    address=address)
 
-        pools, missing = self._visar_service_resource_pools(zone, items)
-        if missing:
-            return booking, self._visar_wizard_error(
-                'no_resources',
-                _('No tenemos técnicos disponibles para ese servicio en tu zona.'),
-                address=address, missing_services=missing, zone_id=zone.id)
+            pools, missing = self._visar_service_resource_pools(zone, items)
+            if missing:
+                return booking, self._visar_wizard_error(
+                    'no_resources',
+                    _('No tenemos técnicos disponibles para ese servicio en tu zona.'),
+                    address=address, missing_services=missing, zone_id=zone.id)
 
         # Cambiar de zona invalida lo que se cotizó contra la anterior. Si la zona
         # es la misma, los extras aceptados SOBREVIVEN: este método se vuelve a
@@ -1115,7 +1240,11 @@ class AppointmentType(models.Model):
                 selections.pop(key, None)
 
         return {
-            'mode': 'wizard',
+            # El modo lo fija QUIEN resuelve los items, que es este paso. Con
+            # `valuation`, `_visar_wizard_poliza_context` corta sola (mira el modo)
+            # y `_agent_booking_context` resuelve el tipo de cita y el precio de la
+            # valoración en vez de los del servicio.
+            'mode': 'valuation' if valuation else 'wizard',
             'master_appointment_type_id': master.id,
             'zone_id': zone.id,
             'delivery_address': address,
@@ -1124,6 +1253,27 @@ class AppointmentType(models.Model):
             'extras_accepted': (booking.get('extras_accepted') or []) if misma_zona else [],
             'service_pools': {key: pool.ids for key, pool in pools.items()},
         }, None
+
+    @api.model
+    def _visar_wizard_answer_valuation(self, booking, answer):
+        """Acusar el aviso de valoración. No elige nada: dice "sí, adelante".
+
+        Es el único paso que no recoge un dato del cliente sino que le da uno
+        nuestro (el precio de la visita y por qué hace falta). Lo que se guarda es
+        que ya se le dijo — sin eso, el aviso se repetiría en bucle, que es la
+        otra mitad del fallo de I-17.
+
+        `_visar_wizard_commit` corre `_visar_wizard_clear_downstream('valuation')`,
+        que no tiene entrada en `_VISAR_STEP_CLEARS` y por tanto no limpia nada.
+        Correcto: acusar un aviso no invalida ninguna respuesta anterior.
+        """
+        if not self._visar_wizard_requires_valuation(
+                (booking or {}).get('selections') or {}):
+            # Ya no hay corte que avisar (el cliente corrigió el paso de arriba
+            # mientras tanto). No es un error del cliente: se sigue sin marcar.
+            return booking, None
+        return self._visar_wizard_commit(
+            booking, VISAR_STEP_VALUATION, {'valuation_ack': True}), None
 
     @api.model
     def _visar_wizard_answer_nombre(self, booking, answer):
@@ -1333,6 +1483,48 @@ class AppointmentType(models.Model):
                     'description': band.comparative_label or '',
                     'is_valuation': band.is_valuation,
                 } for band in bands],
+            }
+
+        if step_key == VISAR_STEP_VALUATION:
+            if not self._visar_wizard_valuation_inline(booking):
+                # Canal que corta (el web): sin opciones, como siempre.
+                return {'step': step_key, 'kind': 'terminal', 'answer_key': None,
+                        'title': '', 'options': []}
+            ProductTemplate = self.env['product.template'].sudo()
+            zone = self.env['visar.zone'].sudo().browse(
+                booking.get('zone_id')).exists()
+            price = ProductTemplate._visar_valuation_price(zone or None)
+            currency = (zone.pricelist_id.currency_id if zone and zone.pricelist_id
+                        else self.env.company.currency_id)
+            motivo = _VISAR_VALUATION_REASONS.get(
+                selections.get('motivo_valoracion'),
+                "lo que nos describes")
+            precio = format_amount(self.env, price, currency) if price else None
+            # El precio va en el titulo y no en la descripcion de la opcion: es lo
+            # que el cliente necesita para decidir, y una fila de WhatsApp son 24
+            # caracteres. Mismo dato que ensena el aviso del web
+            # (`visar_wizard_valuation_notice`), para que los dos canales digan lo
+            # mismo.
+            if precio:
+                title = _(
+                    'Para %(motivo)s necesitamos una visita de valoración '
+                    'técnica (%(precio)s). El técnico revisa en sitio y te '
+                    'pasamos la propuesta. ¿Te la agendamos?'
+                ) % {'motivo': motivo, 'precio': precio}
+            else:
+                title = _(
+                    'Para %(motivo)s necesitamos una visita de valoración '
+                    'técnica. El técnico revisa en sitio y te pasamos la '
+                    'propuesta. ¿Te la agendamos?'
+                ) % {'motivo': motivo}
+            return {
+                'step': step_key, 'kind': 'single', 'answer_key': 'valuation_ack',
+                'title': title,
+                'options': [{
+                    'value': 'continuar',
+                    'label': _('Sí, agendar'),
+                    'description': _('Elegir día y hora'),
+                }],
             }
 
         if step_key == VISAR_STEP_ADDRESS:
