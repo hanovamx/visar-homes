@@ -1,6 +1,21 @@
 # WhatsApp agent — Enrutamiento por menú + handlers (DISEÑO)
 
-> **Estado: DISEÑO, no implementado.** Escrito 2026-07-28. Continúa la visión de
+> ## ⚠️ Estado real (20-ago-2026): **IMPLEMENTADO**, y su decisión 10 está SUPERADA
+>
+> Las etapas A, B y C están construidas y en producción (`4f17188`, `73e59aa`, `11e6b30`,
+> `502f639`). Lo que sigue vigente de este documento es el **porqué** del enrutamiento por
+> menú y el catálogo de escapes.
+>
+> **La decisión 10 (hand-off de pago por deep link al wizard web) NO se hizo así.** El
+> agendado ocurre **entero dentro del chat**, y lo único que sale es la liga de pago. Ver
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md) §7. Leer este
+> documento por su cuenta da la respuesta equivocada sobre cómo se agenda.
+>
+> El **rewind-and-replay** de aquí sí se implementó, pero con otra forma: no se rebobina la
+> conversación, se corrige **un paso** desde la pantalla de revisión y se re-pregunta solo lo
+> que dependía de él (§10.8b del doc 33).
+
+> **Estado original: DISEÑO, no implementado.** Escrito 2026-07-28. Continúa la visión de
 > [`28-whatsapp-agent-phase2-design.md`](./28-whatsapp-agent-phase2-design.md),
 > pero **reemplaza** la idea de "dispatcher que infiere la intención del mensaje"
 > por **enrutamiento dirigido por el usuario** (menú de botones). Decisiones

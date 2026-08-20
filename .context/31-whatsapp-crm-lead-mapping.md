@@ -1,6 +1,17 @@
 # WhatsApp agent → CRM: mapeo de interacciones a etapas de lead (DISEÑO)
 
-> **Estado: DISEÑO, no implementado.** Escrito 2026-08-04. Decisiones tomadas en
+> ## ✅ Estado real (20-ago-2026): **IMPLEMENTADO**
+>
+> `visar_crm` v19.0.1.3.0 existe y está desplegado: `agent_track_lead` crea el lead en *Nuevo*
+> (`b6ed4c3`), avance de etapa, *won* y cron de caducidad (`a236ba9`), y el grupo de servicio se
+> resuelve por el enlace dimensión → producto (`4b2453b`). El hand-off humano aterriza aquí
+> (`agent_request_handoff`, diseño 33 §9.1).
+>
+> ⛔ **Bloqueado por dato, no por código:** el equipo de CRM de WhatsApp **no tiene líder ni
+> miembros**, así que la actividad del hand-off se crea pero **no cae en la bandeja de nadie**.
+> Es lo que hoy separa "el agente promete que le contactan" de "alguien le contacta".
+
+> **Estado original: DISEÑO, no implementado.** Escrito 2026-08-04. Decisiones tomadas en
 > conversación con dirección/consultor. Define cómo las interacciones del número de
 > WhatsApp (agente LLM + rutas deterministas) crean y hacen avanzar **leads de CRM**.
 >

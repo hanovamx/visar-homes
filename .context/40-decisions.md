@@ -445,3 +445,150 @@ Tamaño inmueble / Tamaño jardín, datos que el wizard ya había recogido.
 - **Bimestral se ofrece a precio de paridad**, vendido por conveniencia (agenda
   automática, visitas de garantía incluidas). **Pendiente de confirmar con Visar** si se
   queda así o lleva descuento.
+
+---
+
+# Agendado por WhatsApp (ago-2026)
+
+> Las decisiones de esta sección se tomaron en el diseño
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md) §12 y **no estaban
+> reflejadas aquí**. Se espejan con su estado real al 20-ago-2026. El detalle y el porqué largo
+> viven en el doc 33; aquí queda el registro y si está hecho o no.
+
+## [IMPLEMENTADO — 19/20-ago-2026] Se agenda ENTERO dentro del chat
+
+El cliente recorre el cuestionario, elige día y hora, aparta el horario y recibe la liga de
+pago sin salir de WhatsApp. **Supera la decisión 10 del doc 29** (hand-off por deep link al
+wizard web), que había resuelto lo mismo mandando al cliente a la web.
+
+Lo único que sale del chat es **el pago**.
+
+## [IMPLEMENTADO — 19-ago-2026] El cuestionario vive en el MODELO, no en el controlador
+
+Las reglas (podar, secuenciar, normalizar, ofrecer) bajaron del controlador web a
+`appointment.type` (`appointment_wizard_flow.py`), y los dos canales las comparten.
+
+**Por qué:** el web las tenía atadas a `request.session` y el agente necesitaba **las mismas**
+por RPC. La alternativa era una segunda copia, y este proyecto ya se quemó con eso — ver el
+riesgo estructural "dos front-ends, un flujo" (doc 33 §11) e I-11.
+
+Que el riesgo es real quedó demostrado el 20-ago: el runtime llevaba **duplicada** una regla de
+"elige al menos una" que Odoo no tenía, y dejaba el paso de extras sin salida (`6999839`).
+
+## [IMPLEMENTADO — 17-ago-2026] Apartado de horario de 10 minutos (butaca de cine)
+
+Una reserva sin pagar **no consume capacidad** en Odoo, así que dos clientes podían llegar al
+pago del mismo horario y el segundo pagaba y se quedaba sin cita. En el web el hueco es
+estrecho; por WhatsApp, entre "te mando la liga" y "el pago entra" pasan minutos.
+
+Se descuenta en `_get_resources_remaining_capacity`, el **único** punto por el que pasan todos
+los caminos — así protege los dos canales con un solo cambio.
+
+## [IMPLEMENTADO — 19-ago-2026] La liga de pago vive y muere con el apartado
+
+Al caducar el apartado, la liga **deja de cobrar**. Cierra el hueco del pago tardío: sin esto se
+podía cobrar algo que ya no se puede entregar. Si al ir a pagar el slot sigue libre, se vuelve a
+apartar solo; si ya es de otro, se rechaza **antes** de que haya dinero de por medio.
+
+## [IMPLEMENTADO — 19/20-ago-2026] Corregir UN paso, no volver a empezar
+
+Desde la pantalla de revisión se corrige un paso y se re-pregunta **solo lo que dependía de él**.
+
+La regla sale sola de la poda que ya existía: lo que dependía de la respuesta vieja la perdió y
+aparece pendiente; lo que no, conserva la suya y se salta. Hizo falta una función nueva,
+`_visar_wizard_next_pending_step` — las dos que había servían para avanzar, no para corregir.
+
+**Semántica de presencia:** `extras_ids` y `poliza_plan_id` marcan "contestado" por la
+**presencia de la clave**, no por su valor. *"No quiero extras"* y *"no me lo han preguntado"*
+tienen que ser estados distintos.
+
+## [IMPLEMENTADO — 19-ago-2026] Al cliente se le da una VENTANA, no una hora
+
+"3 pm" significa *entre 3 y 4*. Es honesto con lo que pasa en la calle y evita la conversación
+de "dijeron a las 3 en punto". Se redacta con el `start`/`stop` que `agent_day_slots` ya
+devuelve.
+
+## [CONFIRMADA CON VISAR — 19-ago-2026] El bloque de 1 h son 20 min de traslado + 40 de servicio
+
+**Corrige el acta de junio**, que decía lo contrario (40 min = 20 servicio + 20 traslado). Ver
+[`91-reunion-2026-06-22.md`](./91-reunion-2026-06-22.md) §4.
+
+El bloque sale de `appointment_duration` (no horneado); el reparto es configuración. Si algún
+día la parte de servicio varía por `items`, lo que cambia es el reparto, no el predicado.
+
+## [DECIDIDA — 19-ago-2026, NO IMPLEMENTADA] Los 20 min son un PRESUPUESTO, no un radio
+
+Para un slot que empieza en `T` con el compromiso anterior terminando en `E`:
+
+```
+presupuesto de viaje = 20 min + (T − E)
+```
+
+Pegados son 20 justos; con hueco por delante, el hueco se suma — un trayecto de 40 min **sí** se
+ofrece si el técnico tiene la mañana libre. No existe un tope duro de "nunca a más de 20 min":
+lo que no se puede es **comerse el traslado de otra cita**.
+
+Consecuencia buscada: la disponibilidad depende de **quién reservó antes**. Al cliente no hay
+nada que explicarle, porque **nunca ve la opción que no cabe**.
+
+> ⛔ **Sin implementar.** No hay ni una línea de esto en código. Hoy se ofrece cualquier horario
+> con capacidad. Sostenible solo mientras haya **un** técnico usable con mediana de 2.5
+> paradas/día; deja de serlo con el segundo.
+
+## [DECIDIDA — 19-ago-2026] Los bordes del día no se restringen por viaje
+
+Solo se valida el viaje **entre** paradas. La primera parada del día no le quita el traslado a
+nadie: no hay cita anterior que proteger.
+
+Con el modelo de presupuesto esto deja de ser una concesión y pasa a ser lo correcto — un tope
+duro sí habría obligado a modelar de dónde sale el técnico, y el primer trayecto del día es
+justo el más largo. **Efecto práctico: no hace falta geocodificar "Visar Home" para esta fase.**
+
+## [CORRECCIÓN — 19-ago-2026] La zona NO aproxima distancia
+
+La primera versión del diseño decía "zona primero, geometría después: `visar.zone.cp` poda casi
+todo el espacio gratis". **Era falso.** Las zonas de Visar son una **métrica de precio**, no de
+distancia: no están trazadas por cercanía, y dos direcciones de la misma zona pueden estar a 45
+min.
+
+La zona sigue sirviendo para saber qué técnicos atienden y qué lista aplica. El control de costo
+descansa entero en "una llamada de Matrix por (día, técnico)".
+
+## [DECIDIDA — 17-ago-2026, NO IMPLEMENTADA] El CP se pide temprano
+
+Se pide justo después del servicio, para (1) rechazar fuera de cobertura en la segunda pregunta
+y no después de seis, y (2) **precalentar** zona, pools, agenda y matrices de viaje mientras el
+cliente contesta el resto. Es tiempo gratis.
+
+> ⛔ **Sin implementar.** Hoy la dirección se sigue pidiendo al final. Es la salida probable para
+> desbloquear la rama de valoración (I-17).
+
+## [DECIDIDA — 17-ago-2026] Los `items` NUNCA se arman a mano
+
+Siempre por `_visar_resolve_wizard_items(selections)`. Los métodos RPC reciben `selections`,
+nunca `items`. Es lo que garantiza que el total del agente sea, por construcción, el del web.
+
+## [IMPLEMENTADO — 18-ago-2026] Hand-off humano: lead + chatter + actividad asignada
+
+Antes el agente decía "en seguida te contacta un asesor" y **no pasaba nada más**: era la falla
+del sistema manual —el contexto se pierde, nadie da seguimiento— reproducida dentro del sistema
+nuevo, y encima con una promesa explícita al cliente.
+
+> ⛔ **Bloqueado por dato:** el equipo de CRM de WhatsApp no tiene líder ni miembros, así que la
+> actividad se crea y **no cae en la bandeja de nadie**.
+
+## [VIGENTE] El pago sigue SIMULADO; Stripe llega después
+
+No bloquea: se construye y prueba con el proveedor *Demo*. Pero la UI/UX contempla **pago
+rechazado** y **pago pendiente** desde el primer día, y el apartado **se congela mientras haya
+una transacción en vuelo** — con Stripe una transacción puede quedar `pending` (3-D Secure,
+SPEI/OXXO), y soltar el horario a mitad del cobro sería el peor caso posible.
+
+## [ABIERTA] La rama de valoración no cierra
+
+**Contradice la decisión 3 del doc 33 §12** ("valoración: SÍ la maneja el agente, hasta el mismo
+paso de horarios"). `valuation` es terminal: nunca se pregunta la dirección, así que no hay zona,
+no hay técnicos y no hay ni un día que ofrecer.
+
+Toca justo a los clientes que están peor: **termitas, chinches y "no sé qué es"** son los tres
+cortes a valoración. Ver §10.7 e I-17.

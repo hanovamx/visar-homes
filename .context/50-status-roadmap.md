@@ -1,11 +1,61 @@
 # Estado y roadmap
 
-> Última actualización: **3-ago-2026** — pólizas: cobro adelantado como línea real + paso
-> de póliza en el wizard, **desplegado en producción**
-> (**visar_appointment v19.0.2.4.1**, **visar_base v19.0.1.4.0**,
-> **visar_subscription v19.0.1.3.0**, **visar_fsm v19.0.1.0.4**).
-> Entrada anterior: 26-jun-2026 — split en 3 módulos + D-06 + D-07 parcial + calificación wizard.
+> Última actualización: **20-ago-2026** — **agendado completo por WhatsApp en producción**.
+> Versiones al día de hoy: **visar_base 19.0.1.6.0**, **visar_fsm 19.0.1.1.0**,
+> **visar_appointment 19.0.2.7.0**, **visar_field_app 19.0.1.26.0**,
+> **visar_subscription 19.0.1.4.0**, **visar_crm 19.0.1.3.0**,
+> **visar_whatsapp_agent 19.0.1.4.0**.
+> Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
+> + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Hecho — Agendado completo por WhatsApp (19/20-ago-2026) — **EN PRODUCCIÓN**
+
+Diseño, estado detallado y las 15 decisiones en
+[`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md). El lado runtime está en el
+`.context/` de `visar_fastapi` (`85-motor-de-flujos-agendado.md`).
+
+**Hoy un cliente puede reservar escribiendo por WhatsApp**, de punta a punta y sin salir del chat
+salvo para pagar. 17 de los últimos 22 commits del repo son esto.
+
+- [x] **Apartado de horario** (`visar.slot.hold`, 10 min configurables) descontado en
+      `_get_resources_remaining_capacity` — protege **los dos canales** con un solo cambio.
+- [x] **El cuestionario bajó al modelo** (`appointment_wizard_flow.py`, ~1,405 líneas): podar,
+      secuenciar, normalizar y ofrecer. El controlador web pasó de 1,961 a 1,664 líneas y
+      **delega**. Su comportamiento no cambió.
+- [x] **`agent_booking_step`** — el cuestionario entero por RPC, sin escribir nada.
+- [x] Días y horarios (`agent_available_days`, `agent_day_slots`) con **hora local**, no UTC.
+- [x] Reserva, pedido y **liga de pago** (`agent_prepare_booking`, `payment.link.wizard`).
+- [x] **La liga vive y muere con el apartado** — al caducar, deja de cobrar.
+- [x] **Corregir UN paso** desde la revisión, re-preguntando solo lo que dependía de él.
+- [x] Retomar una conversación estacionada **sin volver a pedir la dirección**.
+- [x] Multi-selección contestando por escrito; menú de "¿qué quieres cambiar?".
+- [x] Avisos salientes de reserva por buzón (`visar.wa.booking.message`) sobre el mixin
+      compartido `visar.wa.outbox.mixin` de `visar_base`.
+- [x] **Hand-off humano** con lead + nota en el chatter + actividad asignada.
+- [x] Verificado en servidor en **cuatro rondas** (ver §10.2–§10.4 del doc 33) y corregido con
+      tres fallos salidos del **primer uso real como cliente** (§10.6).
+
+### Lo que NO cierra todavía
+
+- [ ] ⛔ **La rama de valoración no llega a horarios** (§10.7 / I-17). `valuation` es terminal:
+      nunca se pregunta la dirección → sin zona → sin técnicos → cero días → el runtime escala a
+      un humano. **Los clientes con termitas, chinches o "no sé qué es" no pueden agendar por
+      WhatsApp.** Contradice la decisión 3 del §12.
+- [ ] ⛔ **Factibilidad de traslado sin construir** (§5, decisiones 7/14). Ni una línea. Hoy se
+      ofrece cualquier horario con capacidad sin mirar si el técnico llega. Sostenible **solo**
+      porque hay un técnico usable con mediana de 2.5 paradas/día.
+- [ ] **CP temprano** (§4.0): decidido, sin construir. Es la salida probable para I-17.
+- [ ] **Equipo CRM de WhatsApp sin líder ni miembros** → el hand-off escala **a nadie**. Es
+      dato, no código, y es lo que separa "prometemos que le contactan" de que le contacten.
+- [ ] **Plantillas de Meta sin aprobar** → los avisos salientes están siempre fuera de la ventana
+      de 24 h: se encolan, dan 502 y caducan.
+- [ ] **Stripe**: el pago sigue simulado (proveedor Demo).
+- [ ] **I-15** — cuatro planes de póliza se llaman igual ("Póliza Mensual" ×4 + "Monthly"). Por
+      RPC da igual; en WhatsApp serían **cuatro botones idénticos en el paso de mayor valor del
+      flujo**. Es dato, no código.
+- [ ] **I-16** — nadie se entera de que un servicio se cayó: `visar-fastapi` estuvo ~2 días
+      muerto sin que nadie lo notara.
 
 ## Hecho — Pólizas: cobro adelantado + paso en el wizard (ago-2026)
 
@@ -192,22 +242,33 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
 
 - **Odoo:** `/Users/luisgarza27/Documents/HANOVA/odoo_19_visar`
 - **Repo módulos:** `/Users/luisgarza27/Documents/HANOVA/VISAR/repo`
+> ⚠️ **Esta sección describía la máquina de otra persona** (rutas `/Users/luisgarza27/…`, BD
+> `visar_local`). Se deja genérica: sustituye `<RAÍZ>` por la raíz de tu checkout.
+
 - **Git remoto:** `https://github.com/luisgarza-g/visar-luisg.git` (rama `main`)
 - **Config:** `odoo.visar.conf`
-- **BD:** `visar_local`, puerto **8071**, credenciales `admin / admin`
+- **BD local:** puerto **8071**, credenciales `admin / admin`
 - **Arranque:**
   ```bash
-  cd /Users/luisgarza27/Documents/HANOVA/odoo_19_visar
-  PYTHONPATH=/Users/luisgarza27/Documents/HANOVA/odoo_19_visar:/Users/luisgarza27/Documents/HANOVA/VISAR/repo \
+  cd <RAÍZ>/odoo_19_visar
+  PYTHONPATH=<RAÍZ>/odoo_19_visar:<RAÍZ>/odoo_19_visar/visar-homes \
     .venv/bin/python setup/odoo -c odoo.visar.conf
   ```
 - **Actualizar módulos:**
   ```bash
-  PYTHONPATH=/Users/luisgarza27/Documents/HANOVA/odoo_19_visar:/Users/luisgarza27/Documents/HANOVA/VISAR/repo \
+  PYTHONPATH=<RAÍZ>/odoo_19_visar:<RAÍZ>/odoo_19_visar/visar-homes \
     .venv/bin/python setup/odoo -c odoo.visar.conf \
     -u visar_base,visar_fsm,visar_appointment --stop-after-init
   ```
 - Tras `-u`, **reiniciar el servidor** (workers cachean registro de modelos/plantillas).
+
+> **Nombres de base, para que no se repita el error.** En el servidor la base es **`visar-db`**.
+> **`visar_prod` NO EXISTE** — no aparece en `psql -l`, y `/etc/odoo/odoo.conf` trae
+> `db_name = visar-db`. Existen `visar-db`, `visar-db-2`, `visar-db-pres`,
+> `visar-db-rehearsal` y `visar-test`. Varios documentos de esta carpeta usan el nombre
+> equivocado. **Los módulos custom viven en `/opt/custom`**, no en una ruta `visar-homes/`.
+>
+> ⚠️ **Nunca correr tests contra `visar-db`.** Siempre sobre una copia desechable.
 
 ## Cómo probar (checklist actualizado)
 
@@ -218,6 +279,15 @@ Detalle completo en [`35-polizas.md`](./35-polizas.md).
 5. **Wizard → valoración:** rango `is_valuation` → aviso → valoración → checkout ($500).
 6. **FSM:** tras pago, revisar tareas en proyecto FSM correspondiente (backend / app técnico).
 7. **Legacy D-03:** URL directa tipo individual → prequalify Zona + m².
+8. **Agendado por WhatsApp (RPC):** desde `odoo shell`, recorrer `agent_booking_step` de
+   principio a fin pasando en cada llamada el `booking` que devolvió la anterior. Confirmar que
+   `step` avanza y **nunca repite** un paso ya contestado, que `options` no viene vacío donde
+   debería haber opciones, y que con una respuesta inválida `error` viene lleno y `step` **no se
+   mueve**. Probarlo **por JSON-RPC de verdad**, no solo en shell: un recordset colado en
+   `options` revienta ahí y no en el shell.
+9. **Paridad web ↔ agente:** el mismo cuestionario por los dos caminos, con las mismas
+   respuestas, tiene que dar el **mismo `selections`**. Si divergen, eso es exactamente lo que
+   `c115c21` venía a impedir.
 
 ## Convenciones de trabajo
 

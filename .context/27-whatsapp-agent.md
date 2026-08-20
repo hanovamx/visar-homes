@@ -7,17 +7,24 @@
 
 ## Qué es
 
-Superficie **RPC de solo lectura** que consume el runtime externo del agente.
-No tiene interfaz de usuario. El agente (LLM) contesta dudas de clientes sobre
-**servicios y precios** por WhatsApp; este módulo le da acceso acotado al
-catálogo y al tabulador, sin dejarlo escribir nada ni tocar modelos arbitrarios.
+Superficie **RPC acotada** que consume el runtime externo del agente. No tiene
+interfaz de usuario. Le da al agente acceso al catálogo, al tabulador, al
+historial del cliente y —desde ago-2026— a **agendar de verdad**: apartar un
+horario, crear la reserva y emitir la liga de pago.
 
 ```
 Cliente → WhatsApp Cloud API → visar_fastapi (FastAPI + LLM) → RPC → visar.agent.tools
 ```
 
-**Fase 1: solo lectura. No agenda citas.** El wizard web (`visar_appointment`)
-no se toca.
+> ⚠️ **"Fase 1: solo lectura" TERMINÓ.** Hasta `9e606c9` (17-ago-2026) este módulo no
+> escribía nada. Hoy escribe `visar.slot.hold`, `calendar.booking`, `sale.order`,
+> `crm.lead` y `visar.wa.booking.message`. El agendado completo por WhatsApp está **en
+> producción** desde el 19/20-ago-2026 — ver
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md).
+>
+> El wizard web (`visar_appointment`) **sí se tocó**: en `c115c21` el cuestionario bajó del
+> controlador al modelo (`appointment_wizard_flow.py`) para que los dos canales compartan
+> las mismas reglas. El comportamiento del web no cambió; su lugar de residencia, sí.
 
 ## Arquitectura híbrida (por qué fuera de Odoo)
 
@@ -28,9 +35,9 @@ arriesgar el negocio. Odoo se queda con lo que le corresponde: **datos y
 configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 (entrada nueva) y el `.context/40-decisions.md` de `visar_fastapi`.
 
-## `visar_whatsapp_agent` (v19.0.1.1.0)
+## `visar_whatsapp_agent` (v19.0.1.4.0)
 
-**Dependencias:** `visar_appointment`.
+**Dependencias:** `visar_appointment`, `visar_crm`.
 
 > Depende de `visar_appointment` —no solo de `visar_base`— porque **reutiliza su
 > motor de precios** (`_visar_quote_booking`). Ver "La cotización no se
@@ -45,12 +52,16 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 
 | Modelo | Archivo | Para qué |
 |---|---|---|
-| `visar.agent.tools` | `models/visar_agent_tools.py` | **AbstractModel**. Métodos `@api.model` de solo lectura. Sin tabla; se llama por RPC. |
+| `visar.agent.tools` | `models/visar_agent_tools.py` | **AbstractModel**. Métodos `@api.model`. Sin tabla; se llama por RPC. |
 | `visar.agent.prompt` | `models/visar_agent_prompt.py` | Prompt del sistema editable (lista, uno activo por `sequence`). |
 | `visar.llm.config` | `models/visar_llm_config.py` | Proveedor/modelo/`max_tokens`/`max_tool_iterations` (sin credenciales). |
 | `visar.whatsapp.config` | `models/visar_whatsapp_config.py` | Cuenta de WhatsApp (no-secreto). **Display-only en 2a.** |
+| `visar.slot.hold` | `models/visar_slot_hold.py` | Apartado temporal de horario (extensión; el modelo vive en `visar_appointment`). |
+| `visar.wa.booking.message` | `models/wa_booking_outbox.py` | Buzón de avisos salientes de reserva, con cron. |
 
-### Los métodos RPC
+### Los métodos RPC — **12**, y seis de ellos escriben
+
+Lectura:
 
 | Método | Entrada | Devuelve |
 |---|---|---|
@@ -59,6 +70,33 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 | `agent_resolve_zone(cp)` | código postal | zona y cobertura |
 | `agent_quote_service(payload)` | `{cp, items:[{service_code, m2}...]}` o `{service_code, cp, m2}` | líneas y total |
 | `agent_customer_services(payload)` | `{phone, scope?}` | servicios del cliente: próximos (default), historial o ambos (etapa C) |
+| `agent_booking_step(payload)` | estado + respuesta del paso | estado nuevo + paso siguiente + sus opciones. **No escribe.** Es la llamada más importante del sistema: el cuestionario entero pasa por aquí. |
+| `agent_available_days(payload)` | `{selections, cp\|zone_id, mode, asked_capacity}` | `{days:[{date, slot_count}], min_hours, message}` |
+| `agent_day_slots(payload)` | lo anterior + `{date}` | slots con `start`/`stop` (UTC) **y** `start_local`/`stop_local` (zona de Visar) |
+
+Escritura:
+
+| Método | Escribe | Para qué |
+|---|---|---|
+| `agent_track_lead(payload)` | `crm.lead` | seguimiento CRM: la cotización del agente crea lead en *Nuevo*. |
+| `agent_request_handoff(payload)` | `crm.lead` + `mail.activity` | hand-off humano: nota en el chatter con todo lo recogido + actividad asignada. |
+| `agent_hold_slot(payload)` | `visar.slot.hold` | aparta un horario ~10 min a nombre de un teléfono. Acepta `mode` (`wizard`\|`valuation`). |
+| `agent_prepare_booking(payload)` | `calendar.booking`, `sale.order` | arma la reserva y devuelve la **liga de pago** (`payment.link.wizard`). |
+
+> **Los dos relojes de `agent_day_slots`.** `start`/`stop` van en **UTC naive** porque es lo
+> que `agent_hold_slot` y `agent_prepare_booking` esperan de vuelta. `start_local`/`stop_local`
+> van en la zona de Visar (`visar.agent.timezone`) y son los **únicos** que se le pueden
+> enseñar a una persona. El runtime no puede convertirlo por su cuenta: la zona es
+> configuración de Odoo, y derivarla del otro lado sería otra regla duplicada. Sin esto, un
+> servicio de las 4 de la tarde se ofrecía como *"entre 22:00 y 23:00"*.
+
+> **Al cliente se le da una VENTANA, no una hora** (decisión 15 del diseño 33): "3 pm"
+> significa *entre 3 y 4*. El bloque de 1 h son **20 min de traslado + 40 de servicio**.
+
+**Endpoint inverso.** Odoo también llama al runtime: `/internal/booking-event`
+(`booking_confirmed`, `hold_expired`, `hold_expired_link`), además de
+`/internal/send-report` y `/internal/send-notification`. Ver el `.context/30-odoo-contract.md`
+de `visar_fastapi`.
 
 > `agent_customer_services` (etapa C, jul-2026) es la ruta **"Servicio existente"**:
 > teléfono → `res.partner` (últimos 10 dígitos) → órdenes confirmadas → cita
@@ -100,10 +138,24 @@ Helpers de `visar_base` que también reutiliza: `visar.zone.cp._get_zone_for_cp`
   (`security/ir.model.access.csv`) sobre los modelos de catálogo, producto,
   pricelist, add-ons, moneda, uom y website.
 - Usuario `whatsapp_agent` (tipo **share**) en ese grupo.
-- **Los métodos no usan `sudo`** (salvo lecturas incidentales de
-  `ir.config_parameter` / `visar.combo.rule` que ya venían con `.sudo()` en el
-  código reutilizado): corren como el usuario que llama, así que **esas ACLs son
-  el límite real**.
+
+> ⚠️ **El nombre del grupo se quedó viejo, y la frase que había aquí también.** Decía "los
+> métodos no usan `sudo`… esas ACLs son el límite real". **Ya no es cierto.**
+>
+> El grupo `group_whatsapp_agent_readonly` **sigue** siendo de solo lectura en el CSV —
+> ninguna línea de `ir.model.access.csv` le da `perm_write` sobre catálogo o producto, y eso
+> está bien. Pero los métodos que escriben (`agent_track_lead`, `agent_request_handoff`,
+> `agent_hold_slot`, `agent_prepare_booking`) **escalan con `sudo()` por dentro**: hay 41
+> `sudo()` en `visar_agent_tools.py`.
+>
+> Consecuencia para quien audite esto: **el límite real ya no son las ACLs, es la superficie
+> de los métodos.** Ninguno acepta nombres de modelo, dominios ni SQL, y cada uno escribe
+> exactamente un tipo de registro con datos validados — eso es lo que acota el daño de un
+> prompt injection, no el ACL. Si algún día se añade un método que escriba, el trabajo de
+> seguridad está en **su firma**, no en el CSV.
+>
+> El grupo debería renombrarse a algo como "Agente WhatsApp / RPC" cuando toque un `-u`; no se
+> hace solo por eso porque cambiar el `name` no cambia ningún permiso.
 
 > **Superficie de ACL (validada 23-jul-2026).** Reutilizar `_visar_quote_booking`
 > arrastra lecturas de varios modelos. En el primer uso real faltaba **una**:
@@ -125,7 +177,7 @@ Helpers de `visar_base` que también reutiliza: `visar.zone.cp._get_zone_for_cp`
   solo salta el cap si `env.is_system()`, así que la key se emite con el usuario
   agente y su cap ya subido, no en sudo.
 
-### Validación de paridad (23-jul-2026, BD `visar_prod`)
+### Validación de paridad (23-jul-2026, BD `visar-db`)
 
 Instalado y validado contra datos reales. `agent_quote_service` (usuario acotado)
 = `_visar_quote_booking` (motor del wizard) **al peso** en: interior solo,
@@ -151,18 +203,33 @@ wizard en todos los escenarios probados, incluida la variante combinada y el
 descuento de combo. La lógica es código compartido, así que la única forma de
 divergir sería datos o ACL — y las ACLs ya se cerraron.
 
-## Fase siguiente
+## Estado de las fases (20-ago-2026)
 
-> **Diseño detallado en [`28-whatsapp-agent-phase2-design.md`](./28-whatsapp-agent-phase2-design.md)**
-> — plataforma de capacidades (un número, varios trabajos: LLM Q&A, flujo de
-> cita determinista, salientes disparados por template), listo para implementar.
+| Fase | Qué era | Estado |
+|---|---|---|
+| **1** | Solo lectura: catálogo, zona, cotización | ✅ **terminada y superada** |
+| **2a** | Config + prompt editables desde Odoo | ✅ implementada (`63261da`) |
+| **2b** | Salientes disparados por template | ⚠️ código listo; **bloqueado por Meta** (plantillas sin aprobar) |
+| **2c** | Agendar como flujo determinista, sin LLM | ✅ **implementada y en producción** |
 
-En resumen:
-- **Config + prompt editables en UI Odoo** (`visar.whatsapp.config`,
-  `visar.llm.config`, `visar.agent.prompt`) — que el prompt base salga de Odoo, no
-  del código de `visar_fastapi`. Es el primer corte (Fase 2a).
-- **Salientes disparados** (app de técnicos → template aprobado): **no** con el
-  módulo WhatsApp nativo (choca con el webhook del agente); templates en Meta +
-  envío por el runtime + automatización Odoo. Ver doc 28 (Fase 2b).
-- **Agendar citas** como flujo determinista (cuestionario), no por LLM (Fase 2c).
+> El diseño de la plataforma de capacidades sigue en
+> [`28-whatsapp-agent-phase2-design.md`](./28-whatsapp-agent-phase2-design.md), pero para el
+> agendado el documento vivo es
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md).
+
+**El agendado NO pasa por el LLM.** El cuestionario es determinista de punta a punta: Odoo
+decide el paso siguiente (`agent_booking_step`) y el runtime solo lo pinta. Las únicas dos
+tools expuestas al LLM siguen siendo `resolve_zone` y `quote_service`.
+
+### Lo que sigue abierto
+
+- ⛔ **Rama de valoración** (§10.7 / I-17): `valuation` es terminal, no llega a horarios. Los
+  clientes con termitas, chinches o "no sé qué es" **no pueden agendar por WhatsApp**.
+- ⛔ **Factibilidad de traslado** (§5, decisiones 7/14): sin construir. Hoy se ofrece cualquier
+  horario con capacidad sin mirar si el técnico llega.
+- **Equipo CRM de WhatsApp sin líder ni miembros** — `agent_request_handoff` deja la nota y la
+  actividad, pero **escala a nadie**. Es dato, no código, y bloquea el hand-off real.
+- **Plantillas de Meta sin aprobar** — hasta entonces los avisos salientes están siempre fuera
+  de la ventana de 24 h: se encolan, dan 502 y caducan.
 - Almacenamiento seguro de credenciales (hoy en el `.env` del servicio).
+- **Stripe**: el pago sigue **simulado** (proveedor Demo). Decisión 13 del diseño 33.

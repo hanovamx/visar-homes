@@ -1,21 +1,46 @@
 # Arquitectura — módulos Visar
 
-Odoo 19 Enterprise. El proyecto se divide en **tres módulos** con dependencia en cadena:
+Odoo 19 Enterprise. El proyecto son **siete módulos**. La dependencia **no** es una cadena
+lineal: `visar_base` y `visar_fsm` son la raíz común, y de ahí cuelgan dos ramas hermanas que
+**no se conocen entre sí**.
 
 ```
-visar_base  →  visar_fsm  →  visar_appointment
+visar_base
+   └─ visar_fsm
+        ├─ visar_appointment ──► visar_whatsapp_agent
+        │     └─ (depende también de visar_subscription)
+        └─ visar_field_app
+                                  visar_crm ──► visar_whatsapp_agent
 ```
 
-> **Estado 26-jun-2026:** D-05/D-06 codificados + D-07 parcial (incl. UI tarea FSM) + paso calificación +
-> respuestas nativas híbridas. Repo Git: `github.com/luisgarza-g/visar-luisg`.
+| Módulo | Versión (20-ago-2026) | Depende de |
+|---|---|---|
+| `visar_base` | 19.0.1.6.0 | `sale`, `product`, `appointment` |
+| `visar_fsm` | 19.0.1.1.0 | `visar_base`, `appointment`, `hr`, `industry_fsm`, `industry_fsm_sale` |
+| `visar_appointment` | 19.0.2.7.0 | `visar_base`, `visar_fsm`, `visar_subscription`, `website_appointment*`, `website_sale`, `hr`, `worksheet` |
+| `visar_field_app` | 19.0.1.26.0 | `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize`, `account_payment` |
+| `visar_subscription` | 19.0.1.4.0 | — ver [`35-polizas.md`](./35-polizas.md) |
+| `visar_crm` | 19.0.1.3.0 | — ver [`31-`](./31-whatsapp-crm-lead-mapping.md) / [`32-whatsapp-crm-lead-implementation.md`](./32-whatsapp-crm-lead-implementation.md) |
+| `visar_whatsapp_agent` | 19.0.1.4.0 | `visar_appointment`, `visar_crm` — ver [`27-whatsapp-agent.md`](./27-whatsapp-agent.md) |
+
+> ⚠️ **`visar_field_app` y `visar_appointment` son hermanos, no parientes.** Ninguno depende
+> del otro. Su ancestro común es **`visar_base`**. Importa al decidir dónde vive código
+> compartido: por ejemplo la integración con **Mapbox** vive hoy en `visar_field_app`
+> (geocodificación y ETA de traslado), así que `visar_appointment` **no puede** usarla sin
+> moverla antes a `visar_base`. Ver el §5 de
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md).
+
+> **Estado 20-ago-2026:** D-05/D-06/D-07 implementados; pólizas en producción; app de campo
+> con worksheet, fotos, firma y avisos; **agendado completo por WhatsApp en producción**.
 
 ---
 
-## `visar_base` (v19.0.1.0.0)
+## `visar_base` (v19.0.1.6.0)
 
 **Dependencias:** `sale`, `product`, `appointment`.
 
-Catálogos y lógica de negocio compartida (tabulador, precios, add-ons).
+Catálogos y lógica de negocio compartida (tabulador, precios, add-ons) **y el transporte de
+avisos salientes por WhatsApp**.
 
 ### Modelos propios
 
@@ -27,6 +52,23 @@ Catálogos y lógica de negocio compartida (tabulador, precios, add-ons).
 | `visar.service.tier` | `models/visar_service_tier.py` | Tramo → variante. `name`, `m2_min`, `m2_max`, `product_id`, **`is_valuation`**, `is_free`, `combo_discount_eligible`. |
 | `visar.combo.rule` | `models/visar_combo_rule.py` | Reglas de descuento combo configurables. |
 | `visar.product.optional.line` | `models/visar_product_optional_line.py` | Add-ons con **`is_mandatory`** y **`quantity`** (D-06). |
+| `visar.zone.cp` | `models/visar_zone_cp.py` | CP → zona (`_get_zone_for_cp`). ⚠️ **Es métrica de PRECIO, no de distancia** — ver aviso abajo. |
+| `visar.measure.band` | `models/visar_measure_band.py` | Bandas de medición (exterior unificado). |
+| `visar.estimator.factor` | `models/visar_estimator_factor.py` | Factores del estimador por proxy. |
+| **`visar.wa.outbox.mixin`** | `models/wa_outbox_mixin.py` | **AbstractModel.** Transporte compartido de avisos salientes por WhatsApp: encolar, cron, reintento, caducidad y nota en el chatter si no se entregó. |
+
+> **Por qué el mixin.** Nació como `visar.wa.message` en `visar_field_app` (avisos "voy en
+> camino" / "llegué"). Al necesitar los mismos avisos para el agendado había que copiar ~150
+> líneas de transporte o subirlo a un mixin; se eligió lo segundo, porque dos copias de una
+> regla divergen en cuanto alguien toca una. Cada módulo concreto pone su ancla, su catálogo
+> **cerrado** de claves, el TTL por clave, su cron y dónde dejar la nota.
+> Implementaciones: `visar.wa.message` (`visar_field_app`) y `visar.wa.booking.message`
+> (`visar_whatsapp_agent`).
+
+> ⚠️ **`visar.zone` NO aproxima distancia.** Las zonas de Visar son una **métrica de precio**;
+> no están trazadas por cercanía. Dos direcciones de la misma zona pueden estar a 45 min. Sirve
+> para saber qué técnicos atienden y qué lista de precios aplica, **nunca** para estimar
+> traslados. La primera versión del diseño 33 §5.3 asumió lo contrario y estaba mal.
 
 ### Extensiones
 
@@ -81,11 +123,68 @@ Generación de tareas FSM al confirmar pedidos Visar (D-07).
 
 ---
 
-## `visar_appointment` (v19.0.2.0.15)
+## `visar_appointment` (v19.0.2.7.0)
 
-**Dependencias:** `visar_base`, `visar_fsm`, `website_appointment`, `website_appointment_sale`, `website_sale`, `hr`, `worksheet`.
+**Dependencias:** `visar_base`, `visar_fsm`, `visar_subscription`, `website_appointment`, `website_appointment_sale`, `website_sale`, `hr`, `worksheet`.
 
-Wizard web, controlador de citas, tipos de entrada y plantillas frontend.
+Wizard web, controlador de citas, tipos de entrada, plantillas frontend, **el cuestionario
+compartido entre canales** y **el apartado de horario**.
+
+### `appointment_wizard_flow.py` — el cuestionario, fuera del controlador
+
+**La pieza de lógica más grande del módulo (~1,405 líneas).** Hasta `c115c21` (19-ago-2026) las
+reglas del cuestionario vivían en el controlador web atadas a `request.session`; el agente de
+WhatsApp necesitaba **las mismas** por RPC. Bajaron a `appointment.type`, y el controlador pasó
+de 1,961 a 1,664 líneas y ahora **delega**: sigue dueño de la sesión HTTP, los formularios y
+las URLs, y nada más.
+
+Cuatro responsabilidades:
+
+| Qué | Métodos clave |
+|---|---|
+| **Podar** — qué respuestas quedan inválidas al cambiar un paso | `_visar_wizard_clear_downstream`, `_VISAR_STEP_CLEARS`, `_VISAR_CUT_KEYS`, regla de prefijo `tier_*` |
+| **Secuenciar** — qué paso viene después | `_visar_wizard_next_step`, `_visar_wizard_step_after`, `_visar_wizard_next_pending_step`, `_visar_wizard_step_sequence` |
+| **Normalizar** — respuesta del cliente → `selections` | `_visar_wizard_apply_answer`, los `_visar_wizard_answer_*` |
+| **Ofrecer** — opciones válidas de cada paso, serializadas | `_visar_wizard_step_options` |
+
+**Los pasos** (`VISAR_STEP_*`): `services` → `motivo` → `plagas` → `cobertura` → `group_<id>` /
+`interior` / `exterior` / `dimensiones` → **`address`** → `nombre` → `extras` → `poliza` →
+`schedule`. Más `valuation`, el corte.
+
+Tres cosas que no son evidentes y que se pagaron caro:
+
+1. **`_visar_wizard_next_step` termina en `address` a propósito.** Extras y póliza solo se
+   pueden decidir con zona e items resueltos, y eso pasa **al enviar la dirección**.
+2. **`_visar_wizard_step_after` es "sigue la cadena DESDE el paso que acabas de contestar"** —
+   útil hacia adelante, inservible al corregir.
+3. **`_visar_wizard_next_pending_step` es "el primer paso sin contestar de TODO el
+   cuestionario"** — la que hace falta al corregir un paso o al retomar una conversación
+   estacionada. Las otras dos no contestan esa pregunta.
+
+> **Semántica de presencia, no de valor.** `extras_ids` y `poliza_plan_id` marcan "este paso ya
+> se contestó" por la **presencia de la clave**, aunque el valor sea vacío o `False`. Sin eso,
+> *"no quiero ningún extra"* y *"todavía no le he preguntado"* son el mismo estado, y al
+> corregir cualquier cosa se le volvía a preguntar todo.
+
+> ⛔ **`valuation` es un paso TERMINAL, y es un bug conocido** (diseño 33 §10.7 / backlog I-17).
+> El corte a valoración nunca llega a preguntar la dirección, así que no hay zona, no hay
+> técnicos y no hay ni un día que ofrecer. Los clientes con termitas, chinches o "no sé qué es"
+> no pueden agendar por WhatsApp.
+
+### `visar_slot_hold.py` — apartado de horario (butaca de cine)
+
+Una reserva pendiente de pago **no consume capacidad** en Odoo: `_get_resources_remaining_capacity`
+solo cuenta `appointment.booking.line`, que cuelgan de citas ya confirmadas. Las
+`calendar.booking.line` de una reserva sin pagar son invisibles → dos clientes pueden llegar al
+pago del mismo horario. En el web el hueco es estrecho; por WhatsApp se ensancha a minutos.
+
+- `HOLD_MINUTES_PARAM = 'visar.slot_hold_minutes'`, default **10**.
+- Se descuenta en **`_get_resources_remaining_capacity`**, que es el **único punto por el que
+  pasan todos los caminos** (generación de slots, validación final del formulario, lecturas del
+  agente). Filtrar solo en `_visar_filter_slots_multi_service` **no habría bastado**: la rama de
+  valoración no pasa por ahí.
+- **El dueño del apartado no se bloquea a sí mismo** (`visar_hold_owner` en el contexto).
+- **Un pago en vuelo congela el reloj** (`is_frozen`) — hoy inerte porque el pago es simulado.
 
 ### Extensiones
 
@@ -96,6 +195,20 @@ Wizard web, controlador de citas, tipos de entrada y plantillas frontend.
 | `calendar.event` | `models/calendar_event.py` | `visar_zone_id`, `visar_m2` (legacy), **`visar_booking_items`**. |
 | `product.template` | `models/product_template.py` | `visar_appointment_type_id` (enlace 1:1 tipo cita). Vista: reordena `optional_product_ids` + tabla add-ons en pestaña Ventas. |
 | `sale.order` | `models/sale_order.py` | `_visar_apply_zone_pricelist`. |
+| `calendar.booking` | `models/calendar_booking.py` | Reserva previa al pago (de donde sale la liga). |
+| `payment.transaction` | `models/payment_transaction.py` | Guardia de la **decisión 8**: la liga de pago vive y muere con el apartado. Al caducar el hold, la liga deja de cobrar; si el slot ya es de otro, se rechaza **antes** de que haya dinero de por medio. |
+
+### Los tres métodos de disponibilidad, y cuál usa cada canal
+
+| Método | Qué hace | Quién lo usa |
+|---|---|---|
+| `_get_resources_remaining_capacity` (override) | Resta los apartados vivos | **Todos** los caminos |
+| `_visar_filter_slots_multi_service` | Exige que los técnicos de **todos** los servicios estén libres a la vez | Web + agente en `mode='wizard'` |
+| `_visar_eligible_resources(zone)` | Técnicos de la zona, sin cruce de pools | Rama `mode='valuation'` (no pasa por el filtro multi-servicio) |
+
+⚠️ **La carga por técnico solo es fiable por `appointment.booking.line → appointment.resource`**,
+**nunca** por `project.task.user_ids`: 83 tareas activas están asignadas a *admin*, 4 a
+`__system__` y 61 a nadie.
 
 ### Datos — `data/visar_questions_data.xml`
 
@@ -163,9 +276,33 @@ Modo wizard (servicios normales):
 | `views/valoracion_templates.xml` | Valoración (`from_wizard`) |
 | `views/appointment_templates_appointments.xml` | Sidebar precio multi-línea (`visar_appointment_info_price`) |
 
+---
+
+## Los otros cuatro módulos
+
+Cada uno tiene su documento; aquí solo lo justo para saber qué es y dónde encaja.
+
+| Módulo | Qué añade | Documento |
+|---|---|---|
+| `visar_subscription` (19.0.1.4.0) | **Pólizas.** Cobro adelantado como línea real del pedido, listas (zona × plan), visitas incluidas por plan independientes del cobro. | [`35-polizas.md`](./35-polizas.md) |
+| `visar_field_app` (19.0.1.26.0) | **App de campo.** PIN, worksheet, fotos solo por cámara, firma, reporte PDF al cliente, avisos por WhatsApp. **Aquí vive Mapbox**: geocodificación (`_visar_geo_localize_mapbox`) y ETA de traslado (`_visar_enroute_eta_minutes`, Directions `driving-traffic` con fijo de respaldo). | [`25-field-app.md`](./25-field-app.md) |
+| `visar_crm` (19.0.1.3.0) | **Pipeline de leads** del agente: `agent_track_lead` crea el lead en *Nuevo*; avance de etapa, *won* y cron de caducidad. Es donde aterriza el hand-off humano. | [`31-`](./31-whatsapp-crm-lead-mapping.md) / [`32-`](./32-whatsapp-crm-lead-implementation.md) |
+| `visar_whatsapp_agent` (19.0.1.4.0) | **Superficie RPC del agente**: 12 métodos, seis de ellos escriben. Cuestionario por RPC, días y horarios, apartado, reserva, liga de pago, hand-off y buzón de avisos. | [`27-`](./27-whatsapp-agent.md) / [`33-`](./33-whatsapp-agendado-design.md) |
+
 ## Diagrama de flujos
 
+**Dos canales, un cuestionario.** Desde `c115c21` el web y WhatsApp comparten las reglas
+(`appointment_wizard_flow.py`); lo que cambia es quién las pinta.
+
 ```
+                    appointment_wizard_flow.py
+                   (podar · secuenciar · normalizar · ofrecer)
+                        ▲                        ▲
+        controllers/appointment.py        agent_booking_step (RPC)
+        (sesión HTTP, formularios)        (estado + respuesta → paso siguiente)
+                        ▲                        ▲
+                     WEB                    visar_fastapi → WhatsApp
+
 GET /appointment
    ├─ Valoración Técnica (visar_flow=valuation)
    │     └─ …/visar/valoracion → horario → SO $500 (cita tipo Valoración)
@@ -177,6 +314,14 @@ GET /appointment
                       └─ calificación → wizard/zona → maestro Servicios Visar
                             → horario multi-técnico → SO N líneas (+ add-ons)
                                   → confirmar pago → tareas FSM (1 por proyecto)
+
+WhatsApp (agendado, en producción desde 19/20-ago-2026)
+   cuestionario → dirección → nombre → extras → póliza
+        → días (agent_available_days) → horarios (agent_day_slots)
+        → APARTADO 10 min (agent_hold_slot)
+        → revisión → liga de pago (agent_prepare_booking)
+        → /internal/booking-event ──► el chat avisa y queda listo
+   ⛔ rama de valoración: se corta en `valuation` y NO llega a horarios (I-17)
 
 visar_base: product.template ── visar_tier_ids ──► visar.service.tier ──► product.product
 visar_base: visar.zone ── pricelist_id ──► product.pricelist (% zona; Valoración $500 fijo)

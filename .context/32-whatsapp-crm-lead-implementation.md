@@ -1,6 +1,12 @@
 # WhatsApp agent → CRM: plan de implementación
 
-> **Estado: PLAN.** Escrito 2026-08-05. Es el **CÓMO** del diseño
+> ## ✅ Estado real (20-ago-2026): **EJECUTADO**
+>
+> Este plan se llevó a cabo. `visar_crm` v19.0.1.3.0 y `agent_track_lead`
+> (`visar_agent_tools.py:736`) están en producción. Se conserva por sus "Hechos verificados"
+> (gotchas de Odoo 19), que siguen siendo útiles.
+
+> **Estado original: PLAN.** Escrito 2026-08-05. Es el **CÓMO** del diseño
 > [`31-whatsapp-crm-lead-mapping.md`](./31-whatsapp-crm-lead-mapping.md) (el **QUÉ/PORQUÉ**,
 > decisiones cerradas con dirección). No cambia ninguna decisión del doc 31; la aterriza
 > contra el código real. Verificado por exploración del repo (ver "Hechos verificados").

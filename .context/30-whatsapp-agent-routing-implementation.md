@@ -1,6 +1,16 @@
 # WhatsApp agent — Plan de implementación (enrutamiento por menú)
 
-> **Estado: PLAN.** Escrito 2026-07-29. Es el **CÓMO** de las primeras etapas;
+> ## ✅ Estado real (20-ago-2026): etapas A/B/C **ejecutadas**; el scheduling se hizo aparte
+>
+> Las etapas A, B y C están en producción. Las "notas al final" sobre **scheduling** quedaron
+> cortas: este plan pedía dos reglas de cuestionario y en el código había **cuatro**. El
+> agendado acabó teniendo su propio diseño —
+> [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md) — y su propio motor de
+> flujos en el runtime (`85-motor-de-flujos-agendado.md` de `visar_fastapi`).
+>
+> ⚠️ Este archivo menciona la base `visar_prod`, que **no existe**. Se llama **`visar-db`**.
+
+> **Estado original: PLAN.** Escrito 2026-07-29. Es el **CÓMO** de las primeras etapas;
 > acompaña a [`29-whatsapp-agent-routing-design.md`](./29-whatsapp-agent-routing-design.md)
 > (el **PORQUÉ**). Solo se detallan las etapas **claras** (A, B, C). Las posteriores
 > (insights, persistencia, scheduling) quedan como **notas** al final y se detallan
