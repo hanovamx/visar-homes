@@ -21,6 +21,9 @@ from dateutil.relativedelta import relativedelta
 from markupsafe import Markup, escape
 
 from odoo import api, fields, models
+from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
+    VISAR_STEP_ADDRESS,
+)
 from odoo.tools import format_datetime
 
 _logger = logging.getLogger(__name__)
@@ -1412,6 +1415,19 @@ class VisarAgentTools(models.AbstractModel):
         # Sin paso: solo se pregunta "¿en que voy?". Util para retomar una
         # conversacion estacionada sin tocar el estado.
         if not step:
+            # `_visar_wizard_next_step` SIEMPRE termina en la direccion: no sabe
+            # si ya se contesto, porque el tramo posterior (extras, poliza,
+            # horario) lo marca `_visar_wizard_step_after` y ese solo corre al
+            # CONTESTAR. Retomando, eso devolvia al cliente a la direccion aunque
+            # la tuviera capturada — la pregunta mas cara del cuestionario, y ya
+            # contestada. Si la zona y los items estan resueltos, se sigue por la
+            # cadena. No se re-aplica la direccion: aqui no ha cambiado nada.
+            if (AptType._visar_wizard_next_step(booking) == VISAR_STEP_ADDRESS
+                    and (booking.get('delivery_address') or {})
+                    and booking.get('zone_id') and booking.get('items')):
+                return self._agent_booking_state(
+                    booking,
+                    step=AptType._visar_wizard_step_after(booking, VISAR_STEP_ADDRESS))
             return self._agent_booking_state(booking)
 
         try:

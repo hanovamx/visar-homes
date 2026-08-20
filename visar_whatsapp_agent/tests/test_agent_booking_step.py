@@ -36,6 +36,36 @@ class TestAgentBookingStep(TransactionCase):
         base.update(selections)
         return {'mode': 'wizard', 'selections': base}
 
+    def test_retomar_no_vuelve_a_pedir_la_direccion_ya_capturada(self):
+        """REGRESION (visto en produccion, 20-ago-2026).
+
+        `_visar_wizard_next_step` SIEMPRE termina en la direccion: no sabe si ya
+        se contesto, porque el tramo posterior lo marca `_visar_wizard_step_after`
+        y ese solo corre al CONTESTAR. Retomando una conversacion estacionada, eso
+        devolvia al cliente a la direccion aunque la tuviera capturada — la
+        pregunta mas cara del cuestionario, y ya contestada bien.
+        """
+        booking = {
+            'mode': 'wizard',
+            'selections': {'group_ids': [self.fum_group.id]},
+            'zone_id': 1,
+            'items': [{'dimension_id': 1, 'appointment_type_id': 1}],
+            'delivery_address': {'street': 'Ruiz Cortines', 'ext_num': '123',
+                                 'neighborhood': 'Centro', 'zip': '64000'},
+        }
+        state = self.Tools.agent_booking_step({'booking': booking})
+        self.assertNotEqual(state['step'], 'address',
+                            "retomar no puede devolver al paso ya contestado")
+
+    def test_retomar_sin_direccion_si_la_pide(self):
+        """El que se estaciono ANTES de la direccion tiene que seguir por ahi."""
+        booking = {'mode': 'wizard',
+                   'selections': {'group_ids': [self.fum_group.id]}}
+        state = self.Tools.agent_booking_step({'booking': booking})
+        self.assertEqual(
+            state['step'],
+            self.AptType._visar_wizard_next_step(booking))
+
     def test_ask_vuelve_a_preguntar_sin_aplicar_nada(self):
         """Corregir empieza por volver a PREGUNTAR. La poda corre al contestar."""
         booking = self._booking_fum(motivo='correctivo',
