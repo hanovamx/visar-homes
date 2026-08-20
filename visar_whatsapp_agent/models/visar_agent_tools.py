@@ -1331,7 +1331,10 @@ class VisarAgentTools(models.AbstractModel):
         """Respuesta tipada de agent_booking_step. Nunca lanza."""
         AptType = self._agent_flow_type()
         booking = booking or {}
-        step = step or AptType._visar_wizard_next_step(booking)
+        # `next_pending_step` y no `next_step`: el segundo solo llega hasta la
+        # direccion, asi que para un cuestionario completo respondia "la
+        # direccion" y devolvia al cliente a un paso que ya habia contestado.
+        step = step or AptType._visar_wizard_next_pending_step(booking)
         return {
             'selections': booking.get('selections') or {},
             'zone_id': booking.get('zone_id') or None,
@@ -1415,19 +1418,6 @@ class VisarAgentTools(models.AbstractModel):
         # Sin paso: solo se pregunta "¿en que voy?". Util para retomar una
         # conversacion estacionada sin tocar el estado.
         if not step:
-            # `_visar_wizard_next_step` SIEMPRE termina en la direccion: no sabe
-            # si ya se contesto, porque el tramo posterior (extras, poliza,
-            # horario) lo marca `_visar_wizard_step_after` y ese solo corre al
-            # CONTESTAR. Retomando, eso devolvia al cliente a la direccion aunque
-            # la tuviera capturada — la pregunta mas cara del cuestionario, y ya
-            # contestada. Si la zona y los items estan resueltos, se sigue por la
-            # cadena. No se re-aplica la direccion: aqui no ha cambiado nada.
-            if (AptType._visar_wizard_next_step(booking) == VISAR_STEP_ADDRESS
-                    and (booking.get('delivery_address') or {})
-                    and booking.get('zone_id') and booking.get('items')):
-                return self._agent_booking_state(
-                    booking,
-                    step=AptType._visar_wizard_step_after(booking, VISAR_STEP_ADDRESS))
             return self._agent_booking_state(booking)
 
         try:
@@ -1454,19 +1444,13 @@ class VisarAgentTools(models.AbstractModel):
             # Se vuelve a preguntar EL MISMO paso, con su mensaje.
             return self._agent_booking_state(booking, step=step, error=error)
 
-        # El paso de direccion es el que resuelve zona e items; de ahi en adelante
-        # la secuencia la marca lo que haya que ofrecer (extras, poliza) y no el
-        # cuestionario, asi que se avanza por la cadena y no por `next_step`.
-        if step in ('address', 'nombre', 'extras', 'poliza'):
-            return self._agent_booking_state(
-                booking, step=AptType._visar_wizard_step_after(booking, step))
-
         # Corregir un paso de ARRIBA invalida los items, y el unico sitio donde se
         # recalculan es el paso de la direccion. Si ya la tenemos, se vuelve a
         # aplicar sola: hacerle escribir otra vez su direccion -la pregunta mas
         # cara del cuestionario, y la que ya habia contestado bien- por cambiar
         # "interior" a "ambos" es justo lo que hace que nadie corrija nada.
-        if (AptType._visar_wizard_next_step(booking) == 'address'
+        if (step != VISAR_STEP_ADDRESS
+                and AptType._visar_wizard_next_step(booking) == VISAR_STEP_ADDRESS
                 and (booking.get('delivery_address') or {})):
             booking, error = AptType._visar_wizard_reapply_address(booking)
             booking = dict(booking or {}, needs_name=needs_name)
@@ -1475,10 +1459,12 @@ class VisarAgentTools(models.AbstractModel):
                 # (p. ej. no hay tecnicos para ese servicio en esa zona): se
                 # pregunta de nuevo, con el motivo delante.
                 return self._agent_booking_state(
-                    booking, step='address', error=error)
-            return self._agent_booking_state(
-                booking, step=AptType._visar_wizard_step_after(booking, 'address'))
+                    booking, step=VISAR_STEP_ADDRESS, error=error)
 
+        # Un SOLO camino de salida: lo que QUEDE pendiente. Antes se avanzaba por
+        # la cadena (`_visar_wizard_step_after`), que reanuda desde el paso
+        # contestado y por tanto vuelve a ofrecer extras y poliza aunque no
+        # dependieran de lo que se acaba de corregir.
         return self._agent_booking_state(booking)
 
     @api.model

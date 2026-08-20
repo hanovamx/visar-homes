@@ -65,12 +65,17 @@ class TestWaBookingOutbox(TransactionCase):
         self.assertEqual(aviso.template_key, 'hold_expired')
         self.assertNotIn('liga', aviso.fallback_text.lower())
 
+    def _mis_avisos(self):
+        """Solo los de ESTE telefono: `_visar_cron_gc` barre toda la base, y una
+        copia de produccion puede traer apartados vencidos de verdad."""
+        return self.Outbox.search_count([('phone', '=', self.WA)])
+
     def test_el_cron_avisa_antes_de_borrar(self):
         """Despues del unlink no queda de donde sacar ni el telefono ni la hora."""
         self._hold()
-        antes = self.Outbox.search_count([])
+        antes = self._mis_avisos()
         self.Hold._visar_cron_gc()
-        self.assertEqual(self.Outbox.search_count([]), antes + 1)
+        self.assertEqual(self._mis_avisos(), antes + 1)
 
     def test_un_aviso_que_revienta_no_impide_el_barrido(self):
         """El cron tiene una obligacion —barrer— y un aviso no puede quitarsela."""
@@ -88,9 +93,9 @@ class TestWaBookingOutbox(TransactionCase):
         """El wizard web no crea apartados, pero si algun dia lo hiciera no hay
         a quien escribirle."""
         self._hold(visar_wa_phone=False)
-        antes = self.Outbox.search_count([])
+        antes = self._mis_avisos()
         self.Hold._visar_cron_gc()
-        self.assertEqual(self.Outbox.search_count([]), antes)
+        self.assertEqual(self._mis_avisos(), antes)
 
     def test_el_buzon_apunta_al_endpoint_del_agendado(self):
         """No es solo un texto: el runtime tiene que rebobinar la conversacion."""
@@ -101,6 +106,6 @@ class TestWaBookingOutbox(TransactionCase):
 
     def test_encolar_sin_telefono_no_crea_nada(self):
         """Nunca lanza: encolar corre dentro de un cobro y de un cron."""
-        antes = self.Outbox.search_count([])
+        antes = self._mis_avisos()
         self.assertFalse(self.Outbox._visar_wa_enqueue('booking_confirmed', '', 'x'))
-        self.assertEqual(self.Outbox.search_count([]), antes)
+        self.assertEqual(self._mis_avisos(), antes)

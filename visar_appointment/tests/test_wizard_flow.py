@@ -18,6 +18,8 @@ Las pruebas que necesitan catálogo real (tramos, productos, zonas) se saltan si
 la base no lo trae, en vez de dar un falso verde. Es la misma disciplina de
 `visar_whatsapp_agent/tests/test_agent_prepare_booking.py`.
 """
+from unittest.mock import patch
+
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     VISAR_POLIZA_NONE,
     VISAR_STEP_NAME,
@@ -339,6 +341,69 @@ class TestWizardFlow(TransactionCase):
             self.assertIsNone(options.get('answer_key'), step)
         interior = self.AptType._visar_wizard_step_options(booking, 'interior')
         self.assertEqual(interior.get('mode_key'), 'interior_mode')
+
+    def _booking_completo(self, **selections):
+        """Un booking con el cuestionario contestado hasta la dirección."""
+        booking = self._booking_fum(**selections)
+        booking.update(zone_id=1, items=[{'dimension_id': 1}],
+                       delivery_address={'street': 'X', 'ext_num': '1',
+                                         'neighborhood': 'Y', 'zip': '64000'})
+        return booking
+
+    def test_lo_contestado_no_se_vuelve_a_preguntar(self):
+        """`_visar_wizard_next_pending_step`: el primer paso SIN contestar.
+
+        La marca del tramo final es la PRESENCIA de la clave, no su valor:
+        "dije que no" y "no me lo has preguntado" tienen que ser estados
+        distintos, o corregir cualquier cosa vuelve a preguntar los extras y la
+        póliza aunque no dependieran de lo corregido.
+
+        Se fuerza el prefijo a "contestado" (`next_step` → dirección) porque lo
+        que se prueba aquí es el TRAMO FINAL, que es lo que no existía; que el
+        prefijo se delega está fijado en la prueba de al lado.
+        """
+        booking = self._booking_completo(extras_ids=[], poliza_plan_id=False)
+        with patch.object(type(self.AptType), '_visar_wizard_next_step',
+                          return_value='address'):
+            # `poliza_plan_id = False` es "dije que no": contestado.
+            self.assertEqual(
+                self.AptType._visar_wizard_next_pending_step(booking), 'schedule')
+
+            # Quitar la CLAVE (lo que hace la poda) lo deja pendiente otra vez —
+            # siempre que haya póliza que ofrecer para esta configuración.
+            sin_poliza = dict(booking)
+            sin_poliza['selections'] = {
+                k: v for k, v in booking['selections'].items()
+                if k != 'poliza_plan_id'}
+            esperado = ('poliza' if self.AptType._visar_wizard_poliza_context(
+                sin_poliza) else 'schedule')
+            self.assertEqual(
+                self.AptType._visar_wizard_next_pending_step(sin_poliza), esperado)
+
+    def test_sin_direccion_resuelta_el_pendiente_es_la_direccion(self):
+        booking = self._booking_fum(motivo='correctivo')
+        self.assertEqual(
+            self.AptType._visar_wizard_next_pending_step(booking),
+            self.AptType._visar_wizard_next_step(booking))
+
+    def test_contestar_extras_deja_marca_aunque_no_se_acepte_nada(self):
+        """"No quiero ningún extra" tiene que ser distinguible de "no se lo he
+        preguntado"."""
+        booking = dict(self._booking_fum(motivo='correctivo'),
+                       zone_id=1, items=[{'dimension_id': 1}])
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'extras', {'extra_ids': []})
+        self.assertIsNone(error)
+        self.assertIn('extras_ids', booking['selections'])
+        self.assertEqual(booking['extras_accepted'], [])
+
+    def test_cambiar_el_servicio_vuelve_a_dejar_pendientes_las_ofertas(self):
+        """Extras y póliza se cotizan sobre los items: si cambian, se re-preguntan."""
+        selections = dict(self._booking_fum(motivo='correctivo')['selections'],
+                          extras_ids=[], poliza_plan_id=3)
+        pruned = self.AptType._visar_wizard_clear_downstream(selections, 'services')
+        self.assertNotIn('extras_ids', pruned)
+        self.assertNotIn('poliza_plan_id', pruned)
 
     def test_los_pasos_editables_son_los_que_se_preguntaron(self):
         """Lo que se preguntó es exactamente lo que se puede corregir, y va con

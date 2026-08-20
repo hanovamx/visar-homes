@@ -49,9 +49,14 @@ _VISAR_PLAGA_KEYS = (
 # inválidas si esa respuesta cambia). Además, los pasos en _VISAR_CLEARS_TIERS limpian
 # todos los tramos elegidos (tier_*). Solo se limpia lo realmente dependiente: cambiar
 # interior NO invalida exterior (mediciones independientes).
-# La póliza se cotiza sobre los items resueltos: cualquier paso que los cambie
-# invalida el plan elegido, o se cobraría el precio de otra configuración.
-_VISAR_POLIZA_KEYS = ('poliza_plan_id',)
+# La póliza y los extras se cotizan sobre los items resueltos: cualquier paso que
+# los cambie invalida lo elegido, o se cobraría el precio de otra configuración.
+#
+# `extras_ids` NO es lo que se compra —eso es `booking['extras_accepted']`— sino
+# la marca de "este paso ya se contestó". Sin ella, "no quiero ningún extra" y
+# "todavía no le he preguntado" son el mismo estado (una lista vacía), y al
+# corregir cualquier cosa se le volvía a preguntar.
+_VISAR_POLIZA_KEYS = ('poliza_plan_id', 'extras_ids')
 _VISAR_STEP_CLEARS = {
     'services': ('motivo',) + _VISAR_PLAGA_KEYS + ('cobertura',)
                 + _VISAR_INTERIOR_KEYS + _VISAR_EXTERIOR_KEYS + _VISAR_POLIZA_KEYS,
@@ -390,6 +395,57 @@ class AppointmentType(models.Model):
             if candidate == VISAR_STEP_POLIZA and not self._visar_wizard_poliza_context(booking):
                 continue
             return candidate
+        return VISAR_STEP_SCHEDULE
+
+    @api.model
+    def _visar_wizard_next_pending_step(self, booking):
+        """El primer paso SIN CONTESTAR de todo el cuestionario, tramo final incluido.
+
+        `_visar_wizard_next_step` solo cubre hasta la dirección, y
+        `_visar_wizard_step_after` es otra cosa: "sigue la cadena desde el paso que
+        acabas de contestar". Las dos sirven para avanzar hacia adelante, y ninguna
+        contesta la pregunta que hace falta al **corregir**: *¿queda algo por
+        preguntar?*
+
+        Sin ella, corregir un paso volvía a recorrer la cadena entera desde el
+        principio y le preguntaba otra vez los extras y la póliza aunque no
+        dependieran de lo que había cambiado. La regla que se quiere es la del
+        cliente: **cambia lo que tocaste, vuelve a preguntar solo lo que dependía
+        de ello, y para lo demás enséñame el resumen.** Eso ya lo consigue la poda
+        (`_visar_wizard_clear_downstream`): lo que dependía perdió su respuesta y
+        aquí aparece como pendiente; lo que no, conserva la suya y se salta.
+
+        Cómo se sabe que un paso del tramo final está contestado:
+
+        | Paso | Marca |
+        |---|---|
+        | `nombre` | `selections['nombre']` |
+        | `extras` | la CLAVE `extras_ids` existe (aunque esté vacía) |
+        | `poliza` | la CLAVE `poliza_plan_id` existe (aunque sea `False`) |
+
+        Es la presencia de la clave, no su valor: "dije que no" y "no me lo has
+        preguntado" tienen que ser estados distintos, y la poda borra la clave
+        justo cuando la respuesta deja de valer.
+        """
+        booking = booking or {}
+        step = self._visar_wizard_next_step(booking)
+        if step != VISAR_STEP_ADDRESS:
+            return step
+        # La dirección es el paso que resuelve zona e items: sin ellos resueltos,
+        # sigue pendiente por mucho que haya un texto guardado.
+        if not (booking.get('delivery_address') and booking.get('zone_id')
+                and booking.get('items')):
+            return VISAR_STEP_ADDRESS
+
+        selections = booking.get('selections') or {}
+        if self._visar_wizard_needs_name(booking):
+            return VISAR_STEP_NAME
+        if ('extras_ids' not in selections
+                and self._visar_wizard_extras_offers(booking)):
+            return VISAR_STEP_EXTRAS
+        if ('poliza_plan_id' not in selections
+                and self._visar_wizard_poliza_context(booking)):
+            return VISAR_STEP_POLIZA
         return VISAR_STEP_SCHEDULE
 
     @api.model
@@ -1047,9 +1103,16 @@ class AppointmentType(models.Model):
                 _('No tenemos técnicos disponibles para ese servicio en tu zona.'),
                 address=address, missing_services=missing, zone_id=zone.id)
 
+        # Cambiar de zona invalida lo que se cotizó contra la anterior. Si la zona
+        # es la misma, los extras aceptados SOBREVIVEN: este método se vuelve a
+        # llamar cada vez que se corrige un paso de arriba (para recalcular los
+        # items), y tirarlos ahí le volvía a preguntar por unos add-ons que ya
+        # había contestado.
         previous_zone_id = booking.get('zone_id')
-        if previous_zone_id and previous_zone_id != zone.id:
-            selections.pop('poliza_plan_id', None)
+        misma_zona = previous_zone_id == zone.id
+        if previous_zone_id and not misma_zona:
+            for key in _VISAR_POLIZA_KEYS:
+                selections.pop(key, None)
 
         return {
             'mode': 'wizard',
@@ -1058,6 +1121,7 @@ class AppointmentType(models.Model):
             'delivery_address': address,
             'selections': selections,
             'items': items,
+            'extras_accepted': (booking.get('extras_accepted') or []) if misma_zona else [],
             'service_pools': {key: pool.ids for key, pool in pools.items()},
         }, None
 
@@ -1083,12 +1147,17 @@ class AppointmentType(models.Model):
         offers = self._visar_wizard_extras_offers(booking)
         offered_by_id = {o['product_id']: o for o in offers}
         chosen = set(self._visar_wizard_id_list(answer.get('extra_ids')))
-        booking = dict(booking)
         # No se confía en lo que llega: solo lo que de verdad se ofreció, y con la
         # cantidad de la oferta (no la que mande el cliente).
+        aceptados = [pid for pid in chosen if pid in offered_by_id]
+        # `extras_ids` queda en `selections` para que el paso se sepa CONTESTADO
+        # aunque no se haya aceptado nada. Es lo que evita volver a preguntarlo al
+        # corregir otra cosa.
+        booking = self._visar_wizard_commit(
+            booking, VISAR_STEP_EXTRAS, {'extras_ids': aceptados})
         booking['extras_accepted'] = [
             {'product_id': pid, 'quantity': offered_by_id[pid]['quantity']}
-            for pid in chosen if pid in offered_by_id
+            for pid in aceptados
         ]
         return booking, None
 
