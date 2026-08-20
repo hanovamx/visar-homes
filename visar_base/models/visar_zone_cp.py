@@ -30,6 +30,12 @@ class VisarZoneCp(models.Model):
     needs_review = fields.Boolean(
         "Revisar", compute='_compute_needs_review', store=True,
         help="El CP abarca colonias de varias zonas; conviene revisarlo.")
+    visar_centroid_lat = fields.Float(
+        "Latitud (centroide)", digits=(10, 7),
+        help="Centro aproximado del CP. Respaldo para estimar traslados cuando "
+             "la dirección exacta no geocodifica.")
+    visar_centroid_lng = fields.Float(
+        "Longitud (centroide)", digits=(10, 7))
 
     _sql_constraints = [
         ('cp_uniq', 'unique(name)', "El código postal debe ser único."),
@@ -74,3 +80,36 @@ class VisarZoneCp(models.Model):
     def _get_zone_for_cp(self, cp):
         """Devuelve la visar.zone del CP dado, o un recordset vacío."""
         return self._get_cp_record(cp).zone_id
+
+    def _visar_centroid(self):
+        """(lat, lng) del centro del CP, geocodificando la primera vez.
+
+        Es el respaldo del §5.4 del diseño 33: **1 de cada 4 direcciones no está
+        geocodificada** (77.6% de cobertura medida en servidor), y sin ninguna
+        coordenada el predicado de traslado se rinde y ofrece cualquier horario.
+        El centroide del CP no es la casa del cliente, pero está muchísimo más
+        cerca que rendirse.
+
+        Cuesta **una** llamada a Mapbox por CP en toda la vida del sistema: se
+        guarda en el propio registro, que es el sitio natural (un CP no se mueve)
+        y evita depender de la caché general para un dato tan estable.
+
+        Nunca lanza: sin token o con Mapbox caído devuelve None y quien llama
+        degrada.
+        """
+        self.ensure_one()
+        if self.visar_centroid_lat or self.visar_centroid_lng:
+            return self.visar_centroid_lat, self.visar_centroid_lng
+        if not self.name:
+            return None
+        partes = ['CP %s' % self.name]
+        if self.municipality:
+            partes.append(self.municipality)
+        partes += ['Nuevo León', 'México']
+        found = self.env['visar.mapbox.service']._visar_mapbox_geocode(
+            ', '.join(partes))
+        if not found:
+            return None
+        lat, lng, _kind = found
+        self.sudo().write({'visar_centroid_lat': lat, 'visar_centroid_lng': lng})
+        return lat, lng

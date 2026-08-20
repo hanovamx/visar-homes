@@ -823,12 +823,13 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_slot_resource_ids(self, slot):
-        """Tecnicos del slot, venga del filtro Visar o del arbol nativo."""
-        resources = slot.get('available_resources')
-        if resources:
-            return [res['id'] for res in resources if res.get('id')]
-        raw = slot.get('available_resource_ids')
-        return raw.ids if hasattr(raw, 'ids') else list(raw or [])
+        """Tecnicos del slot, venga del filtro Visar o del arbol nativo.
+
+        Delega en el modelo: el filtro de traslado necesita el mismo accesor, y
+        dos copias de un "de cualquiera de las dos formas" es como divergen las
+        formas.
+        """
+        return self.env['appointment.type'].sudo()._visar_slot_resource_ids(slot)
 
     @api.model
     def _agent_slot_tree(self, payload):
@@ -855,12 +856,26 @@ class VisarAgentTools(models.AbstractModel):
         if owner_key:
             apt_type = apt_type.with_context(visar_hold_owner=owner_key)
 
+        # A donde va el tecnico. Sale del mismo booking que trae el payload, y con
+        # None el filtro de traslado no toca nada (diseno 33 §5.4).
+        destination = AptType._visar_travel_destination(payload)
+
         if mode == 'valuation':
             resources = apt_type._visar_eligible_resources(zone)
             if not resources:
                 return AptType.browse(), [], None
             months = apt_type._get_appointment_slots(
                 tz_name, filter_resources=resources, asked_capacity=asked_capacity)
+            # ESTE es el sitio que el §5.5 del diseno olvidaba. La rama de
+            # valoracion NO pasa por `_visar_filter_slots_multi_service` -por eso
+            # el apartado se descuenta en `_get_resources_remaining_capacity` y no
+            # ahi, ver el docstring de `visar_slot_hold.py`-, asi que la
+            # factibilidad hay que engancharla aparte o esta rama se quedaria sin
+            # ella. `require='any'`: la lista son CANDIDATOS y basta uno que
+            # llegue, pero los que no llegan se podan, porque el runtime toma
+            # `resource_ids[0]`.
+            months = AptType._visar_filter_slots_travel(
+                apt_type, months, tz_name, destination, require='any')
             return apt_type, months, tz_info
 
         pools, _missing = AptType._visar_service_resource_pools(zone, items)
@@ -871,9 +886,10 @@ class VisarAgentTools(models.AbstractModel):
         months = apt_type._get_appointment_slots(
             tz_name, filter_resources=resources, asked_capacity=asked_capacity)
         # Mismo filtro que el wizard: exige que los tecnicos de TODOS los
-        # servicios esten libres a la vez.
+        # servicios esten libres a la vez, y de paso la factibilidad de ruta.
         months = AptType._visar_filter_slots_multi_service(
-            apt_type, months, pools, tz_name, asked_capacity)
+            apt_type, months, pools, tz_name, asked_capacity,
+            destination=destination)
         return apt_type, months, tz_info
 
     @api.model

@@ -613,7 +613,8 @@ class AppointmentType(models.Model):
 
     # Filtra la estructura de slots del calendario dejando solo los con técnicos simultáneos disponibles.
     @api.model
-    def _visar_filter_slots_multi_service(self, master_type, months, service_pools, timezone, asked_capacity=1):
+    def _visar_filter_slots_multi_service(self, master_type, months, service_pools, timezone,
+                                          asked_capacity=1, destination=None):
         import pytz
         from dateutil.relativedelta import relativedelta
         from werkzeug.urls import url_decode, url_encode
@@ -677,7 +678,17 @@ class AppointmentType(models.Model):
                 'weeks': new_weeks,
                 'has_availabilities': month_has_avail,
             })
-        return filtered_months
+        # Factibilidad de ruta, como una pasada más (diseño 33 §5). Va DESPUÉS de
+        # elegir recursos porque necesita saber de quién es la agenda que hay que
+        # proteger. Con `destination=None` -o sin token, o con el flag apagado- no
+        # toca nada: degradar, nunca bloquear (§5.4).
+        #
+        # `destination` es un PARÁMETRO y no una clave de contexto a propósito.
+        # `visar_hold_cache` y `visar_hold_owner` son contexto porque su consumidor
+        # se alcanza desde código NATIVO de Odoo y no hay firma que extender; aquí
+        # los dos llamadores son código de Visar y ya tienen el booking en la mano.
+        return self._visar_filter_slots_travel(
+            master_type, filtered_months, timezone, destination, require='all')
 
     @api.model
     def _visar_list_unit_price(self, product, zone, plan=None):

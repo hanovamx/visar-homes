@@ -1118,8 +1118,15 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         booking = self._visar_get_booking_session()
         pools = self._visar_get_service_pools(booking)
         timezone = request.session.get('timezone') or appointment_type.appointment_tz
-        filtered = request.env['appointment.type']._visar_filter_slots_multi_service(
-            appointment_type, result['slots'], pools, timezone, asked_capacity)
+        AptType = request.env['appointment.type']
+        # El web hereda la factibilidad de ruta sin lógica propia: solo dice a
+        # dónde hay que ir (diseño 33 §5.5). En el wizard la dirección se captura
+        # en el paso 7, así que en el calendario ya suele estar; si no, esto
+        # devuelve None y no se filtra nada.
+        destination = AptType.sudo()._visar_travel_destination(booking)
+        filtered = AptType._visar_filter_slots_multi_service(
+            appointment_type, result['slots'], pools, timezone, asked_capacity,
+            destination=destination)
         return {
             'slots': filtered,
             'month_first_available': next(

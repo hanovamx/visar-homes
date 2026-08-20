@@ -12,7 +12,7 @@ Catálogos y configuración del negocio VISAR:
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.6.0',
+    'version': '19.0.1.7.0',
     'license': 'LGPL-3',
     'depends': [
         'sale',
@@ -24,6 +24,7 @@ Catálogos y configuración del negocio VISAR:
         'data/visar_tabulador_data.xml',
         'data/visar_zone_cp_data.xml',
         'data/visar_measure_data.xml',
+        'data/visar_travel_cron.xml',
         'views/visar_zone_views.xml',
         'views/visar_zone_cp_views.xml',
         'views/visar_service_group_views.xml',
