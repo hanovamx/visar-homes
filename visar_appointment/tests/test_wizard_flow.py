@@ -312,6 +312,63 @@ class TestWizardFlow(TransactionCase):
         self.assertNotIn('termitas', valores)
         self.assertIn('proteccion_general', valores)
 
+    def test_cada_paso_lleva_la_pista_que_le_toca(self):
+        """Qué decirle al cliente en cada paso es negocio, y lo escribe Odoo.
+
+        El runtime tenía UNA línea para todos los pasos de multi-selección
+        ("Puedes elegir varias") y no servía para ninguno: en servicios hay que
+        decir *varios servicios*; en plagas preventivas conviene una sola,
+        porque "Protección general" ya cubre las tres; y en cobertura lo que
+        hace falta no es una instrucción sino una recomendación — que "ambos"
+        no cuesta más si el patio es chico.
+        """
+        booking = self._booking_fum(motivo='preventivo')
+        pista = lambda step: self.AptType._visar_wizard_step_options(
+            booking, step).get('hint') or ''
+
+        self.assertIn('varios servicios', pista('services'))
+        self.assertIn('más adecuada', pista('plagas'))
+        self.assertIn('no hay costo adicional', pista('cobertura'))
+        self.assertIn('no los del terreno', pista('interior'))
+
+        # En correctivo el cliente reporta lo que TIENE, y puede ser más de una.
+        correctivo = self.AptType._visar_wizard_step_options(
+            self._booking_fum(motivo='correctivo'), 'plagas')
+        self.assertIn('varias opciones', correctivo.get('hint') or '')
+
+        # El nombre del botón que cierra una multi-selección lo pone el canal:
+        # aquí solo va el hueco, o serían dos sitios que renombrar.
+        self.assertIn('{done}', pista('plagas'))
+
+    def test_el_paso_de_interior_dice_que_se_esta_midiendo(self):
+        """"¿De qué tamaño es el área?" no dice si cuenta el terreno.
+
+        `interior` mide la CASA y `dimensiones` mide lo que toque el servicio,
+        así que no pueden preguntar lo mismo.
+        """
+        booking = self._booking_fum(motivo='preventivo')
+        interior = self.AptType._visar_wizard_step_options(booking, 'interior')
+        directo = self.AptType._visar_wizard_step_options(booking, 'dimensiones')
+
+        self.assertIn('construcción', interior['title'])
+        self.assertNotEqual(interior['title'], directo['title'])
+
+    def test_el_tramo_de_valoracion_no_llega_cortado(self):
+        """Una fila de WhatsApp son 24 caracteres y el paréntesis no cabe.
+
+        Llegaba "Más de 1,000 m² (valo…", cortado justo donde empezaba lo que
+        había que entender. El paréntesis baja al subtítulo, que admite 72.
+        """
+        tier = self.env['visar.service.tier'].search(
+            [('is_valuation', '=', True)], limit=1)
+        if not tier:
+            self.skipTest('no hay tramo de valoración configurado')
+
+        opciones = self.AptType._visar_wizard_tier_options(tier)
+        self.assertEqual(len(opciones), 1)
+        self.assertNotIn('(', opciones[0]['label'])
+        self.assertIn('valoración', opciones[0]['description'])
+
     def test_cada_paso_dice_con_que_clave_se_contesta(self):
         """`answer_key` evita que el runtime mantenga su propio mapa paso → clave.
 

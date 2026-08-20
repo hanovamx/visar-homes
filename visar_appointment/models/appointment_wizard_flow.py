@@ -34,6 +34,8 @@ Tres cosas que NO son evidentes:
   tres categorías; "termitas" corta a valoración. Si el runtime arma
   `selections` por su cuenta, esas reglas se pierden.
 """
+import re
+
 from odoo import _, api, models
 from odoo.tools import format_amount
 
@@ -80,6 +82,10 @@ _VISAR_STEP_CLEARS = {
     'dimensiones': _VISAR_ACK_KEYS + _VISAR_POLIZA_KEYS,
 }
 _VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
+
+# Paréntesis final del nombre de un tramo ("… (valoración técnica)"). Se recorta
+# para la etiqueta del chat y se reemplaza por un subtítulo escrito aquí.
+_VISAR_TRAILING_PAREN = re.compile(r'\s*\([^()]*\)\s*$')
 
 # Categorías de plaga que SÍ se atienden con el tabulador (no cortan a valoración).
 VISAR_PLAGA_CATEGORIES = ('rastreros', 'voladores', 'roedores')
@@ -680,6 +686,30 @@ class AppointmentType(models.Model):
             return []
         return self._visar_offered_addons(
             items, zone, include_roedores=self._visar_wizard_has_roedores(booking))
+
+    @api.model
+    def _visar_wizard_extra_description(self, offer):
+        """Qué dice de un add-on la línea de debajo del nombre.
+
+        Estaba vacía, y el paso ofrecía *"Estación antirroedores"* a secas: ni
+        cuántas van ni cuánto cuestan. Se aceptaba —o se rechazaba— un cargo a
+        ciegas, que es justo lo que la pantalla de revisión existe para evitar.
+
+        El precio unitario va aparte del total porque el add-on se ofrece por
+        paquete (3 estaciones): sin el desglose, el total parece el precio de una.
+        """
+        currency = self.env['res.currency'].browse(offer.get('currency_id'))
+        if not currency:
+            currency = self.env.company.currency_id
+        subtotal = format_amount(self.env, offer.get('subtotal') or 0.0, currency)
+        quantity = offer.get('quantity') or 1
+        if quantity <= 1:
+            return subtotal
+        return _('%(qty)s × %(unit)s · total %(subtotal)s') % {
+            'qty': int(quantity) if float(quantity).is_integer() else quantity,
+            'unit': format_amount(self.env, offer.get('unit_price') or 0.0, currency),
+            'subtotal': subtotal,
+        }
 
     @api.model
     def _visar_wizard_poliza_plans(self):
@@ -1337,14 +1367,42 @@ class AppointmentType(models.Model):
 
     @api.model
     def _visar_wizard_tier_options(self, tiers):
+        """Tramos del tabulador, con el paréntesis del nombre bajado a subtítulo.
+
+        Los tramos se llaman *"Más de 1,000 m² (valoración técnica)"*, y una fila
+        de WhatsApp son 24 caracteres: al cliente le llegaba **"Más de 1,000 m²
+        (valo…"**, cortado justo donde empieza lo que había que entender. El
+        paréntesis no se pierde, se mueve al subtítulo —que admite 72— y ahí se
+        lee entero.
+
+        La condición sale del FLAG (`is_valuation` / `is_free`), no del texto del
+        paréntesis: parsear el nombre para saber qué significa sería adivinar
+        sobre un campo que un consultor puede reescribir desde el backend.
+        """
         return [{
             'value': tier.id,
-            'label': tier.name or ('%g - %g m2' % (tier.m2_min, tier.m2_max)),
+            'label': self._visar_wizard_tier_label(tier),
+            'description': self._visar_wizard_tier_description(tier),
             'm2_min': tier.m2_min,
             'm2_max': tier.m2_max,
             'is_free': tier.is_free,
             'is_valuation': tier.is_valuation,
         } for tier in tiers]
+
+    @api.model
+    def _visar_wizard_tier_label(self, tier):
+        """El nombre del tramo sin el paréntesis final."""
+        name = tier.name or ('%g - %g m2' % (tier.m2_min, tier.m2_max))
+        return _VISAR_TRAILING_PAREN.sub('', name).strip() or name
+
+    @api.model
+    def _visar_wizard_tier_description(self, tier):
+        """Lo que hay que saber del tramo antes de elegirlo."""
+        if tier.is_valuation:
+            return _('Requiere visita de valoración técnica')
+        if tier.is_free:
+            return _('Incluido sin costo')
+        return ''
 
     @api.model
     def _visar_wizard_measure_sections(self, selections, measure_type):
@@ -1367,6 +1425,7 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'group_ids',
                 'title': _('¿Qué servicio necesitas?'),
+                'hint': _('Puedes seleccionar varios servicios.'),
                 'options': [{
                     'value': group.id,
                     'label': group._visar_wizard_label(),
@@ -1412,13 +1471,24 @@ class AppointmentType(models.Model):
                     {'value': 'chinches', 'label': _('Chinches de cama'),
                      'description': _('Picaduras en hilera, manchas en sábanas'),
                      'is_valuation': True},
-                    {'value': 'no_se', 'label': _('No estoy seguro de qué es'),
+                    # Corta a proposito: la fila de WhatsApp son 24 caracteres
+                    # y "No estoy seguro de qué es" llegaba como "No estoy
+                    # seguro de qu…". Lo que hay que entender cabe en dos
+                    # palabras.
+                    {'value': 'no_se', 'label': _('No estoy seguro'),
                      'description': '', 'is_valuation': True},
                 ]
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'servicio_plaga',
                 'title': (_('¿Qué estás viendo en casa?') if correctivo
                           else _('¿Contra qué te gustaría protegerte?')),
+                # En correctivo el cliente reporta lo que TIENE, y puede tener
+                # varias cosas. En preventivo elige contra qué protegerse, y
+                # "Protección general" ya cubre las tres: pedirle que marque
+                # varias es empujarlo a la respuesta larga de la corta.
+                'hint': (_('Puedes seleccionar varias opciones.') if correctivo
+                         else _('Selecciona la opción más adecuada y da click '
+                                'en "{done}".')),
                 'options': options,
             }
 
@@ -1426,6 +1496,12 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'cobertura',
                 'title': _('¿Dónde fumigamos?'),
+                # El tramo exterior de 0-50 m2 va incluido en el servicio, asi
+                # que para la mayoria de los patios "ambos" no cuesta mas. Sin
+                # decirlo, el cliente elige interior por miedo al precio.
+                'hint': _('Te recomendamos fumigar tanto interior como '
+                          'exterior: no hay costo adicional si tu patio o '
+                          'jardín mide entre 1 y 50 m².'),
                 'options': [
                     {'value': 'interior', 'label': _('Interior'), 'description': ''},
                     {'value': 'exterior', 'label': _('Exterior'), 'description': ''},
@@ -1440,6 +1516,7 @@ class AppointmentType(models.Model):
                 'step': step_key, 'kind': 'multi', 'answer_key': 'dimension_ids',
                 'title': (_('¿Qué necesitas de %s?') % group._visar_wizard_label()
                           if group else _('¿Qué necesitas?')),
+                'hint': _('Puedes seleccionar varios.'),
                 'options': [{
                     'value': dim.id,
                     'label': dim._visar_wizard_label(),
@@ -1449,13 +1526,21 @@ class AppointmentType(models.Model):
 
         if step_key in ('dimensiones', 'interior'):
             measure = 'direct' if step_key == 'dimensiones' else 'interior'
+            # `interior` mide la CASA; `dimensiones` mide lo que toque el
+            # servicio (un jardín, por ejemplo), asi que no pueden preguntar lo
+            # mismo. "¿De qué tamaño es el área?" a secas dejaba al cliente
+            # eligiendo un tramo sin saber si contaba el terreno.
+            interior = step_key == 'interior'
             payload = {
                 'step': step_key, 'kind': 'measure', 'answer_key': None,
-                'title': _('¿De qué tamaño es el área?'),
+                'title': (_('¿De qué tamaño es la construcción?') if interior
+                          else _('¿De qué tamaño es el área?')),
                 'sections': self._visar_wizard_measure_sections(selections, measure),
                 'options': [],
             }
-            if step_key == 'interior':
+            if interior:
+                payload['hint'] = _('Son los metros construidos de tu casa, no '
+                                    'los del terreno.')
                 # El paso interior admite dos caminos, y el segundo evita que el
                 # cliente que no sabe sus m² se caiga del flujo.
                 payload['mode_key'] = 'interior_mode'
@@ -1556,10 +1641,13 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
                 'title': _('¿Quieres agregar algo más?'),
+                # Los extras son OPCIONALES y el paso se cierra vacio; decirlo
+                # evita el bucle de quien no quiere nada y no encuentra la salida.
+                'hint': _('Si no quieres agregar nada, da click en "{done}".'),
                 'options': [{
                     'value': offer['product_id'],
                     'label': offer.get('name') or '',
-                    'description': '',
+                    'description': self._visar_wizard_extra_description(offer),
                     'quantity': offer.get('quantity'),
                     'unit_price': offer.get('unit_price'),
                     'subtotal': offer.get('subtotal'),

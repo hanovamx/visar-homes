@@ -786,6 +786,12 @@ class AppointmentType(models.Model):
                 qty_by_tmpl[line.optional_product_id] = max(
                     qty_by_tmpl.get(line.optional_product_id, 0), line.quantity)
 
+        # La moneda es la de la lista de la zona, que es de donde sale el precio
+        # (`_visar_list_unit_price`). Va en la oferta para que quien la redacte
+        # no tenga que volver a resolverla —ni asumir la de la compañía.
+        currency = (zone.pricelist_id.currency_id if zone else False) \
+            or self.env.company.currency_id
+
         offers = []
         for opt_tmpl, qty in qty_by_tmpl.items():
             variant = opt_tmpl.product_variant_id
@@ -802,6 +808,7 @@ class AppointmentType(models.Model):
                 'quantity': qty,
                 'unit_price': unit_price,
                 'subtotal': unit_price * qty,
+                'currency_id': currency.id,
             })
         offers.sort(key=lambda o: o['name'])
         return offers

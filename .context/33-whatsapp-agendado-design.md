@@ -1340,6 +1340,106 @@ peor que servir una ruta apretada.
 
 ---
 
+## 10.11 Tercera tanda: el final muerto de Información, y lo que se lee (20-ago-2026)
+
+Recorrido completo como cliente por segunda vez. Un fallo de flujo y una tanda de
+textos que, juntos, eran la diferencia entre "funciona" y "se entiende".
+
+### (a) El final muerto: cotizar, decir que sí, y que no pase nada
+
+La ruta *Información* cotizaba, remataba con "¿quieres agendarlo o tienes alguna
+otra duda?" — y al contestar **"no tengo dudas, quiero agendar"** respondía que
+eso *se hace manualmente con un asesor*. Teniendo el cuestionario funcionando en
+la ruta de al lado.
+
+Eran dos cosas, y las dos hacían falta:
+
+* **El prompt no lo sabía.** El registro activo de `visar.agent.prompt` decía
+  literalmente "Todavía NO puedes agendar citas". El texto vigente vive ahora en
+  `.context/34-prompt-agente-informacion.md`, para que se pueda revisar en un
+  diff: la base sigue siendo la fuente, pero dejó de ser el único sitio.
+* **No tenía cómo hacerlo.** Se añadió la tool `start_booking`
+  (`visar_fastapi/app/odoo/tools.py`). No consulta nada: es la forma que tiene el
+  modelo de **soltar la conversación**. El runtime la detecta en los turnos
+  nuevos del propio historial —igual que ya detectaba `quote_service` para el
+  lead de CRM, sin tocar el loop— y cambia la ruta a *Agendar*, que arranca el
+  cuestionario **en el mismo mensaje**, encabezado por la frase de enlace del
+  modelo.
+
+**Se decidió no prellenar.** El cliente ya dijo su CP, sus metros y su plaga en
+la conversación, y el cuestionario se los vuelve a preguntar. Traducir lo que el
+modelo entendió a `selections` (grupos, plagas, ids de tramo) sería armar el
+estado de venta fuera de Odoo, que es exactamente lo que cobra un tercio del
+precio sin dar error (§7.1). Se prefiere repreguntar a cobrar mal; prellenar
+queda como mejora, y pasa por el CP temprano de la decisión 6.
+
+**Lo que sigue yendo con un asesor** es la valoración técnica: es la rama que
+todavía no llega a horarios (§10.7 / I-17), y por eso se excluye a mano tanto en
+el prompt como en la descripción de la tool.
+
+### (b) Una pista por paso, escrita por Odoo
+
+El runtime ponía **una sola línea** debajo de toda pregunta de multi-selección
+—*"Puedes elegir varias"*— y no servía para ninguna:
+
+| Paso | Lo que hacía falta decir |
+|---|---|
+| Servicios | que se pueden elegir varios **servicios** (con dos, "varias" no se entiende) |
+| Plagas, preventivo | que basta **una**: "Protección general" ya cubre las tres |
+| Plagas, correctivo | que sí, que puede tener varias cosas a la vez |
+| Interior/exterior | no una instrucción: una **recomendación** — "ambos" no cuesta más si el patio mide menos de 50 m² |
+| Interior (medidas) | que se miden los metros **construidos**, no los del terreno |
+| Extras | que se puede cerrar el paso **sin comprar nada** |
+
+Qué decirle al cliente en cada paso es negocio, no presentación, así que la pista
+viaja en `options['hint']` como el resto del cuestionario. El canal solo sustituye
+`{done}` por el nombre real del botón, para no tener dos sitios que renombrar.
+
+### (c) "Listo" no se leía como "mándalo"
+
+El botón que cierra una multi-selección se llamaba *"Listo"*, y se leía como
+*"ya entendí"*: el cliente marcaba sus opciones y se quedaba esperando. Ahora es
+**"Listo, Enviar"** — el verbo va en la etiqueta. Cabe de sobra en los 20
+caracteres de un botón, contador incluido ("Listo, Enviar (3)").
+
+### (d) Un subtítulo no puede costar una lista
+
+El canal elegía botones con ≤3 opciones y lista con más. Un reply button **no
+tiene subtítulo**, así que en los pasos cortos la descripción no se degradaba:
+*desaparecía*. Se veía en dos sitios a la vez:
+
+* **Póliza** — dos planes que en el catálogo se llaman igual y un "No, gracias".
+  Tres opciones → botones, y lo único que distinguía un plan de otro era justo
+  esa línea (*"$450.00 al mes · ahorras $150.00"*). Llegaban dos botones idénticos
+  y ningún precio.
+* **Extras** — *"Estación antirroedores"* a secas, sin decir que son **3** ni
+  cuánto cuestan. Se aceptaba o rechazaba un cargo a ciegas.
+
+La regla ahora es: botones si caben **y** ninguna opción trae subtítulo. Y el
+subtítulo de los extras lo redacta Odoo (`_visar_wizard_extra_description`), con
+el desglose separado del total: el add-on se ofrece por paquete, así que sin
+desglose el total parece el precio de una pieza.
+
+### (e) Textos que llegaban cortados o incompletos
+
+* **"Más de 1,000 m² (valo…"** — una fila de WhatsApp son 24 caracteres y los
+  tramos se llaman *"Más de 1,000 m² (valoración técnica)"*. El paréntesis baja
+  al subtítulo, que admite 72. La condición sale del **flag** (`is_valuation` /
+  `is_free`), no de parsear el nombre: un consultor puede reescribirlo desde el
+  backend.
+* **"No estoy seguro de qué es"** llegaba como *"No estoy seguro de qu…"*. Se
+  acortó a **"No estoy seguro"** (solo en el chat; el wizard web tiene sitio).
+* **"¿De qué tamaño es el área?"** no decía de qué área. `interior` mide la casa
+  y `dimensiones` mide lo que toque el servicio, así que dejaron de preguntar lo
+  mismo.
+* **La ventana de llegada** decía *"te damos una ventana de llegada, no una hora
+  exacta"* — cierto y poco útil. Ahora dice el margen real: hasta una hora
+  después, y por qué (rutas y servicios previos del día).
+* **La confirmación de pago** no decía nada de la política. Ahora la lleva: las
+  citas pagadas no se cancelan ni se reembolsan, y se reprograman sin costo con
+  24 h. Es el único momento en que el cliente la lee, y es justo cuando acaba de
+  pagar; enterarse el día que quiere cancelar es enterarse tarde.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio
