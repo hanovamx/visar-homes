@@ -1251,18 +1251,29 @@ class VisarAgentTools(models.AbstractModel):
         en el sitio donde este proyecto ya se quemo dos veces con reglas
         duplicadas (I-11, y la regla de "elige al menos una" de `6999839`).
 
-        Un `mode` explicito sigue ganando: lo usan el web —que resuelve el modo por
-        su cuenta— y las pruebas.
+        Un `mode` explicito sirve para el caso contrario: el web resuelve el modo
+        por su cuenta y entra por su propia URL de valoracion, sin selecciones que
+        derivar. Pero **no puede contradecir al cuestionario**.
+
+        Aqui el explicito ganaba SIEMPRE, y eso dejaba la rama de valoracion
+        inalcanzable desde el chat: el runtime estampa `mode: "wizard"` fijo en
+        cada peticion (`FlowState.from_state` arma el booking y no tiene como
+        saber el modo), asi que la derivacion no llegaba a correr nunca. El
+        cliente de termitas acusaba el aviso, daba su direccion, y al pedir dias
+        se le resolvia como reserva normal: sin dimension no hay pools, sin pools
+        no hay dias, y acababa en "no encontre fechas disponibles" — exactamente
+        el sintoma de I-17 que esto venia a cerrar. Visto en `visar-db` el
+        21-ago-2026, con la rama ya desplegada.
         """
         payload = payload or {}
-        mode = payload.get('mode')
-        if mode:
-            return mode
         selections = payload.get('selections') or {}
+        # El corte manda. Es una funcion de las selecciones, no una preferencia
+        # del llamador, y un llamador que diga 'wizard' sobre un cuestionario ya
+        # cortado esta equivocado, no eligiendo.
         if self.env['appointment.type'].sudo()._visar_wizard_requires_valuation(
                 selections):
             return 'valuation'
-        return 'wizard'
+        return payload.get('mode') or 'wizard'
 
     @api.model
     def _agent_booking_context(self, payload):

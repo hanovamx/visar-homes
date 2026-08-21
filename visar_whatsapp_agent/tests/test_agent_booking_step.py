@@ -249,3 +249,41 @@ class TestAgentBookingStep(TransactionCase):
         self.assertEqual(state2['selections']['group_ids'], [self.fum_group.id])
         self.assertNotIn('items', state2['selections'],
                          "Los items NUNCA los arma el runtime")
+
+    # ------------------------------------------------------------------
+    # El modo de venta se DERIVA; un llamador no puede contradecir el corte
+    # ------------------------------------------------------------------
+
+    def test_el_corte_a_valoracion_gana_al_modo_que_manda_el_runtime(self):
+        """REGRESION (visto en `visar-db`, 21-ago-2026).
+
+        El runtime estampa `mode: "wizard"` fijo en cada peticion: arma el booking
+        en `FlowState.from_state` y no tiene como saber el modo. Con el explicito
+        ganando siempre, la derivacion no corria NUNCA y la rama de valoracion era
+        inalcanzable desde el chat — sin dimension no hay pools, sin pools no hay
+        dias, y el cliente de termitas acababa en "no encontre fechas
+        disponibles": el sintoma de I-17 que la rama venia a cerrar.
+        """
+        cortado = {'group_ids': [self.fum_group.id], 'motivo': 'correctivo',
+                   'requiere_valoracion': True, 'motivo_valoracion': 'termitas'}
+
+        # Lo que manda el runtime, tal cual: el corte gana.
+        self.assertEqual(
+            self.Tools._agent_booking_mode(
+                {'mode': 'wizard', 'selections': cortado}),
+            'valuation')
+
+        # Y sin `mode`, igual: es funcion de las selecciones.
+        self.assertEqual(
+            self.Tools._agent_booking_mode({'selections': cortado}), 'valuation')
+
+    def test_sin_corte_el_modo_explicito_se_respeta(self):
+        """El web resuelve el modo por su cuenta y entra sin selecciones."""
+        normal = {'group_ids': [self.fum_group.id], 'motivo': 'preventivo'}
+        self.assertEqual(
+            self.Tools._agent_booking_mode(
+                {'mode': 'wizard', 'selections': normal}), 'wizard')
+        # La valoracion "suelta" del web: su propia URL, sin cuestionario.
+        self.assertEqual(
+            self.Tools._agent_booking_mode({'mode': 'valuation'}), 'valuation')
+        self.assertEqual(self.Tools._agent_booking_mode({}), 'wizard')
