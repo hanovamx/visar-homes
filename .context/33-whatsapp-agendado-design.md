@@ -1335,8 +1335,40 @@ El filtro es del *listado*. Rechazar un horario ya pagado porque el presupuesto
 cambió desde que se listó es el fallo T3f otra vez —dinero dentro, cita fuera— y es
 peor que servir una ruta apretada.
 
-> ⚠️ **Sigue sin comprobarse que el token de Mapbox SIRVA** (§13, I-07). Es V0 del
-> encargo, y va antes que todo lo demás.
+### (c) Verificado en servidor (21-ago-2026)
+
+~~⚠️ Sigue sin comprobarse que el token de Mapbox SIRVA (§13, I-07)~~ → **V0 pasa.**
+Primera llamada en vivo que se hace nunca: una Matrix entre dos puntos de
+Monterrey devolvió `[[0, 503.6], [483.1, 0]]`. Y en el flujo real el geocode
+resolvió *"Ruiz Cortines 123, Centro, 64000"* → `25.7047, -100.3449`, cacheado.
+
+**La poda funciona, y la aritmética sale donde el modelo dice.** Montado sobre
+una copia de `visar-db`: Pedro Martínez con una parada ocupada de 09:00 a 10:00
+en el Centro, y un destino en García (~59 min de viaje real):
+
+| Slot | Presupuesto | Viaje | ¿Cabe? |
+|---|---|---|---|
+| 08:00–09:00 | 20 + 0 (pegado a la parada) | 61.0 min | **no** — podado |
+| 10:00–11:00 | 20 + 0 (pegado a la parada) | 59.2 min | **no** — podado |
+| 11:00–12:00 | 20 + 60 de hueco = 80 | 59.2 min | sí |
+
+Con un destino a 3 min del Centro no se poda nada, como debe ser. El corte cae
+exactamente entre el slot con 20 de presupuesto y el que hereda una hora de hueco:
+es el presupuesto entre paradas, no un radio.
+
+**Y degrada sin bloquear.** Token inválido → Mapbox 401, warning en el log, y el
+día vuelve **entero**. Sin token y con el interruptor apagado, igual.
+
+> ⚠️ **Para repetir esto, borra `visar.travel.cache` primero** (o usa coordenadas
+> distintas en cada corrida). La primera vez que se probó el token inválido, la
+> poda salió idéntica a la del token bueno y parecía que la degradación estaba
+> rota: no se estaba llamando a Mapbox en absoluto, la caché contestaba con la
+> matriz que había guardado la corrida anterior. El encargo manda repetir esta
+> prueba y, tal cual está escrita, se contesta sola.
+
+Lo que **no** se ha ejercitado en producción es la llamada de Matrix: hoy el
+único técnico no tiene dos paradas el mismo día, así que la rama que gasta
+llamadas no llega a correr (`test_un_dia_sin_paradas_no_gasta_ni_una_llamada`).
 
 ---
 
