@@ -187,7 +187,7 @@ class TestTravelFeasibility(TransactionCase):
         """
         with patch('%s._visar_mapbox_matrix' % _SERVICE) as matrix:
             durations = self.AptType._visar_travel_durations(
-                [], _DEST, {'calls': 0, 'max_calls': 12})
+                [], _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
             self.assertEqual(durations, {})
             matrix.assert_not_called()
 
@@ -197,10 +197,10 @@ class TestTravelFeasibility(TransactionCase):
         budget = {'calls': 0, 'max_calls': 12}
         with patch('%s._visar_mapbox_matrix' % _SERVICE, return_value=None) as matrix:
             self.assertEqual(
-                self.AptType._visar_travel_durations(stops, _DEST, budget), {})
+                self.AptType._visar_travel_durations(stops, _DEST, budget, self.tz), {})
             self.assertTrue(budget['degraded'], "interruptor de circuito")
             # Segunda llamada: ya no se intenta.
-            self.AptType._visar_travel_durations(stops, _DEST, budget)
+            self.AptType._visar_travel_durations(stops, _DEST, budget, self.tz)
             self.assertEqual(matrix.call_count, 1)
 
     def test_el_tope_de_llamadas_degrada_sin_bloquear(self):
@@ -208,7 +208,7 @@ class TestTravelFeasibility(TransactionCase):
         budget = {'calls': 5, 'max_calls': 5}
         with patch('%s._visar_mapbox_matrix' % _SERVICE) as matrix:
             self.assertEqual(
-                self.AptType._visar_travel_durations(stops, _DEST, budget), {})
+                self.AptType._visar_travel_durations(stops, _DEST, budget, self.tz), {})
             matrix.assert_not_called()
             self.assertTrue(budget['capped'])
 
@@ -218,10 +218,10 @@ class TestTravelFeasibility(TransactionCase):
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=fake_matrix) as matrix:
             primera = self.AptType._visar_travel_durations(
-                stops, _DEST, {'calls': 0, 'max_calls': 12})
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
             self.assertEqual(primera[0], (10, 10))
             segunda = self.AptType._visar_travel_durations(
-                stops, _DEST, {'calls': 0, 'max_calls': 12})
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
             self.assertEqual(segunda[0], (10, 10))
             self.assertEqual(matrix.call_count, 1,
                              "la segunda sale de la caché")
@@ -232,8 +232,121 @@ class TestTravelFeasibility(TransactionCase):
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=[[0, 601], [601, 0]]):
             durations = self.AptType._visar_travel_durations(
-                stops, _DEST, {'calls': 0, 'max_calls': 12})
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
         self.assertEqual(durations[0], (11, 11), "601 s son 11 min, no 10")
+
+    # ------------------------------------------------------------------
+    # Tráfico histórico: `depart_at` y la franja horaria
+    # ------------------------------------------------------------------
+
+    def _depart_at(self, matrix_mock, call=0):
+        return matrix_mock.call_args_list[call].kwargs.get('depart_at')
+
+    def test_se_pregunta_por_la_hora_de_la_parada_no_por_ahora(self):
+        """Sin `depart_at` cotizaríamos velocidades típicas sin hora del día.
+
+        Y la diferencia entre las 8:00 y las 11:00 en Monterrey es del mismo
+        tamaño que el presupuesto de 20 min que estamos midiendo.
+        """
+        stops = self._stops((9, 10, _STOP_A))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600], [600, 0]]) as matrix:
+            self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+
+        esperado = self.tz.localize(
+            datetime(2026, 9, 1, 9, 30)).astimezone(pytz.utc).replace(tzinfo=None)
+        self.assertEqual(
+            self._depart_at(matrix), esperado,
+            "El punto MEDIO de la parada: los dos trayectos salen a media hora "
+            "de él, y así una sola franja sirve para los dos sentidos")
+
+    def test_dos_franjas_de_trafico_en_un_dia_cuestan_dos_llamadas(self):
+        """`depart_at` es de la PETICIÓN, no de la coordenada.
+
+        Un técnico con trabajo a las 9:00 y a las 17:00 vive dos realidades de
+        tráfico. Meterlas en la misma llamada sería cotizar una de las dos con la
+        hora de la otra — barato y equivocado.
+        """
+        stops = self._stops((9, 10, _STOP_A), (17, 18, _STOP_B))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600], [600, 0]]) as matrix:
+            durations = self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+
+        self.assertEqual(matrix.call_count, 2, "una llamada por franja")
+        self.assertEqual(durations[0], (10, 10))
+        self.assertEqual(durations[1], (10, 10))
+        horas = sorted(d.hour for d in (self._depart_at(matrix, 0),
+                                        self._depart_at(matrix, 1)))
+        self.assertNotEqual(horas[0], horas[1],
+                            "cada llamada pregunta por SU hora")
+
+    def test_un_dia_en_una_sola_franja_sigue_costando_una_llamada(self):
+        """El costo no se multiplica por slot: la hora sale de la PARADA.
+
+        Es lo que mantiene vivo el control de costo del §5.3. Con mediana de 2.5
+        paradas al día, la mayoría de los días siguen siendo una sola llamada.
+        """
+        stops = self._stops((9, 10, _STOP_A), (10, 11, _STOP_B))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600, 600], [600, 0, 0], [600, 0, 0]]) as matrix:
+            self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+        self.assertEqual(matrix.call_count, 1)
+
+    def test_la_cache_no_sirve_una_hora_por_otra(self):
+        """La franja va en la clave, o cachear sería servir tráfico ajeno."""
+        Cache = self.env['visar.travel.cache'].sudo()
+        manana = Cache._visar_travel_key(_DEST, _STOP_A, 'D1H09')
+        tarde = Cache._visar_travel_key(_DEST, _STOP_A, 'D1H17')
+        self.assertNotEqual(manana, tarde)
+        self.assertNotEqual(manana, Cache._visar_travel_key(_DEST, _STOP_A))
+        self.assertNotEqual(
+            manana, Cache._visar_travel_key(_STOP_A, _DEST, 'D1H09'),
+            "y sigue siendo direccional: A→B y B→A no duran lo mismo")
+
+    def test_el_tope_a_mitad_de_dia_conserva_lo_ya_cacheado(self):
+        """Topar no tira lo que ya se sabía: filtra con la mitad buena.
+
+        Antes el tope devolvía `{}` para el día entero aunque una de las franjas
+        estuviera cacheada y no costara nada. Una parada sin resolver no impone
+        restricción, así que conservarla es estrictamente mejor.
+        """
+        manana = self._stops((9, 10, _STOP_A))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600], [600, 0]]):
+            self.AptType._visar_travel_durations(
+                manana, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+
+        # Ahora un día con esa parada Y otra de la tarde, ya sin presupuesto.
+        completo = self._stops((9, 10, _STOP_A), (17, 18, _STOP_B))
+        budget = {'calls': 12, 'max_calls': 12}
+        with patch('%s._visar_mapbox_matrix' % _SERVICE) as matrix:
+            durations = self.AptType._visar_travel_durations(
+                completo, _DEST, budget, self.tz)
+            matrix.assert_not_called()
+
+        self.assertEqual(durations, {0: (10, 10)},
+                         "la franja cacheada sobrevive; la otra no impone nada")
+        self.assertTrue(budget['capped'])
+
+    def test_una_salida_pasada_no_lleva_depart_at(self):
+        """Mapbox rechaza `depart_at` en el pasado, y pasa de verdad.
+
+        La ventana de paradas lleva un día de margen a cada lado, así que una
+        parada de esta mañana entra en el barrido de esta tarde. Se degrada a
+        velocidades típicas: peor, pero no falso. Empujarlo a "ahora" sería
+        cotizar el tráfico de una hora que no es la de la cita.
+        """
+        Mapbox = self.env['visar.mapbox.service']
+        ayer = datetime.now() - timedelta(days=1)
+        manana = datetime.now() + timedelta(days=1)
+        self.assertIsNone(Mapbox._visar_mapbox_depart_at(ayer))
+        self.assertIsNone(Mapbox._visar_mapbox_depart_at(None))
+        self.assertTrue(
+            Mapbox._visar_mapbox_depart_at(manana).endswith('Z'),
+            "con la Z explícita: sin ella Mapbox lo lee como hora local")
 
     # ------------------------------------------------------------------
     # El flag y el árbol completo

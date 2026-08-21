@@ -335,14 +335,27 @@ dirección de la compañía como origen es un cambio de una línea en el predica
 Ingenuo, esto serían miles de llamadas a Mapbox. Dos medidas, y la primera es la
 que hace el trabajo:
 
-1. **Una llamada de Matrix por (día, técnico), no por slot.** Se pide de una vez la
-   matriz entre las paradas del día y la dirección nueva; después **todos** los
-   slots del día se evalúan con aritmética. La Matrix API de Mapbox admite hasta
-   25 coordenadas por petición — de sobra para la jornada de un técnico (pico
-   medido: 9 paradas). Con ~10 días candidatos por conversación, son ~10 llamadas
-   por reserva.
-2. **Caché de tiempos de viaje** por par de coordenadas redondeadas. Entre dos
-   direcciones fijas el tiempo casi no cambia; no vale la pena volver a pagarlo.
+1. **Una llamada de Matrix por (día, técnico, franja horaria), no por slot.** Se pide
+   de una vez la matriz entre las paradas del día y la dirección nueva; después
+   **todos** los slots del día se evalúan con aritmética. La Matrix API de Mapbox
+   admite hasta 25 coordenadas por petición — de sobra para la jornada de un
+   técnico (pico medido: 9 paradas).
+2. **Caché de tiempos de viaje** por par de coordenadas redondeadas **y franja**.
+   Entre dos direcciones fijas el tiempo casi no cambia *a la misma hora*; no vale
+   la pena volver a pagarlo.
+
+> **Actualización (21-ago-2026): la franja horaria.** La versión original pedía la
+> matriz **sin hora de salida**, y eso devuelve velocidades típicas sin hora del
+> día. Es un error del mismo tamaño que la magnitud que se está midiendo: el
+> presupuesto es de 20 min, y en Monterrey un trayecto de 15 min a mediodía pasa de
+> 20 en hora pico. Ahora cada llamada lleva `depart_at` (ver §5.3.3).
+>
+> **El costo no se multiplica por slot**, que era el riesgo obvio: la hora de salida
+> sale de la **parada**, no del horario candidato — desde la parada anterior se sale
+> cuando termina, y hacia la siguiente se sale para llegar a que empiece. Ninguna
+> de las dos depende de qué slot se esté evaluando. Lo único que cambia es que un
+> día con paradas en franjas distintas cuesta una llamada por franja: **2 en un día
+> mediano, 4 en el día pico medido**, contra 1 antes.
 
 > ⚠️ **Corrección (19-ago-2026).** La primera versión de esta sección decía "zona
 > primero, geometría después: `visar.zone.cp` → técnicos elegibles poda casi todo
@@ -397,6 +410,58 @@ pero **detrás de un flag** y sin bloquear el resto del flujo. Ver §10.
 > una cuenta `@tec.mx` y 61 no tienen a nadie. La carga por técnico **solo** es
 > fiable por `appointment.booking.line → appointment.resource`, nunca por
 > `project.task.user_ids`. El predicado debe leer de ahí.
+
+### 5.3.3 La hora de salida (`depart_at`) — añadido el 21-ago-2026
+
+Una matriz **sin hora de salida** responde con velocidades típicas, sin hora del día.
+Eso no sirve aquí: el umbral que estamos midiendo son 20 minutos, y la diferencia
+entre las 8:00 y las 11:00 en Monterrey es de ese mismo orden. Estaríamos midiendo
+con una regla cuyo error es tan grande como la cosa medida.
+
+Mapbox acepta `depart_at` en el perfil `driving` y responde con las condiciones
+**previstas** para esa fecha y hora, a partir de 90 días de histórico. Es
+exactamente lo que hace falta para una cita de mañana o de dentro de tres semanas —
+y no cuesta ni un elemento más.
+
+**Qué hora se manda.** La de la **parada**, no la del slot candidato. Los dos
+trayectos que interesan salen en momentos distintos (desde la parada anterior se
+sale cuando termina; hacia la siguiente, para llegar a que empiece), así que se usa
+el **punto medio de la parada**: queda a media hora de los dos en un bloque de una
+hora, y permite una sola franja por parada en vez de dos.
+
+**Por qué hay franjas y no horas exactas.** `depart_at` es un parámetro de la
+*petición*, no de la coordenada: una matriz entera se cotiza a una sola hora. Un
+técnico con trabajo a las 9:00 y a las 17:00 vive dos realidades de tráfico, y
+meterlas en la misma llamada sería cotizar una con la hora de la otra. Así que las
+paradas del día se agrupan por franja y se paga una llamada por franja.
+
+**El ancho de la franja está medido, no elegido** (`visar.travel.depart_bucket_hours`,
+por defecto **3 h**):
+
+| ancho | día mediano (2.5 paradas) | día pico (9 paradas) |
+|---|---|---|
+| 1 h | 3 llamadas | 9 llamadas |
+| **3 h** | **2 llamadas** | **4 llamadas** |
+| 6 h | 2 llamadas | 2 llamadas |
+
+Con una hora, dos citas seguidas (9-10 y 10-11) caen en franjas distintas y se pagan
+por separado — el caso más común y el que menos lo merece, porque el tráfico no
+cambia entre las 9:30 y las 10:30. Con seis se pierde lo que se vino a buscar. Tres
+deja los bordes donde están (6-9 pico de mañana, 9-12, 12-15, 15-18 pico de tarde) y
+colapsa las consecutivas.
+
+**Consecuencias operativas:**
+
+- La **clave de caché lleva la franja**. Sin ella se serviría el tiempo de una hora
+  ajena. Las entradas viejas sin franja no se encuentran y el cron las barre.
+- La franja es **día de la semana + hora, nunca la fecha**: es lo que modela el
+  tráfico histórico, y con la fecha dentro cada entrada se usaría una vez y la caché
+  sería un log.
+- El **tope de llamadas subió de 12 a 30**. Con 12 y las franjas nuevas, un
+  calendario mensual se quedaba a medio filtrar **en silencio**.
+- Una salida **en el pasado** va sin `depart_at` (Mapbox lo rechaza). Pasa de
+  verdad: la ventana de paradas lleva un día de margen. Se degrada a velocidades
+  típicas — peor, pero no falso.
 
 ### 5.4 Degradar, nunca bloquear
 
@@ -454,8 +519,14 @@ del lado del servidor, con independencia de WhatsApp.
 > Este último está limitado a **10 coordenadas** por petición, y 9 paradas + 1 destino son
 > exactamente 10 — el pico medido quedaría justo en el límite. Además, con
 > `min_schedule_hours = 24` nunca se reserva a menos de un día vista, así que el tráfico *de
-> ahora* es ruido. `_visar_enroute_eta_minutes` se queda con `driving-traffic` porque **ahí** el
+> ahora* es ruido: `driving-traffic` mezclaría condiciones en vivo, que es justo lo que no
+> queremos. `_visar_enroute_eta_minutes` se queda con `driving-traffic` porque **ahí** el
 > técnico sale ahora mismo.
+>
+> ⚠️ **Elegir `driving` NO es renunciar al tráfico** (aclarado el 21-ago-2026). Con `depart_at`,
+> `driving` responde con las condiciones **previstas** para esa fecha y hora según 90 días de
+> histórico — que es el dato correcto para una cita futura, y sin pagar el tope de 10
+> coordenadas. Ver §5.3.3.
 
 ### 5.6 Cómo se pide la fecha
 

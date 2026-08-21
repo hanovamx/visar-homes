@@ -46,11 +46,30 @@ TRAVEL_PROFILE_PARAM = 'visar.travel.profile'
 TRAVEL_TIMEOUT_PARAM = 'visar.travel.timeout'
 TRAVEL_PRECISION_PARAM = 'visar.travel.coord_precision'
 TRAVEL_CACHE_DAYS_PARAM = 'visar.travel.cache_days'
+# Ancho de la franja horaria con la que se agrupa el tráfico histórico.
+TRAVEL_BUCKET_HOURS_PARAM = 'visar.travel.depart_bucket_hours'
 
 DEFAULT_PROFILE = 'driving'
 DEFAULT_TIMEOUT = 10
 DEFAULT_PRECISION = 4
 DEFAULT_CACHE_DAYS = 30
+# TRES horas, y el número está medido, no elegido por gusto. La franja es la
+# unidad de cobro: una llamada a Matrix por franja con paradas.
+#
+#   ancho    día mediano (2.5 paradas)    día pico (9 paradas)
+#     1 h              3 llamadas              9 llamadas
+#     3 h              2 llamadas              4 llamadas
+#     6 h              2 llamadas              2 llamadas
+#
+# Con una hora, dos citas seguidas (9-10 y 10-11) caen en franjas distintas y se
+# pagan por separado, que es el caso MÁS común y el que menos lo merece: el
+# tráfico no cambia entre las 9:30 y las 10:30. Con seis se pierde justo lo que
+# se vino a buscar, porque la mañana entera se cotiza a una sola hora.
+#
+# Tres deja los bordes donde de verdad están —6-9 pico de mañana, 9-12, 12-15,
+# 15-18 pico de tarde— y colapsa las citas consecutivas. El ancho es parámetro
+# porque el número bueno sale de medir en servidor (V7), no de este comentario.
+DEFAULT_BUCKET_HOURS = 3
 # Los puntos geocodificados caducan mucho más tarde: una dirección no se mueve.
 DEFAULT_POINT_CACHE_DAYS = 180
 
@@ -75,9 +94,16 @@ class VisarMapboxService(models.AbstractModel):
            Matrix; `driving`, 25. El pico medido de paradas de un técnico en un
            día es 9, que con el destino son exactamente 10: quedaríamos justo en
            el límite, y un día atípico rompería la llamada entera.
-        2. **El tráfico de ahora no dice nada del de mañana.** Con
-           `min_schedule_hours = 24` no se puede reservar a menos de un día vista,
-           así que las condiciones actuales son ruido.
+        2. **El tráfico que queremos es el HISTÓRICO, no el de ahora.** Con
+           `min_schedule_hours = 24` no se reserva a menos de un día vista, así
+           que las condiciones actuales son ruido. `driving-traffic` mezclaría
+           tráfico en vivo cuando la salida está cerca — justo lo que no
+           queremos.
+
+        Ojo: renunciar a `driving-traffic` **no** es renunciar al tráfico. Con
+        `depart_at`, el perfil `driving` responde con las condiciones previstas
+        para esa fecha y hora, a partir de 90 días de histórico. Es exactamente lo
+        que hace falta aquí, y sin pagar el tope de 10 coordenadas.
 
         `visar_field_app._visar_enroute_eta_minutes` sí usa `driving-traffic`, y
         no es una incoherencia: allí el técnico sale **ahora mismo**.
@@ -95,12 +121,38 @@ class VisarMapboxService(models.AbstractModel):
             return DEFAULT_TIMEOUT
 
     @api.model
-    def _visar_mapbox_matrix(self, coords):
+    def _visar_mapbox_depart_at(self, when_utc):
+        """UTC naive → cadena ISO 8601 para `depart_at`, o None.
+
+        Devuelve None cuando la salida **no está en el futuro**, porque Mapbox
+        rechaza `depart_at` en el pasado. Pasa de verdad: la ventana de paradas
+        lleva un día de margen a cada lado, así que una parada de esta mañana
+        entra en el barrido de esta tarde.
+
+        Sin `depart_at` la respuesta son velocidades típicas sin hora del día:
+        peor, pero no falso. Degradar, nunca bloquear — la alternativa (empujarlo
+        a "ahora") sería cotizar el tráfico de una hora que no es la de la cita.
+        """
+        if not when_utc or when_utc <= fields.Datetime.now():
+            return None
+        # Con la Z explícita: sin ella Mapbox lo interpreta como hora local de la
+        # primera coordenada, y aquí los datetime ya vienen en UTC.
+        return when_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    @api.model
+    def _visar_mapbox_matrix(self, coords, depart_at=None):
         """Matriz de duraciones en SEGUNDOS entre N puntos, o None.
 
         `coords` es una lista de `(lat, lng)`. Devuelve una lista de listas donde
         `[i][j]` es el viaje de `i` a `j`, o `None` si no se pudo (sin token, más
         de `MATRIX_MAX_COORDS` puntos, red caída, respuesta rara).
+
+        `depart_at` es un datetime **UTC naive** de cuándo se sale. Con él, Mapbox
+        responde con el tráfico previsto para esa fecha y hora según 90 días de
+        histórico, que es lo que hace falta para una cita de mañana o de dentro de
+        tres semanas. Sin él, velocidades típicas sin hora del día — y la
+        diferencia entre las 8:00 y las 11:00 en Monterrey es del mismo tamaño que
+        el presupuesto de 20 min que estamos midiendo.
 
         `None` **no** significa "no se puede llegar": significa "no lo sé". Quien
         llama tiene que tratarlo como "no impongas restricción", nunca como
@@ -123,10 +175,14 @@ class VisarMapboxService(models.AbstractModel):
         path = ';'.join('%s,%s' % (lng, lat) for lat, lng in coords)
         url = _MATRIX_URL % {'profile': self._visar_travel_profile(),
                              'coords': path}
+        params = {'access_token': token, 'annotations': 'duration'}
+        stamp = self._visar_mapbox_depart_at(depart_at)
+        if stamp:
+            params['depart_at'] = stamp
         try:
             resp = requests.get(
                 url,
-                params={'access_token': token, 'annotations': 'duration'},
+                params=params,
                 timeout=self._visar_travel_timeout())
             resp.raise_for_status()
             payload = resp.json()
@@ -218,8 +274,35 @@ class VisarTravelCache(models.Model):
             return DEFAULT_PRECISION
 
     @api.model
-    def _visar_travel_key(self, origin, destination):
-        """Clave DIRECCIONAL de un par de coordenadas redondeadas.
+    def _visar_travel_bucket_hours(self):
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            TRAVEL_BUCKET_HOURS_PARAM, DEFAULT_BUCKET_HOURS)
+        try:
+            return min(max(int(raw), 1), 24)
+        except (TypeError, ValueError):
+            return DEFAULT_BUCKET_HOURS
+
+    @api.model
+    def _visar_travel_bucket(self, when_local):
+        """Franja de tráfico de una salida: `'D<día>H<hora>'`, o None.
+
+        **Día de la semana y hora, nunca la fecha.** Es lo que modela el tráfico
+        histórico —un martes a las 9 se parece a cualquier otro martes a las 9— y
+        es lo que hace que la caché sirva de algo: con la fecha dentro, cada
+        entrada se usaría una sola vez y la caché sería un log.
+
+        `None` (sin hora conocida) es una franja legítima y distinta: significa
+        "medido sin hora del día", y no debe mezclarse con las que sí la tienen.
+        """
+        if not when_local:
+            return None
+        width = self._visar_travel_bucket_hours()
+        return 'D%dH%02d' % (when_local.weekday(),
+                             (when_local.hour // width) * width)
+
+    @api.model
+    def _visar_travel_key(self, origin, destination, bucket=None):
+        """Clave DIRECCIONAL de un par de coordenadas redondeadas y una franja.
 
         Direccional a propósito: en una ciudad con sentidos únicos, A→B y B→A no
         duran lo mismo.
@@ -228,26 +311,37 @@ class VisarTravelCache(models.Model):
         no vale la pena volver a pagarlo. Cuatro decimales son ~11 m: suficiente
         para que la misma casa siempre acierte, sin que dos casas distintas
         colapsen en la misma entrada.
+
+        La franja entra en la clave desde que existe `depart_at`: el mismo par de
+        puntos **no** tarda lo mismo a las 8:00 que a las 11:00, así que cachear
+        sin ella sería servir la respuesta de una hora ajena. Entradas viejas sin
+        franja simplemente no se encuentran, y el cron las barre.
         """
         digits = self._visar_precision()
         fmt = '%%.%df' % digits
-        return '%s,%s>%s,%s' % (
+        base = '%s,%s>%s,%s' % (
             fmt % origin[0], fmt % origin[1],
             fmt % destination[0], fmt % destination[1])
+        return '%s|%s' % (base, bucket) if bucket else base
 
     # ------------------------------------------------------------------
     # Lectura / escritura
     # ------------------------------------------------------------------
 
     @api.model
-    def _visar_travel_get(self, pairs):
-        """{clave: segundos} para los pares que estén cacheados y vivos.
+    def _visar_travel_get(self, keys):
+        """{clave: segundos} para las claves que estén cacheadas y vivas.
 
-        Una sola consulta para todos los pares: el predicado pregunta por la
-        jornada entera de un técnico, y una consulta por par sería justo el patrón
-        que `visar.slot.hold._visar_snapshot` ya tuvo que corregir.
+        Recibe claves ya construidas, no pares: desde que la franja horaria entra
+        en la clave, armarla es decisión de quien llama —él es el que sabe a qué
+        hora sale el técnico— y devolverle un dict con las mismas claves que él
+        pasó le evita construirlas dos veces.
+
+        Una sola consulta para todas: el predicado pregunta por la jornada entera
+        de un técnico, y una consulta por clave sería justo el patrón que
+        `visar.slot.hold._visar_snapshot` ya tuvo que corregir.
         """
-        keys = [self._visar_travel_key(o, d) for o, d in (pairs or [])]
+        keys = list(keys or [])
         if not keys:
             return {}
         cutoff = self._visar_cutoff('travel')

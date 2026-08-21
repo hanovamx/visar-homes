@@ -64,12 +64,14 @@
   servicio (`res.partner._visar_geo_localize`, menú "Geolocalizar direcciones de clientes"). Detalle en
   `25-field-app.md` (sección 08-jul-2026).
 - **Puntos:**
-  1. ~~**Ruta Mapbox de éxito sin probar en vivo** — falta un token real~~ → **OBSOLETO
-     (17-ago-2026):** verificado en el servidor, `web_map.token_map_box` **existe** y no está
-     vacío (101 chars), y `base_geolocalize.geo_provider = 1`. Lo que sigue pendiente es
-     comprobar que el token **sirve**: nadie ha hecho una llamada en vivo. Texto original:
-     falta un token real (`web_map.token_map_box`). Validar
-     con una dirección conocida que Mapbox devuelve match a nivel calle. (Ya probado: fallback Mapbox-error → OSM.)
+  1. ~~**Ruta Mapbox de éxito sin probar en vivo** — falta un token real~~ → **CERRADO
+     (21-ago-2026):** el token **sirve**. Verificado en servidor con una llamada real a
+     Matrix (V0 del brief del 20-ago). Antes se sabía que `web_map.token_map_box` existía
+     (101 chars) y que `base_geolocalize.geo_provider = 1`, pero nadie había hecho una
+     llamada en vivo; ya está hecha. Sigue **sin** comprobarse que `depart_at` (BETA) se
+     honre en esta cuenta — es W1 del brief del 21-ago. Texto original: falta un token real
+     (`web_map.token_map_box`). Validar con una dirección conocida que Mapbox devuelve match
+     a nivel calle. (Ya probado: fallback Mapbox-error → OSM.)
   2. **"Re-geolocalizar todo"** — la acción de menú solo procesa faltantes; re-geocodificar los ya guardados
      (subir de centroide OSM a calle Mapbox) requiere `force=True`, sin entrada de menú aún.
   3. **Tiles Mapbox (opcional)** — hoy los tiles son OSM (gratis, sin exponer token en la página pública).

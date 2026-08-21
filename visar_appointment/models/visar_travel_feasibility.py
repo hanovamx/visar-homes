@@ -77,7 +77,14 @@ TRAVEL_MAX_CALLS_PARAM = 'visar.travel.matrix_max_calls'
 TRAVEL_GEOCODE_PARAM = 'visar.travel.geocode_address'
 
 DEFAULT_TRAVEL_MINUTES = 20
-DEFAULT_MAX_CALLS = 12
+# El tope cuenta LLAMADAS, no elementos. Desde que cada día se parte por franja
+# horaria, un día mediano cuesta 2 y uno pico 4, no 1. Por eso 30 y no 12: con el
+# tope viejo un calendario mensual se quedaba a medio filtrar **en silencio**.
+#
+# En elementos seguimos muy por debajo de los 100.000 gratis al mes de Mapbox; lo
+# que escasea son las peticiones (60/min en `driving`) y la latencia de la página.
+# El número bueno sale de medir un mes real con la caché fría (V7), no de aquí.
+DEFAULT_MAX_CALLS = 30
 
 
 class AppointmentType(models.Model):
@@ -307,13 +314,40 @@ class AppointmentType(models.Model):
         return True
 
     @api.model
-    def _visar_travel_durations(self, stops, destination, budget):
+    def _visar_travel_stop_depart(self, stop):
+        """Momento (UTC naive) que representa el tráfico de una parada.
+
+        El **punto medio** de la parada, ni su inicio ni su fin, y a propósito:
+        los dos trayectos que interesan salen en momentos distintos —hacia la
+        parada se sale antes de que empiece, desde la parada se sale cuando
+        termina— así que el punto medio queda a media hora de los dos en un bloque
+        de una hora. Una sola franja por parada en vez de dos: la mitad de
+        llamadas, con un error menor que el ancho de la franja.
+        """
+        start, stop_dt = stop[0], stop[1]
+        return start + (stop_dt - start) / 2
+
+    @api.model
+    def _visar_travel_durations(self, stops, destination, budget, tz_info):
         """{índice: (min_hacia_la_parada, min_desde_la_parada)} para un día.
 
-        **Una sola llamada a Matrix por (día, técnico)**, con `[destino, *paradas]`
-        como coordenadas: se lee la fila 0 (destino → parada) y la columna 0
-        (parada → destino), y con eso **todos** los slots de ese día se resuelven
-        con aritmética. Es el control de costo del §5.3.
+        **Una llamada a Matrix por (día, técnico, franja horaria)**, con
+        `[destino, *paradas]` como coordenadas: se lee la fila 0 (destino →
+        parada) y la columna 0 (parada → destino), y con eso **todos** los slots
+        de ese día se resuelven con aritmética. Es el control de costo del §5.3.
+
+        La franja aparece porque `depart_at` es un parámetro **de la petición, no
+        de la coordenada**: una matriz entera se cotiza a una sola hora de salida.
+        Un técnico con trabajo a las 9:00 y a las 17:00 vive dos realidades de
+        tráfico, y meterlas en la misma llamada sería cotizar una de las dos con
+        la hora de la otra.
+
+        Lo que esto **no** hace es multiplicar el costo por slot: la hora de
+        salida sale de la **parada**, no del horario candidato, así que los slots
+        del día se siguen resolviendo con la misma aritmética y sin gastar nada.
+        Con franjas de 3 h, un día mediano (2.5 paradas) cuesta **2** llamadas y
+        el día pico medido (9 paradas) cuesta **4**. Un día con una sola parada
+        —o con varias seguidas— sigue costando **1**.
 
         `budget` es un contador mutable de la corrida: sirve de tope y de
         interruptor de circuito. Un token muerto no puede convertirse en 30
@@ -321,52 +355,77 @@ class AppointmentType(models.Model):
         """
         con_coords = [(index, coords) for index, (_s, _e, coords)
                       in enumerate(stops) if coords]
-        if not con_coords:
-            return {}
-        if budget.get('degraded'):
-            return {}
-        if budget.get('calls', 0) >= budget.get('max_calls', DEFAULT_MAX_CALLS):
-            if not budget.get('capped'):
-                budget['capped'] = True
-                _logger.info(
-                    "Factibilidad de traslado: alcanzado el tope de %s llamadas a "
-                    "Matrix; el resto de los días se ofrecen sin filtrar.",
-                    budget.get('max_calls'))
+        if not con_coords or budget.get('degraded'):
             return {}
 
         Cache = self.env['visar.travel.cache'].sudo()
-        pares = []
-        for _index, coords in con_coords:
-            pares.append((destination, coords))
-            pares.append((coords, destination))
-        cached = Cache._visar_travel_get(pares)
 
-        faltan = [par for par in pares
-                  if Cache._visar_travel_key(*par) not in cached]
-        if faltan:
+        # Agrupar las paradas del día por franja de tráfico. `depart` es la salida
+        # más TARDÍA de la franja: todas caen en la misma hora, y la más tardía es
+        # la que tiene más posibilidades de seguir estando en el futuro.
+        grupos = {}
+        for index, coords in con_coords:
+            medio = self._visar_travel_stop_depart(stops[index])
+            local = pytz.utc.localize(medio).astimezone(tz_info)
+            bucket = Cache._visar_travel_bucket(local)
+            grupo = grupos.setdefault(bucket, {'depart': medio, 'stops': []})
+            grupo['stops'].append((index, coords))
+            if medio > grupo['depart']:
+                grupo['depart'] = medio
+
+        claves = {}
+        for bucket, grupo in grupos.items():
+            for index, coords in grupo['stops']:
+                claves[(index, 'hacia')] = Cache._visar_travel_key(
+                    destination, coords, bucket)
+                claves[(index, 'desde')] = Cache._visar_travel_key(
+                    coords, destination, bucket)
+        cached = Cache._visar_travel_get(set(claves.values()))
+
+        for bucket in sorted(grupos, key=lambda b: b or ''):
+            grupo = grupos[bucket]
+            if all(claves[(index, sentido)] in cached
+                   for index, _coords in grupo['stops']
+                   for sentido in ('hacia', 'desde')):
+                continue
+            if budget.get('calls', 0) >= budget.get('max_calls', DEFAULT_MAX_CALLS):
+                if not budget.get('capped'):
+                    budget['capped'] = True
+                    _logger.info(
+                        "Factibilidad de traslado: alcanzado el tope de %s "
+                        "llamadas a Matrix; el resto de los días se ofrecen sin "
+                        "filtrar.", budget.get('max_calls'))
+                break
             budget['calls'] = budget.get('calls', 0) + 1
-            coords_list = [destination] + [coords for _i, coords in con_coords]
-            matrix = self.env['visar.mapbox.service']._visar_mapbox_matrix(coords_list)
+            coords_list = [destination] + [c for _i, c in grupo['stops']]
+            matrix = self.env['visar.mapbox.service']._visar_mapbox_matrix(
+                coords_list, depart_at=grupo['depart'])
             if not matrix:
-                # Ni castigo ni premio: este día no impone restricción. Y se corta
-                # el resto de la corrida, para no repetir una llamada que falla.
+                # Ni castigo ni premio: lo que falte no impone restricción. Y se
+                # corta la corrida, para no repetir una llamada que falla.
                 budget['degraded'] = True
-                return {}
+                break
             nuevos = {}
-            for position, (_index, coords) in enumerate(con_coords, start=1):
+            for position, (index, _coords) in enumerate(grupo['stops'], start=1):
                 ida = matrix[0][position]
                 vuelta = matrix[position][0]
                 if ida is not None:
-                    nuevos[Cache._visar_travel_key(destination, coords)] = int(ida)
+                    nuevos[claves[(index, 'hacia')]] = int(ida)
                 if vuelta is not None:
-                    nuevos[Cache._visar_travel_key(coords, destination)] = int(vuelta)
+                    nuevos[claves[(index, 'desde')]] = int(vuelta)
             Cache._visar_travel_store(nuevos)
             cached.update(nuevos)
 
         durations = {}
-        for index, coords in con_coords:
-            hacia = cached.get(Cache._visar_travel_key(destination, coords))
-            desde = cached.get(Cache._visar_travel_key(coords, destination))
+        for index, _coords in con_coords:
+            hacia = cached.get(claves[(index, 'hacia')])
+            desde = cached.get(claves[(index, 'desde')])
+            if hacia is None and desde is None:
+                # Ni una dirección resuelta (tope, Mapbox caído, franja sin
+                # cachear): la parada no entra. `durations` dice lo que se SABE, y
+                # una entrada vacía y una ausente significan lo mismo — tenerlas
+                # las dos es invitar a que alguien las trate distinto.
+                continue
             durations[index] = (
                 visar_round_up_minutes(hacia) if hacia is not None else None,
                 visar_round_up_minutes(desde) if desde is not None else None,
@@ -495,7 +554,7 @@ class AppointmentType(models.Model):
             cache_key = (rid, local_day)
             if cache_key not in durations_cache:
                 durations_cache[cache_key] = self._visar_travel_durations(
-                    stops, destination, budget)
+                    stops, destination, budget, tz_info)
             if self._visar_travel_slot_fits(
                     stops, start_utc, stop_utc, durations_cache[cache_key],
                     budget_minutes):

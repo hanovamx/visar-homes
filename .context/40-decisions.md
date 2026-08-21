@@ -552,7 +552,26 @@ distancia: no están trazadas por cercanía, y dos direcciones de la misma zona 
 min.
 
 La zona sigue sirviendo para saber qué técnicos atienden y qué lista aplica. El control de costo
-descansa entero en "una llamada de Matrix por (día, técnico)".
+descansa entero en "una llamada de Matrix por (día, técnico, franja horaria)".
+
+## [DECIDIDA — 21-ago-2026, IMPLEMENTADA] El tiempo de viaje se pide con hora de salida
+
+Se manda `depart_at` en cada llamada a Matrix, con el **punto medio de la parada** (no del slot
+candidato). Mapbox responde con el tráfico previsto para esa fecha y hora según 90 días de
+histórico.
+
+**Por qué:** sin hora de salida, la respuesta son velocidades típicas sin hora del día — un error
+del mismo tamaño que el presupuesto de 20 min que se está midiendo. Un trayecto de 15 min a
+mediodía pasa de 20 en hora pico, y ese es exactamente el caso que el predicado tiene que
+distinguir.
+
+**Lo que NO cambia:** el costo sigue sin depender del número de slots. La hora de salida sale de
+la parada, no del horario candidato. Un día cuesta una llamada por **franja con paradas**: 2 en
+un día mediano, 4 en el día pico. El ancho de franja son 3 h, medidas (§5.3.3), y es parámetro.
+
+**Descartado:** `driving-traffic` (mezcla tráfico en vivo, que para una cita de dentro de tres
+semanas es ruido, y limita a 10 coordenadas) y pedir matrices asimétricas para ahorrar elementos
+(los elementos están dentro del tramo gratuito de Mapbox; lo que escasea son las peticiones).
 
 ## [DECIDIDA — 17-ago-2026, NO IMPLEMENTADA] El CP se pide temprano
 
