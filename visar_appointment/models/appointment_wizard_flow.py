@@ -867,15 +867,29 @@ class AppointmentType(models.Model):
         """
         booking = booking or {}
         selections = booking.get('selections') or {}
-        lines = [group._visar_wizard_label()
-                 for group in self._visar_wizard_selected_groups(selections)]
-
         items = booking.get('items') or []
-        if items:
-            lines += [label for label in self._visar_metros_labels(items) if label]
 
         if self._visar_wizard_requires_valuation(selections):
-            lines.append(_('Visita de valoración técnica'))
+            # En un corte **no se vende el servicio, se vende la visita**, así
+            # que el resumen no puede enseñar el grupo ni los metros: describen
+            # algo que no se está cobrando.
+            #
+            # Antes salía así, con el total correcto de 500 debajo:
+            #     • Fumigación
+            #     • Visita de valoración técnica
+            #     • Visita de valoración técnica
+            # El grupo sobra, y la línea salía DOS veces: desde que el corte
+            # tiene sus propios items (`_visar_wizard_valuation_items`), esa
+            # lista ya produce su etiqueta y el `append` de aquí la repetía.
+            # En la pantalla que existe para que nadie firme un cheque en
+            # blanco, tres líneas para una cosa es exactamente lo contrario.
+            lines = [_('Visita de valoración técnica')]
+        else:
+            lines = [group._visar_wizard_label()
+                     for group in self._visar_wizard_selected_groups(selections)]
+            if items:
+                lines += [label
+                          for label in self._visar_metros_labels(items) if label]
 
         zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
         total = currency = None

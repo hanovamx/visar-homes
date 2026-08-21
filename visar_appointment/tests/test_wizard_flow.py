@@ -312,6 +312,37 @@ class TestWizardFlow(TransactionCase):
         self.assertNotIn('termitas', valores)
         self.assertIn('proteccion_general', valores)
 
+    def test_el_resumen_de_un_corte_vende_la_visita_y_no_el_servicio(self):
+        """REGRESION (visto en `visar-db`, 21-ago-2026).
+
+        Con termitas, la pantalla de revision decia:
+
+            • Fumigación
+            • Visita de valoración técnica
+            • Visita de valoración técnica
+            • *Total: $500.00 MXN*
+
+        El total era correcto; las lineas no. El grupo describe algo que NO se
+        esta cobrando, y la valoracion salia dos veces desde que el corte tiene
+        sus propios items: esa lista ya produce su etiqueta y el `append`
+        explicito la repetia. Es la pantalla que existe para que nadie firme un
+        cheque en blanco.
+        """
+        booking = self._booking_fum(motivo='correctivo')
+        booking['selections'].update(requiere_valoracion=True,
+                                     motivo_valoracion='termitas')
+        resumen = self.AptType._visar_wizard_summary(booking)
+
+        self.assertEqual(resumen['lines'], ['Visita de valoración técnica'])
+
+    def test_el_resumen_normal_sigue_diciendo_que_servicio_es(self):
+        """Y sin corte no cambia nada: el grupo es lo que se compra."""
+        booking = self._booking_fum(motivo='preventivo')
+        resumen = self.AptType._visar_wizard_summary(booking)
+
+        self.assertTrue(resumen['lines'], 'el resumen no puede salir vacio')
+        self.assertNotIn('Visita de valoración técnica', resumen['lines'])
+
     def test_cada_paso_lleva_la_pista_que_le_toca(self):
         """Qué decirle al cliente en cada paso es negocio, y lo escribe Odoo.
 
