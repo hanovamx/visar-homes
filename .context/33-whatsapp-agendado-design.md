@@ -1373,9 +1373,10 @@ estado de venta fuera de Odoo, que es exactamente lo que cobra un tercio del
 precio sin dar error (§7.1). Se prefiere repreguntar a cobrar mal; prellenar
 queda como mejora, y pasa por el CP temprano de la decisión 6.
 
-**Lo que sigue yendo con un asesor** es la valoración técnica: es la rama que
-todavía no llega a horarios (§10.7 / I-17), y por eso se excluye a mano tanto en
-el prompt como en la descripción de la tool.
+**Lo que sigue yendo con un asesor**: CP fuera de cobertura, quejas, facturas y
+clientes no residenciales. La valoración técnica se excluía también —era la rama
+que no llegaba a horarios— y dejó de estarlo al integrar §10.10(a): ahora se
+entrega al cuestionario como cualquier otra.
 
 ### (b) Una pista por paso, escrita por Odoo
 
