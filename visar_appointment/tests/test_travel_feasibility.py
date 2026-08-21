@@ -33,8 +33,6 @@ _STOP_A = (25.7000, -100.3000)
 _STOP_B = (25.6500, -100.4000)
 
 
-@tagged('post_install', '-at_install')
-
 def _codigo_sin_docstring(source):
     """El fuente de una funcion, sin su docstring. Para las pruebas de fuente.
 
@@ -55,6 +53,7 @@ def _codigo_sin_docstring(source):
     return ast.unparse(funcion)
 
 
+@tagged('post_install', '-at_install')
 class TestTravelFeasibility(TransactionCase):
 
     @classmethod
