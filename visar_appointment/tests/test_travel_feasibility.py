@@ -34,6 +34,27 @@ _STOP_B = (25.6500, -100.4000)
 
 
 @tagged('post_install', '-at_install')
+
+def _codigo_sin_docstring(source):
+    """El fuente de una funcion, sin su docstring. Para las pruebas de fuente.
+
+    Devuelve codigo re-generado desde el AST: sin docstring y sin comentarios,
+    que es justo lo que estas pruebas quieren mirar. Prohibir una cadena en el
+    fuente ENTERO prohibe tambien nombrarla para advertir de ella.
+    """
+    import ast
+    import textwrap
+
+    arbol = ast.parse(textwrap.dedent(source))
+    funcion = arbol.body[0]
+    cuerpo = funcion.body
+    if (cuerpo and isinstance(cuerpo[0], ast.Expr)
+            and isinstance(cuerpo[0].value, ast.Constant)
+            and isinstance(cuerpo[0].value.value, str)):
+        funcion.body = cuerpo[1:]
+    return ast.unparse(funcion)
+
+
 class TestTravelFeasibility(TransactionCase):
 
     @classmethod
@@ -255,7 +276,14 @@ class TestTravelFeasibility(TransactionCase):
         source = inspect.getsource(
             visar_travel_feasibility.AppointmentType._visar_travel_stops_by_day)
         self.assertIn('appointment.booking.line', source)
-        self.assertNotIn('user_ids', source)
+
+        # Se mira el CODIGO, no la prosa. El docstring de ese metodo advierte por
+        # escrito de que NO se lea `project.task.user_ids`, asi que buscar la
+        # cadena en el fuente entero hacia saltar la guarda con su propio aviso:
+        # la prueba salia roja teniendo delante el codigo correcto. Se quita el
+        # docstring por AST y no por texto, porque `inspect.getdoc` normaliza la
+        # sangria y ya no casa con el fuente crudo.
+        self.assertNotIn('user_ids', _codigo_sin_docstring(source))
 
     def test_el_bloque_sale_de_appointment_duration_no_del_codigo(self):
         """Decisión 7: los 60 min no están horneados.
