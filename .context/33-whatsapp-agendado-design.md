@@ -339,7 +339,8 @@ que hace el trabajo:
    de una vez la matriz entre las paradas del día y la dirección nueva; después
    **todos** los slots del día se evalúan con aritmética. La Matrix API de Mapbox
    admite hasta 25 coordenadas por petición — de sobra para la jornada de un
-   técnico (pico medido: 9 paradas).
+   técnico (pico medido: **10** paradas, Pedro Martínez el 11-ago-2026; el §5.3
+   asumía 9 y se quedó corto).
 2. **Caché de tiempos de viaje** por par de coordenadas redondeadas **y franja**.
    Entre dos direcciones fijas el tiempo casi no cambia *a la misma hora*; no vale
    la pena volver a pagarlo.
@@ -422,6 +423,31 @@ Mapbox acepta `depart_at` en el perfil `driving` y responde con las condiciones
 **previstas** para esa fecha y hora, a partir de 90 días de histórico. Es
 exactamente lo que hace falta para una cita de mañana o de dentro de tres semanas —
 y no cuesta ni un elemento más.
+
+> ⛔ **VERIFICADO EN SERVIDOR (21-ago-2026): esta cuenta NO puede usarlo.**
+> `depart_at` en Matrix es una **BETA con alta previa** por formulario
+> (<https://www.mapbox.com/contact/matrix-api-depart-at>). Una cuenta sin alta **no
+> lo ignora: rechaza la petición entera** con `422 Request too large for custom
+> parameters ["depart_at"]` — mensaje engañoso, porque salta con una matriz de
+> **2 puntos**. El token está sano y la **Directions** API sí lo honra (501.8 s sin,
+> 486.0 s con); es solo Matrix.
+>
+> **Y estuvo a punto de costar caro.** Como todas las llamadas llevaban `depart_at`,
+> `_visar_mapbox_matrix` devolvía `None` siempre, el predicado marcaba `degraded` y
+> **el filtro quedó inerte en silencio**: sobre el escenario del §10.10(c) los
+> cuatro casos (token bueno, token inválido, destino sin coordenadas, flag apagado)
+> daban 5 slots → 5 slots, con un viaje real de 59.7 min contra un presupuesto de
+> 20. Producción se salvó por accidente: seguía corriendo el código anterior.
+>
+> **Arreglado tratándolo como capacidad, no como caída** (`visar.travel.depart_at`,
+> `auto` por defecto): al primer 422 que mencione `depart_at` se **reintenta la
+> misma llamada sin la hora** y se apaga el parámetro. Se recupera el
+> comportamiento de velocidades típicas — peor, pero no falso. Es el §5.4 aplicado
+> un nivel más adentro: *degradar, nunca bloquear* también vale para una capacidad
+> que la cuenta no tiene.
+>
+> **El día que concedan la beta hay que poner `visar.travel.depart_at = 1` A MANO.**
+> `auto` ya se habrá apagado y no vuelve a probar.
 
 **Qué hora se manda.** La de la **parada**, no la del slot candidato. Los dos
 trayectos que interesan salen en momentos distintos (desde la parada anterior se
@@ -516,8 +542,9 @@ del lado del servidor, con independencia de WhatsApp.
 > de los días candidatos cuestan **cero**.
 >
 > **Y un aviso de perfil:** para la Matrix conviene `mapbox/driving`, **no** `driving-traffic`.
-> Este último está limitado a **10 coordenadas** por petición, y 9 paradas + 1 destino son
-> exactamente 10 — el pico medido quedaría justo en el límite. Además, con
+> Este último está limitado a **10 coordenadas** por petición, y el pico medido son **10
+> paradas** (11-ago-2026) que con el destino hacen **11**: `driving-traffic` ya no daría — no
+> es que quedara justo en el límite, es que se pasa. Además, con
 > `min_schedule_hours = 24` nunca se reserva a menos de un día vista, así que el tráfico *de
 > ahora* es ruido: `driving-traffic` mezclaría condiciones en vivo, que es justo lo que no
 > queremos. `_visar_enroute_eta_minutes` se queda con `driving-traffic` porque **ahí** el

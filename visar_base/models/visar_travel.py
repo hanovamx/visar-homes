@@ -37,8 +37,9 @@ _MATRIX_URL = ('https://api.mapbox.com/directions-matrix/v1/mapbox/'
 _GEOCODE_URL = 'https://api.mapbox.com/geocoding/v5/mapbox.places/%s.json'
 
 # Cuántas coordenadas admite una petición de Matrix. El perfil `driving` admite
-# 25; `driving-traffic` solo 10, y el pico medido de paradas de un técnico es 9
-# (+1 el destino = 10, justo en el límite). Ver `_visar_travel_profile`.
+# 25; `driving-traffic` solo 10, y el pico medido de paradas de un técnico es **10**
+# (Pedro Martínez, 11-ago-2026) — que con el destino son 11, POR ENCIMA de su tope.
+# Ver `_visar_travel_profile`.
 MATRIX_MAX_COORDS = 25
 
 # Parámetros de configuración (todos opcionales, con default sensato).
@@ -48,6 +49,11 @@ TRAVEL_PRECISION_PARAM = 'visar.travel.coord_precision'
 TRAVEL_CACHE_DAYS_PARAM = 'visar.travel.cache_days'
 # Ancho de la franja horaria con la que se agrupa el tráfico histórico.
 TRAVEL_BUCKET_HOURS_PARAM = 'visar.travel.depart_bucket_hours'
+# Si se manda la hora de salida a Matrix. `depart_at` es BETA y exige alta previa
+# por formulario; sin ella Mapbox devuelve 422 y tira la petición ENTERA, no solo
+# el parámetro. Ver `_visar_depart_at_mode`.
+DEPART_AT_PARAM = 'visar.travel.depart_at'
+DEPART_AT_AUTO = 'auto'
 
 DEFAULT_PROFILE = 'driving'
 DEFAULT_TIMEOUT = 10
@@ -56,7 +62,7 @@ DEFAULT_CACHE_DAYS = 30
 # TRES horas, y el número está medido, no elegido por gusto. La franja es la
 # unidad de cobro: una llamada a Matrix por franja con paradas.
 #
-#   ancho    día mediano (2.5 paradas)    día pico (9 paradas)
+#   ancho    día mediano (2.5 paradas)    día pico (10 paradas)
 #     1 h              3 llamadas              9 llamadas
 #     3 h              2 llamadas              4 llamadas
 #     6 h              2 llamadas              2 llamadas
@@ -92,8 +98,9 @@ class VisarMapboxService(models.AbstractModel):
 
         1. **Tope de coordenadas.** `driving-traffic` admite 10 por petición de
            Matrix; `driving`, 25. El pico medido de paradas de un técnico en un
-           día es 9, que con el destino son exactamente 10: quedaríamos justo en
-           el límite, y un día atípico rompería la llamada entera.
+           día es **10** (Pedro Martínez, 11-ago-2026), que con el destino son 11:
+           `driving-traffic` ya no daría, no es que quedara justo. El §5.3 asumía
+           9 y se quedó corto.
         2. **El tráfico que queremos es el HISTÓRICO, no el de ahora.** Con
            `min_schedule_hours = 24` no se reserva a menos de un día vista, así
            que las condiciones actuales son ruido. `driving-traffic` mezclaría
@@ -121,18 +128,62 @@ class VisarMapboxService(models.AbstractModel):
             return DEFAULT_TIMEOUT
 
     @api.model
+    def _visar_depart_at_mode(self):
+        """`auto` | `1` | `0` — si se manda la hora de salida a Matrix.
+
+        `depart_at` en Matrix es **BETA y hay que darse de alta** por un
+        formulario; una cuenta sin alta no lo ignora, **rechaza la petición
+        entera** con 422. Verificado en servidor el 21-ago-2026 con una matriz de
+        2 puntos: sin el parámetro 200, con él 422.
+
+        - `auto` (por defecto): se intenta, y al primer 422 se apaga solo.
+        - `1`: forzado. Es lo que hay que poner **el día que Mapbox conceda la
+          beta**, porque `auto` ya se habrá apagado y no vuelve a probar.
+        - `0`: apagado a mano.
+        """
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            DEPART_AT_PARAM, DEPART_AT_AUTO)
+        return str(raw or '').strip().lower() or DEPART_AT_AUTO
+
+    @api.model
+    def _visar_depart_at_disable(self, detalle=''):
+        """Apaga `depart_at` tras un rechazo, y deja dicho cómo encenderlo.
+
+        La escritura va en `try`: esto corre al pintar horarios, y una petición
+        web de solo lectura no puede escribir. Si no se persiste no se rompe
+        nada — se vuelve a intentar en la siguiente corrida y se vuelve a caer a
+        la respuesta sin hora, que es la degradación correcta.
+        """
+        _logger.warning(
+            "Mapbox rechazó `depart_at` en Matrix (%s). Es una BETA que exige "
+            "alta previa: https://www.mapbox.com/contact/matrix-api-depart-at . "
+            "Se apaga (%s=0) y se sigue con velocidades típicas, sin hora del "
+            "día. Cuando concedan la beta hay que poner %s=1 A MANO: `auto` ya "
+            "no vuelve a probar.",
+            (detalle or '')[:200], DEPART_AT_PARAM, DEPART_AT_PARAM)
+        try:
+            self.env['ir.config_parameter'].sudo().set_param(DEPART_AT_PARAM, '0')
+        except Exception as err:  # noqa: BLE001 - cursor de solo lectura, p. ej.
+            _logger.info("No se pudo persistir %s=0: %s", DEPART_AT_PARAM, err)
+
+    @api.model
     def _visar_mapbox_depart_at(self, when_utc):
         """UTC naive → cadena ISO 8601 para `depart_at`, o None.
 
-        Devuelve None cuando la salida **no está en el futuro**, porque Mapbox
-        rechaza `depart_at` en el pasado. Pasa de verdad: la ventana de paradas
-        lleva un día de margen a cada lado, así que una parada de esta mañana
-        entra en el barrido de esta tarde.
+        Devuelve None en dos casos, y los dos degradan a velocidades típicas sin
+        hora del día: peor, pero no falso.
 
-        Sin `depart_at` la respuesta son velocidades típicas sin hora del día:
-        peor, pero no falso. Degradar, nunca bloquear — la alternativa (empujarlo
-        a "ahora") sería cotizar el tráfico de una hora que no es la de la cita.
+        1. **La cuenta no tiene la beta** (`_visar_depart_at_mode()` en `0`).
+        2. **La salida no está en el futuro**, porque Mapbox rechaza `depart_at`
+           en el pasado. Pasa de verdad: la ventana de paradas lleva un día de
+           margen a cada lado, así que una parada de esta mañana entra en el
+           barrido de esta tarde.
+
+        Degradar, nunca bloquear — la alternativa (empujarlo a "ahora") sería
+        cotizar el tráfico de una hora que no es la de la cita.
         """
+        if self._visar_depart_at_mode() in ('0', 'false', 'off', 'no'):
+            return None
         if not when_utc or when_utc <= fields.Datetime.now():
             return None
         # Con la Z explícita: sin ella Mapbox lo interpreta como hora local de la
@@ -175,19 +226,38 @@ class VisarMapboxService(models.AbstractModel):
         path = ';'.join('%s,%s' % (lng, lat) for lat, lng in coords)
         url = _MATRIX_URL % {'profile': self._visar_travel_profile(),
                              'coords': path}
-        params = {'access_token': token, 'annotations': 'duration'}
         stamp = self._visar_mapbox_depart_at(depart_at)
-        if stamp:
-            params['depart_at'] = stamp
-        try:
-            resp = requests.get(
-                url,
-                params=params,
-                timeout=self._visar_travel_timeout())
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as err:  # noqa: BLE001 - red/API: degradar, nunca bloquear
-            _logger.warning("Mapbox Matrix falló (%s coords): %s", len(coords), err)
+        # Como mucho dos vueltas: la segunda solo existe para reintentar SIN hora
+        # de salida cuando la cuenta no tiene la beta. El bucle está acotado por
+        # construcción —`stamp` se pone a None antes de reintentar— y no depende
+        # de que la desactivación se haya llegado a persistir.
+        payload = None
+        for _intento in (1, 2):
+            params = {'access_token': token, 'annotations': 'duration'}
+            if stamp:
+                params['depart_at'] = stamp
+            try:
+                resp = requests.get(
+                    url,
+                    params=params,
+                    timeout=self._visar_travel_timeout())
+                if (stamp and resp.status_code == 422
+                        and 'depart_at' in (resp.text or '')):
+                    # NO es un fallo de red ni una matriz demasiado grande: es una
+                    # capacidad que esta cuenta no tiene. Tratarlo como caída
+                    # dejaría el filtro inerte en silencio, que es justo lo que
+                    # pasó el 21-ago-2026.
+                    self._visar_depart_at_disable(resp.text)
+                    stamp = None
+                    continue
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception as err:  # noqa: BLE001 - red/API: degradar, nunca bloquear
+                _logger.warning("Mapbox Matrix falló (%s coords): %s",
+                                len(coords), err)
+                return None
+            break
+        if payload is None:
             return None
         durations = payload.get('durations')
         if not durations or len(durations) != len(coords):

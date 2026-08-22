@@ -570,8 +570,16 @@ la parada, no del horario candidato. Un día cuesta una llamada por **franja con
 un día mediano, 4 en el día pico. El ancho de franja son 3 h, medidas (§5.3.3), y es parámetro.
 
 **Descartado:** `driving-traffic` (mezcla tráfico en vivo, que para una cita de dentro de tres
-semanas es ruido, y limita a 10 coordenadas) y pedir matrices asimétricas para ahorrar elementos
-(los elementos están dentro del tramo gratuito de Mapbox; lo que escasea son las peticiones).
+semanas es ruido, y limita a 10 coordenadas — por debajo del pico real de 10 paradas + destino)
+y pedir matrices asimétricas para ahorrar elementos (los elementos están dentro del tramo
+gratuito de Mapbox; lo que escasea son las peticiones).
+
+> ⛔ **Y NO SE PUEDE USAR TODAVÍA (verificado el 21-ago-2026).** `depart_at` en Matrix es una
+> BETA con alta previa; sin ella Mapbox devuelve **422 y tira la petición entera**, no solo el
+> parámetro. Como todas las llamadas lo llevaban, el filtro quedó **inerte en silencio** —
+> pasaba por degradación y no lo era. Ahora un 422 que mencione `depart_at` **reintenta sin la
+> hora** y apaga `visar.travel.depart_at`; se vuelve a velocidades típicas, peor pero no falso.
+> Cuando concedan la beta hay que poner ese parámetro a `1` **a mano**.
 
 ## [DECIDIDA — 17-ago-2026, NO IMPLEMENTADA] El CP se pide temprano
 

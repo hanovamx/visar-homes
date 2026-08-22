@@ -7,8 +7,10 @@ lea el código sin el diseño delante tiene todas las papeletas de convertirlo e
 un radio — que es la versión que parece más segura y en realidad rechaza
 horarios perfectamente ofrecibles.
 
-Ninguna prueba toca la red: `_visar_mapbox_matrix` se parchea. Una prueba que
-depende de Mapbox no es una prueba del predicado, es una prueba de Mapbox.
+Ninguna prueba toca la red: se parchea `_visar_mapbox_matrix` para el predicado,
+y `requests.get` para las pocas que fijan el trato con la API (el 422 de la beta
+de `depart_at`). Una prueba que depende de Mapbox no es una prueba del predicado,
+es una prueba de Mapbox.
 
 Hoy hay **un** técnico usable, así que `require='all'` y `require='any'` dan lo
 mismo en producción. Por eso cada uno lleva su prueba: la realidad todavía no
@@ -25,6 +27,7 @@ from odoo.tests.common import TransactionCase
 
 _TZ = 'America/Monterrey'
 _SERVICE = 'odoo.addons.visar_base.models.visar_travel.VisarMapboxService'
+_REQUESTS = 'odoo.addons.visar_base.models.visar_travel.requests.get'
 
 # Destino y dos paradas cualesquiera: las coordenadas solo tienen que ser
 # distintas entre sí, porque los tiempos los pone el mock.
@@ -347,6 +350,100 @@ class TestTravelFeasibility(TransactionCase):
         self.assertTrue(
             Mapbox._visar_mapbox_depart_at(manana).endswith('Z'),
             "con la Z explícita: sin ella Mapbox lo lee como hora local")
+
+    # ------------------------------------------------------------------
+    # `depart_at` es BETA y esta cuenta no la tiene (servidor, 21-ago-2026)
+    # ------------------------------------------------------------------
+
+    def _respuesta(self, status, payload=None, text=''):
+        class Resp:
+            status_code = status
+            def raise_for_status(self):
+                if status >= 400:
+                    raise ValueError('HTTP %s' % status)
+            def json(self):
+                return payload
+        resp = Resp()
+        resp.text = text
+        return resp
+
+    def _con_token(self):
+        self.env['ir.config_parameter'].sudo().set_param(
+            'web_map.token_map_box', 'pk.pruebas')
+
+    def test_un_422_de_depart_at_reintenta_sin_hora_en_vez_de_matar_el_filtro(self):
+        """El fallo del 21-ago: `depart_at` no se ignora, tira la petición entera.
+
+        Mapbox contesta 422 `Request too large for custom parameters
+        ["depart_at"]` con una matriz de DOS puntos — el mensaje engaña, no es un
+        problema de tamaño: es una beta que la cuenta no tiene dada de alta.
+
+        Tratarlo como caída de red dejaba `_visar_mapbox_matrix` devolviendo None
+        siempre, el predicado marcando `degraded` y el filtro **inerte en
+        silencio**. Ahora se reintenta sin la hora: velocidades típicas, peor pero
+        no falso — el §5.4 aplicado un nivel más adentro.
+        """
+        self._con_token()
+        Mapbox = self.env['visar.mapbox.service']
+        cuerpo = ('{"message":"Request too large for custom parameters '
+                  '[\\"depart_at\\"]","code":"InvalidInput"}')
+        respuestas = [self._respuesta(422, text=cuerpo),
+                      self._respuesta(200, {'durations': [[0, 600], [600, 0]]})]
+        vistos = []
+
+        def fake_get(url, params=None, timeout=None):
+            vistos.append(params or {})
+            return respuestas.pop(0)
+
+        with patch(_REQUESTS, side_effect=fake_get):
+            matriz = Mapbox._visar_mapbox_matrix(
+                [_DEST, _STOP_A],
+                depart_at=datetime.now() + timedelta(days=2))
+
+        self.assertEqual(matriz, [[0, 600], [600, 0]],
+                         "la matriz se recupera; NO se pierde el día")
+        self.assertEqual(len(vistos), 2, "un reintento, exactamente uno")
+        self.assertIn('depart_at', vistos[0])
+        self.assertNotIn('depart_at', vistos[1], "el reintento va sin hora")
+        self.assertEqual(
+            self.env['ir.config_parameter'].sudo().get_param('visar.travel.depart_at'),
+            '0', "y queda apagado, para no pagar un 422 por llamada")
+
+    def test_una_caida_de_red_no_reintenta(self):
+        """El reintento es SOLO para el 422 de la beta.
+
+        Si Mapbox está caído de verdad, reintentar sería pagar dos timeouts por
+        llamada justo cuando lo que hace falta es cortar la corrida.
+        """
+        self._con_token()
+        with patch(_REQUESTS, side_effect=OSError('timeout')) as get:
+            matriz = self.env['visar.mapbox.service']._visar_mapbox_matrix(
+                [_DEST, _STOP_A], depart_at=datetime.now() + timedelta(days=2))
+        self.assertIsNone(matriz)
+        self.assertEqual(get.call_count, 1)
+
+    def test_un_422_por_otra_causa_no_apaga_depart_at(self):
+        """Un 422 que no habla de `depart_at` es un fallo normal, no la beta."""
+        self._con_token()
+        with patch(_REQUESTS, return_value=self._respuesta(
+                422, text='{"message":"Coordinate is invalid"}')) as get:
+            matriz = self.env['visar.mapbox.service']._visar_mapbox_matrix(
+                [_DEST, _STOP_A], depart_at=datetime.now() + timedelta(days=2))
+        self.assertIsNone(matriz)
+        self.assertEqual(get.call_count, 1, "sin reintento")
+        self.assertNotEqual(
+            self.env['ir.config_parameter'].sudo().get_param('visar.travel.depart_at'),
+            '0')
+
+    def test_apagado_a_mano_no_manda_la_hora(self):
+        """Y es el interruptor que hay que mover al revés cuando llegue la beta."""
+        Mapbox = self.env['visar.mapbox.service']
+        manana = datetime.now() + timedelta(days=2)
+        Param = self.env['ir.config_parameter'].sudo()
+        Param.set_param('visar.travel.depart_at', '0')
+        self.assertIsNone(Mapbox._visar_mapbox_depart_at(manana))
+        Param.set_param('visar.travel.depart_at', '1')
+        self.assertTrue(Mapbox._visar_mapbox_depart_at(manana))
 
     # ------------------------------------------------------------------
     # El flag y el árbol completo

@@ -18,6 +18,37 @@ Reglas de siempre: escrituras **solo sobre la copia** de `visar-db`, nunca
 
 ---
 
+## ⛔ RESULTADO (ejecutado el 21-ago-2026): W1 FALLA, y hay un arreglo encima
+
+**`depart_at` en Matrix es BETA con alta previa y esta cuenta no la tiene.** No es
+que Mapbox lo ignore: **rechaza la petición entera** con `422 Request too large for
+custom parameters ["depart_at"]` — mensaje engañoso, salta con una matriz de 2
+puntos. El token está sano; la **Directions** API sí lo honra (501.8 s sin, 486.0 s
+con). Alta en <https://www.mapbox.com/contact/matrix-api-depart-at>.
+
+**Consecuencia, que es lo grave:** como todas las llamadas llevaban `depart_at`,
+`_visar_mapbox_matrix` devolvía `None` siempre, el predicado marcaba `degraded` y
+**el filtro quedó inerte en silencio**. Los cuatro casos del §10.10(c) —token bueno,
+token inválido, destino sin coordenadas, flag apagado— daban 5 slots → 5 slots, con
+un viaje real de 59.7 min contra un presupuesto de 20.
+
+**Arreglado** tratando el 422 como *capacidad que la cuenta no tiene*, no como caída:
+se reintenta la misma llamada **sin** la hora y se apaga `visar.travel.depart_at`.
+Vuelve el comportamiento de velocidades típicas — peor, pero no falso. Ver **W7**.
+
+**Sigue vigente lo que ya pasó** y no hace falta repetir: W2 (una llamada por franja,
+no por slot), W4.2 (claves con franja y direccionales), W5 (degrada sin bloquear), W6
+(24 casos verdes; los 2 de `test_partner_dedupe` son ajenos). **W3 y W4.3 siguen
+bloqueados** hasta que haya llamadas que respondan 200 — y hoy además no hay ni una
+parada agendada en los próximos 30 días, así que un mes cuesta 0 llamadas.
+
+**Dato que corrige el diseño (V5 del encargo anterior):** el pico real es de **10
+paradas** en un día-técnico (Pedro Martínez, 11-ago-2026), no 9. Refuerza el descarte
+de `driving-traffic`: 10 paradas + destino son 11 coordenadas, por encima de su tope
+de 10. Ya corregido en §5.3 y en el código.
+
+---
+
 ## Qué cambió, y por qué
 
 Se pedía la matriz de tiempos **sin hora de salida**. Mapbox responde entonces con
@@ -152,14 +183,39 @@ lanzar. Con el flag apagado el árbol tiene que salir **idéntico** al de hoy.
 > Los **2 fallos de `test_partner_dedupe` (`assertLogs`) siguen siendo preexistentes
 > y ajenos**: no los investigues.
 
+### W7 — El 422 de la beta degrada, NO apaga el filtro
+
+Es lo único nuevo que hay que verificar. Con `visar.travel.depart_at` en `auto`
+(por defecto) y la caché de viajes vacía, repite el escenario del §10.10(c) —parada
+en el Centro, destino en García a ~59 min:
+
+1. Los slots **pegados** a la parada tienen que **desaparecer** otra vez, como en
+   `825d536`. Si siguen saliendo los 5, el arreglo no funcionó.
+2. En el log tiene que aparecer **una sola vez** el aviso de que se apagó
+   `depart_at`, con el enlace del alta.
+3. `visar.travel.depart_at` tiene que quedar en `0`.
+4. A partir de ahí, **ninguna** petición más debe llevar `depart_at` (cuéntalas).
+
+Y confirma que **no se reintenta lo que no toca**: con un token inválido debe seguir
+habiendo **una** petición por llamada, no dos.
+
+> Cuando Mapbox conceda la beta: `visar.travel.depart_at = 1` **a mano**. `auto` ya
+> se apagó y no vuelve a probar.
+
 ---
 
 ## Datos que quiero de vuelta
 
-1. **W1: los dos tiempos, pico y valle.** Si son iguales, para y dímelo.
-2. **W3: llamadas y latencia de un mes con caché fría.**
-3. **W4.3: llamadas y latencia con franja de 1, 3 y 6 horas.**
-4. Tasa de acierto de la caché en la segunda corrida.
+**Ronda 2 (lo único pendiente):**
+
+1. **W7: ¿vuelven a podarse los slots pegados a la parada?** Es la pregunta. Si
+   siguen saliendo los 5, el arreglo no sirvió y hay que revertir a `825d536`.
+2. Cuántas peticiones llevan `depart_at` después del primer 422 (debe ser **0**).
+3. Confirmación de que el aviso del log sale **una vez**, no una por llamada.
+
+**Bloqueado hasta que Mapbox conceda la beta** (o hasta que haya paradas reales
+agendadas, porque hoy un mes cuesta 0 llamadas): W3, W4.1 y W4.3 — latencia,
+tasa de acierto y el ancho de franja bueno.
 
 ---
 
