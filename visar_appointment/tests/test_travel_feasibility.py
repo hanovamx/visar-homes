@@ -299,7 +299,7 @@ class TestTravelFeasibility(TransactionCase):
     # Tráfico histórico: `depart_at` y la franja horaria
     # ------------------------------------------------------------------
 
-    def _depart_at(self, matrix_mock, call=0):
+    def _depart_at_enviado(self, matrix_mock, call=0):
         return matrix_mock.call_args_list[call].kwargs.get('depart_at')
 
     def test_se_pregunta_por_la_hora_de_la_parada_no_por_ahora(self):
@@ -318,7 +318,7 @@ class TestTravelFeasibility(TransactionCase):
         esperado = self.tz.localize(
             datetime(2026, 9, 1, 9, 30)).astimezone(pytz.utc).replace(tzinfo=None)
         self.assertEqual(
-            self._depart_at(matrix), esperado,
+            self._depart_at_enviado(matrix), esperado,
             "El punto MEDIO de la parada: los dos trayectos salen a media hora "
             "de él, y así una sola franja sirve para los dos sentidos")
 
@@ -339,8 +339,8 @@ class TestTravelFeasibility(TransactionCase):
         self.assertEqual(matrix.call_count, 2, "una llamada por franja")
         self.assertEqual(durations[0], (10, 10))
         self.assertEqual(durations[1], (10, 10))
-        horas = sorted(d.hour for d in (self._depart_at(matrix, 0),
-                                        self._depart_at(matrix, 1)))
+        horas = sorted(d.hour for d in (self._depart_at_enviado(matrix, 0),
+                                        self._depart_at_enviado(matrix, 1)))
         self.assertNotEqual(horas[0], horas[1],
                             "cada llamada pregunta por SU hora")
 
