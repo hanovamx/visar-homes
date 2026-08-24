@@ -91,6 +91,16 @@ class TestTravelFeasibility(TransactionCase):
             base.replace(hour=hora_fin)).astimezone(pytz.utc).replace(tzinfo=None)
         return start, stop
 
+    def _depart_at(self, valor):
+        """Enciende/apaga `depart_at`. Nace APAGADO: la cuenta no tiene la beta.
+
+        Las pruebas que fijan el comportamiento CON franjas tienen que encenderlo
+        a mano — si no, estarían fijando el camino de `825d536` creyendo que
+        prueban otra cosa.
+        """
+        self.env['ir.config_parameter'].sudo().set_param(
+            'visar.travel.depart_at', valor)
+
     def _fits(self, stops, slot, durations, budget=20):
         start, stop = slot
         return self.AptType._visar_travel_slot_fits(
@@ -239,6 +249,53 @@ class TestTravelFeasibility(TransactionCase):
         self.assertEqual(durations[0], (11, 11), "601 s son 11 min, no 10")
 
     # ------------------------------------------------------------------
+    # El DEFAULT: `depart_at` apagado == el camino de `825d536`
+    # ------------------------------------------------------------------
+
+    def test_por_defecto_no_se_manda_la_hora_de_salida(self):
+        """La cuenta no tiene la beta, asi que el default es NO intentarlo.
+
+        Encendido, cada llamada pagaba un 422 antes de reintentar. Apagado, se
+        va directo al camino que si se ha visto funcionar contra la base real.
+        """
+        Mapbox = self.env['visar.mapbox.service']
+        self.assertFalse(Mapbox._visar_depart_at_active())
+        self.assertIsNone(
+            Mapbox._visar_mapbox_depart_at(datetime.now() + timedelta(days=2)))
+
+    def test_sin_hora_de_salida_el_dia_es_UNA_llamada(self):
+        """Sin `depart_at` no se parte el dia, y esto es lo que lo garantiza.
+
+        Partir en franjas sin hora de salida seria pagar dos, tres o cuatro
+        llamadas para recibir la MISMA respuesta: Mapbox contesta igual a
+        cualquier hora si no se le dice ninguna. Un dia de manana y tarde es el
+        caso que lo destapa, porque encendido cuesta dos.
+        """
+        stops = self._stops((9, 10, _STOP_A), (17, 18, _STOP_B))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600, 600], [600, 0, 0], [600, 0, 0]]) as matrix:
+            durations = self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+
+        self.assertEqual(matrix.call_count, 1, "una llamada por (dia, tecnico)")
+        self.assertIsNone(matrix.call_args.kwargs.get('depart_at'))
+        self.assertEqual(durations, {0: (10, 10), 1: (10, 10)})
+
+    def test_sin_hora_de_salida_la_clave_de_cache_no_lleva_franja(self):
+        """O una entrada de `825d536` dejaria de encontrarse sin motivo."""
+        stops = self._stops((9, 10, _STOP_A))
+        with patch('%s._visar_mapbox_matrix' % _SERVICE,
+                   return_value=[[0, 600], [600, 0]]):
+            self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+
+        claves = self.env['visar.travel.cache'].sudo().search(
+            [('kind', '=', 'travel')]).mapped('key')
+        self.assertTrue(claves)
+        self.assertTrue(all('|' not in k for k in claves),
+                        "sin franja: %s" % claves)
+
+    # ------------------------------------------------------------------
     # Tráfico histórico: `depart_at` y la franja horaria
     # ------------------------------------------------------------------
 
@@ -251,6 +308,7 @@ class TestTravelFeasibility(TransactionCase):
         Y la diferencia entre las 8:00 y las 11:00 en Monterrey es del mismo
         tamaño que el presupuesto de 20 min que estamos midiendo.
         """
+        self._depart_at('1')
         stops = self._stops((9, 10, _STOP_A))
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=[[0, 600], [600, 0]]) as matrix:
@@ -271,6 +329,7 @@ class TestTravelFeasibility(TransactionCase):
         tráfico. Meterlas en la misma llamada sería cotizar una de las dos con la
         hora de la otra — barato y equivocado.
         """
+        self._depart_at('1')
         stops = self._stops((9, 10, _STOP_A), (17, 18, _STOP_B))
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=[[0, 600], [600, 0]]) as matrix:
@@ -291,6 +350,7 @@ class TestTravelFeasibility(TransactionCase):
         Es lo que mantiene vivo el control de costo del §5.3. Con mediana de 2.5
         paradas al día, la mayoría de los días siguen siendo una sola llamada.
         """
+        self._depart_at('1')
         stops = self._stops((9, 10, _STOP_A), (10, 11, _STOP_B))
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=[[0, 600, 600], [600, 0, 0], [600, 0, 0]]) as matrix:
@@ -316,6 +376,7 @@ class TestTravelFeasibility(TransactionCase):
         estuviera cacheada y no costara nada. Una parada sin resolver no impone
         restricción, así que conservarla es estrictamente mejor.
         """
+        self._depart_at('1')
         manana = self._stops((9, 10, _STOP_A))
         with patch('%s._visar_mapbox_matrix' % _SERVICE,
                    return_value=[[0, 600], [600, 0]]):
@@ -342,6 +403,7 @@ class TestTravelFeasibility(TransactionCase):
         velocidades típicas: peor, pero no falso. Empujarlo a "ahora" sería
         cotizar el tráfico de una hora que no es la de la cita.
         """
+        self._depart_at('1')
         Mapbox = self.env['visar.mapbox.service']
         ayer = datetime.now() - timedelta(days=1)
         manana = datetime.now() + timedelta(days=1)
@@ -383,6 +445,7 @@ class TestTravelFeasibility(TransactionCase):
         silencio**. Ahora se reintenta sin la hora: velocidades típicas, peor pero
         no falso — el §5.4 aplicado un nivel más adentro.
         """
+        self._depart_at('auto')
         self._con_token()
         Mapbox = self.env['visar.mapbox.service']
         cuerpo = ('{"message":"Request too large for custom parameters '
@@ -415,6 +478,7 @@ class TestTravelFeasibility(TransactionCase):
         Si Mapbox está caído de verdad, reintentar sería pagar dos timeouts por
         llamada justo cuando lo que hace falta es cortar la corrida.
         """
+        self._depart_at('1')
         self._con_token()
         with patch(_REQUESTS, side_effect=OSError('timeout')) as get:
             matriz = self.env['visar.mapbox.service']._visar_mapbox_matrix(
@@ -424,6 +488,7 @@ class TestTravelFeasibility(TransactionCase):
 
     def test_un_422_por_otra_causa_no_apaga_depart_at(self):
         """Un 422 que no habla de `depart_at` es un fallo normal, no la beta."""
+        self._depart_at('1')
         self._con_token()
         with patch(_REQUESTS, return_value=self._respuesta(
                 422, text='{"message":"Coordinate is invalid"}')) as get:

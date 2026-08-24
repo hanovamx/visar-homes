@@ -439,15 +439,27 @@ y no cuesta ni un elemento más.
 > daban 5 slots → 5 slots, con un viaje real de 59.7 min contra un presupuesto de
 > 20. Producción se salvó por accidente: seguía corriendo el código anterior.
 >
-> **Arreglado tratándolo como capacidad, no como caída** (`visar.travel.depart_at`,
-> `auto` por defecto): al primer 422 que mencione `depart_at` se **reintenta la
-> misma llamada sin la hora** y se apaga el parámetro. Se recupera el
-> comportamiento de velocidades típicas — peor, pero no falso. Es el §5.4 aplicado
-> un nivel más adentro: *degradar, nunca bloquear* también vale para una capacidad
-> que la cuenta no tiene.
+> **Decisión (24-ago-2026): `depart_at` NACE APAGADO** (`visar.travel.depart_at = 0`).
+> Se intentó dejarlo en `auto` con reintento, pero eso paga un 422 por llamada
+> antes de caer al camino bueno, y una sola escritura fallida del interruptor
+> —cosa posible: esto corre al pintar horarios y una petición web de solo lectura
+> no puede escribir— lo dejaba pagándolo para siempre. **El default es el
+> comportamiento que se ha visto funcionar contra la base real**, no el que
+> depende de que un apagado automático salga bien.
 >
-> **El día que concedan la beta hay que poner `visar.travel.depart_at = 1` A MANO.**
-> `auto` ya se habrá apagado y no vuelve a probar.
+> **Apagado, el camino es el de `825d536`, exacto:** sin franjas, **una llamada por
+> (día, técnico)**, clave de caché **sin** franja y tope de llamadas en **12**. El
+> interruptor es uno solo (`_visar_depart_at_active`) y gobierna las dos cosas —
+> mandar la hora y partir el día—, porque partir en franjas sin hora de salida
+> sería pagar varias llamadas para recibir la MISMA respuesta.
+>
+> **El reintento sigue ahí** para quien ponga `auto`: al primer 422 que mencione
+> `depart_at` se repite la llamada sin la hora y se apaga. Es el §5.4 un nivel más
+> adentro — *degradar, nunca bloquear* también vale para una capacidad ausente.
+>
+> **El día que concedan la beta:** `visar.travel.depart_at = 1` **y**
+> `visar.travel.matrix_max_calls = 30`. Los dos, o con 12 y franjas un calendario
+> mensual se queda a medio filtrar en silencio.
 
 **Qué hora se manda.** La de la **parada**, no la del slot candidato. Los dos
 trayectos que interesan salen en momentos distintos (desde la parada anterior se

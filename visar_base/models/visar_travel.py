@@ -54,6 +54,9 @@ TRAVEL_BUCKET_HOURS_PARAM = 'visar.travel.depart_bucket_hours'
 # el parámetro. Ver `_visar_depart_at_mode`.
 DEPART_AT_PARAM = 'visar.travel.depart_at'
 DEPART_AT_AUTO = 'auto'
+# APAGADO por defecto: la cuenta no tiene la beta, y encendido cada llamada paga
+# un 422 antes de reintentar. Ver `_visar_depart_at_mode`.
+DEPART_AT_DEFAULT = '0'
 
 DEFAULT_PROFILE = 'driving'
 DEFAULT_TIMEOUT = 10
@@ -129,21 +132,39 @@ class VisarMapboxService(models.AbstractModel):
 
     @api.model
     def _visar_depart_at_mode(self):
-        """`auto` | `1` | `0` — si se manda la hora de salida a Matrix.
+        """`0` | `auto` | `1` — si se manda la hora de salida a Matrix.
 
-        `depart_at` en Matrix es **BETA y hay que darse de alta** por un
-        formulario; una cuenta sin alta no lo ignora, **rechaza la petición
-        entera** con 422. Verificado en servidor el 21-ago-2026 con una matriz de
-        2 puntos: sin el parámetro 200, con él 422.
+        **Nace APAGADO (`0`), y eso es deliberado.** `depart_at` en Matrix es una
+        BETA con alta previa; esta cuenta no la tiene y Mapbox no lo ignora:
+        **rechaza la petición entera** con 422 (verificado en servidor el
+        21-ago-2026 con una matriz de 2 puntos — sin el parámetro 200, con él
+        422). Encendido por defecto, cada llamada pagaba un 422 antes de
+        reintentar, y una sola escritura fallida del interruptor lo dejaba
+        pagándolo para siempre.
 
-        - `auto` (por defecto): se intenta, y al primer 422 se apaga solo.
-        - `1`: forzado. Es lo que hay que poner **el día que Mapbox conceda la
-          beta**, porque `auto` ya se habrá apagado y no vuelve a probar.
-        - `0`: apagado a mano.
+        Apagado, el comportamiento es **exactamente** el de `825d536`, que es el
+        único que se ha visto podar horarios de verdad contra la base real.
+
+        - `0` (por defecto): no se manda. Sin franjas, una llamada por (día,
+          técnico), clave de caché sin franja.
+        - `1`: **lo que hay que poner el día que Mapbox conceda la beta.**
+        - `auto`: se intenta y al primer 422 se apaga solo. Útil para probar el
+          alta sin tocar código; no es el default porque el 422 se paga.
         """
         raw = self.env['ir.config_parameter'].sudo().get_param(
-            DEPART_AT_PARAM, DEPART_AT_AUTO)
-        return str(raw or '').strip().lower() or DEPART_AT_AUTO
+            DEPART_AT_PARAM, DEPART_AT_DEFAULT)
+        return str(raw or '').strip().lower() or DEPART_AT_DEFAULT
+
+    @api.model
+    def _visar_depart_at_active(self):
+        """¿Se manda la hora de salida?
+
+        Manda **más** que el parámetro de la petición: si no hay hora de salida,
+        tampoco tiene sentido partir el día en franjas, porque todas devolverían
+        la MISMA respuesta y se pagarían por separado. Un solo interruptor para
+        las dos cosas, o se quedan desincronizadas.
+        """
+        return self._visar_depart_at_mode() not in ('0', 'false', 'off', 'no')
 
     @api.model
     def _visar_depart_at_disable(self, detalle=''):
@@ -182,7 +203,7 @@ class VisarMapboxService(models.AbstractModel):
         Degradar, nunca bloquear — la alternativa (empujarlo a "ahora") sería
         cotizar el tráfico de una hora que no es la de la cita.
         """
-        if self._visar_depart_at_mode() in ('0', 'false', 'off', 'no'):
+        if not self._visar_depart_at_active():
             return None
         if not when_utc or when_utc <= fields.Datetime.now():
             return None

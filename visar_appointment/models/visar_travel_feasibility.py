@@ -77,14 +77,15 @@ TRAVEL_MAX_CALLS_PARAM = 'visar.travel.matrix_max_calls'
 TRAVEL_GEOCODE_PARAM = 'visar.travel.geocode_address'
 
 DEFAULT_TRAVEL_MINUTES = 20
-# El tope cuenta LLAMADAS, no elementos. Desde que cada día se parte por franja
-# horaria, un día mediano cuesta 2 y uno pico 4, no 1. Por eso 30 y no 12: con el
-# tope viejo un calendario mensual se quedaba a medio filtrar **en silencio**.
+# El tope cuenta LLAMADAS, no elementos. Con `visar.travel.depart_at` apagado —el
+# default— un día son 1 llamada y 12 basta, que es lo que había antes de todo
+# esto. **Si algún día se enciende, hay que subirlo a 30**: con franjas, un día
+# mediano cuesta 2 y uno pico 4, y con 12 un calendario mensual se quedaría a
+# medio filtrar EN SILENCIO.
 #
 # En elementos seguimos muy por debajo de los 100.000 gratis al mes de Mapbox; lo
 # que escasea son las peticiones (60/min en `driving`) y la latencia de la página.
-# El número bueno sale de medir un mes real con la caché fría (V7), no de aquí.
-DEFAULT_MAX_CALLS = 30
+DEFAULT_MAX_CALLS = 12
 
 
 class AppointmentType(models.Model):
@@ -360,18 +361,26 @@ class AppointmentType(models.Model):
 
         Cache = self.env['visar.travel.cache'].sudo()
 
-        # Agrupar las paradas del día por franja de tráfico. `depart` es la salida
-        # más TARDÍA de la franja: todas caen en la misma hora, y la más tardía es
-        # la que tiene más posibilidades de seguir estando en el futuro.
         grupos = {}
-        for index, coords in con_coords:
-            medio = self._visar_travel_stop_depart(stops[index])
-            local = pytz.utc.localize(medio).astimezone(tz_info)
-            bucket = Cache._visar_travel_bucket(local)
-            grupo = grupos.setdefault(bucket, {'depart': medio, 'stops': []})
-            grupo['stops'].append((index, coords))
-            if medio > grupo['depart']:
-                grupo['depart'] = medio
+        if not self.env['visar.mapbox.service']._visar_depart_at_active():
+            # SIN hora de salida no se parte el día: una sola llamada por (día,
+            # técnico) y la clave de caché sin franja. Es el camino de `825d536`,
+            # exacto. Partir en franjas aquí seria pagar dos, tres o cuatro
+            # llamadas para recibir la MISMA respuesta, porque sin `depart_at`
+            # Mapbox contesta lo mismo a cualquier hora.
+            grupos[None] = {'depart': None, 'stops': list(con_coords)}
+        else:
+            # Agrupar por franja de tráfico. `depart` es la salida más TARDÍA de
+            # la franja: todas caen en la misma hora, y la más tardía es la que
+            # tiene más posibilidades de seguir estando en el futuro.
+            for index, coords in con_coords:
+                medio = self._visar_travel_stop_depart(stops[index])
+                local = pytz.utc.localize(medio).astimezone(tz_info)
+                bucket = Cache._visar_travel_bucket(local)
+                grupo = grupos.setdefault(bucket, {'depart': medio, 'stops': []})
+                grupo['stops'].append((index, coords))
+                if medio > grupo['depart']:
+                    grupo['depart'] = medio
 
         claves = {}
         for bucket, grupo in grupos.items():

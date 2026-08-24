@@ -32,9 +32,21 @@ con). Alta en <https://www.mapbox.com/contact/matrix-api-depart-at>.
 token inválido, destino sin coordenadas, flag apagado— daban 5 slots → 5 slots, con
 un viaje real de 59.7 min contra un presupuesto de 20.
 
-**Arreglado** tratando el 422 como *capacidad que la cuenta no tiene*, no como caída:
-se reintenta la misma llamada **sin** la hora y se apaga `visar.travel.depart_at`.
-Vuelve el comportamiento de velocidades típicas — peor, pero no falso. Ver **W7**.
+**Resuelto el 24-ago-2026 APAGÁNDOLO POR DEFECTO** (`visar.travel.depart_at = 0`),
+no dejándolo en `auto`. El default tiene que ser el camino que se ha visto podar
+horarios de verdad, no uno que depende de que un apagado automático salga bien —
+`auto` paga un 422 por llamada antes de caer al camino bueno, y si la escritura del
+interruptor falla (petición web de solo lectura) lo paga siempre.
+
+**Apagado, el comportamiento es el de `825d536`, exacto:** sin franjas, una llamada
+por (día, técnico), clave de caché sin franja, tope de llamadas de vuelta en 12.
+
+El reintento-sin-hora sigue ahí para quien ponga `auto`. Ver **W7**, que ahora es
+más corta.
+
+> **El día que Mapbox conceda la beta:** `visar.travel.depart_at = 1` **y**
+> `visar.travel.matrix_max_calls = 30`. Los dos, o con 12 y franjas un calendario
+> mensual se queda a medio filtrar en silencio.
 
 **Sigue vigente lo que ya pasó** y no hace falta repetir: W2 (una llamada por franja,
 no por slot), W4.2 (claves con franja y direccionales), W5 (degrada sin bloquear), W6
@@ -183,24 +195,22 @@ lanzar. Con el flag apagado el árbol tiene que salir **idéntico** al de hoy.
 > Los **2 fallos de `test_partner_dedupe` (`assertLogs`) siguen siendo preexistentes
 > y ajenos**: no los investigues.
 
-### W7 — El 422 de la beta degrada, NO apaga el filtro
+### W7 — El default apagado poda como `825d536`
 
-Es lo único nuevo que hay que verificar. Con `visar.travel.depart_at` en `auto`
-(por defecto) y la caché de viajes vacía, repite el escenario del §10.10(c) —parada
-en el Centro, destino en García a ~59 min:
+Es lo único que hay que verificar. **Sin tocar ningún parámetro** (el default es
+`visar.travel.depart_at = 0`), con la caché de viajes vacía, repite el escenario del
+§10.10(c) — parada en el Centro, destino en García a ~59 min:
 
-1. Los slots **pegados** a la parada tienen que **desaparecer** otra vez, como en
-   `825d536`. Si siguen saliendo los 5, el arreglo no funcionó.
-2. En el log tiene que aparecer **una sola vez** el aviso de que se apagó
-   `depart_at`, con el enlace del alta.
-3. `visar.travel.depart_at` tiene que quedar en `0`.
-4. A partir de ahí, **ninguna** petición más debe llevar `depart_at` (cuéntalas).
+1. Los slots **pegados** a la parada tienen que **desaparecer**, como en `825d536`.
+   Si siguen saliendo los 5, para y dímelo.
+2. **Ninguna** petición a Mapbox debe llevar `depart_at`, y **ninguna** debe dar 422.
+3. Un día con paradas de mañana y tarde tiene que costar **1** llamada, no 2.
+4. Las claves de caché tienen que salir **sin** franja:
+   `25.6866,-100.3161>25.8100,-100.5900` (sin el `|D1H09`).
 
-Y confirma que **no se reintenta lo que no toca**: con un token inválido debe seguir
-habiendo **una** petición por llamada, no dos.
-
-> Cuando Mapbox conceda la beta: `visar.travel.depart_at = 1` **a mano**. `auto` ya
-> se apagó y no vuelve a probar.
+Y la comprobación de contraste, que confirma que el interruptor sirve: con
+`visar.travel.depart_at = auto`, ese mismo día debe dar **un** 422, un aviso en el
+log con el enlace del alta, y acabar podando **igual** que en el punto 1.
 
 ---
 

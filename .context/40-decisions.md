@@ -574,12 +574,18 @@ semanas es ruido, y limita a 10 coordenadas — por debajo del pico real de 10 p
 y pedir matrices asimétricas para ahorrar elementos (los elementos están dentro del tramo
 gratuito de Mapbox; lo que escasea son las peticiones).
 
-> ⛔ **Y NO SE PUEDE USAR TODAVÍA (verificado el 21-ago-2026).** `depart_at` en Matrix es una
-> BETA con alta previa; sin ella Mapbox devuelve **422 y tira la petición entera**, no solo el
-> parámetro. Como todas las llamadas lo llevaban, el filtro quedó **inerte en silencio** —
-> pasaba por degradación y no lo era. Ahora un 422 que mencione `depart_at` **reintenta sin la
-> hora** y apaga `visar.travel.depart_at`; se vuelve a velocidades típicas, peor pero no falso.
-> Cuando concedan la beta hay que poner ese parámetro a `1` **a mano**.
+> ⛔ **APAGADO POR DEFECTO — no se puede usar todavía (verificado el 21-ago-2026).**
+> `depart_at` en Matrix es una BETA con alta previa; sin ella Mapbox devuelve **422 y tira la
+> petición entera**, no solo el parámetro. Como todas las llamadas lo llevaban, el filtro quedó
+> **inerte en silencio** — pasaba por degradación y no lo era.
+>
+> **Corregido el 24-ago-2026 apagándolo de raíz** (`visar.travel.depart_at = 0`), no dejándolo
+> en `auto`: el default tiene que ser el comportamiento que se ha visto funcionar contra la base
+> real, no uno que depende de que un apagado automático salga bien. Apagado, el camino es el de
+> `825d536` **exacto**: una llamada por (día, técnico), sin franjas, clave sin franja, tope 12.
+>
+> El reintento-sin-hora sigue disponible con `auto`. **El día que concedan la beta:
+> `visar.travel.depart_at = 1` Y `visar.travel.matrix_max_calls = 30`, los dos.**
 
 ## [DECIDIDA — 17-ago-2026, NO IMPLEMENTADA] El CP se pide temprano
 
