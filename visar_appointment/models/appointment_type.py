@@ -748,18 +748,120 @@ class AppointmentType(models.Model):
         return product.display_name
 
     @api.model
+    def _visar_item_gets_combo_discount(self, item, rule):
+        """¿Esta línea es de las que abarata `rule`? UNA sola definición.
+
+        La usan el cobro (`_visar_combo_discount_for_item`) y la oferta
+        (`_visar_combo_offers`). Tenerla dos veces sería prometer un descuento
+        sobre una línea distinta de la que luego se abarata — el §11 en su forma
+        más cara, porque el cliente lo lee antes de comprar.
+        """
+        if item.get('dimension_id') in rule.discount_dimension_ids.ids:
+            return True
+        tier = self.env['visar.service.tier'].browse(item.get('tier_id')).exists()
+        return bool(tier and tier.combo_discount_eligible)
+
+    @api.model
     def _visar_combo_discount_for_item(self, item, dimension_ids, combo_rules):
         """Descuento % para una línea según reglas de combo activas."""
-        dimension_id = item.get('dimension_id')
-        tier = self.env['visar.service.tier'].browse(item.get('tier_id')).exists()
         for rule in combo_rules:
             if not rule._visar_applies_to_items(dimension_ids):
                 continue
-            if dimension_id in rule.discount_dimension_ids.ids:
-                return rule._visar_discount_percent()
-            if tier and tier.combo_discount_eligible:
+            if self._visar_item_gets_combo_discount(item, rule):
                 return rule._visar_discount_percent()
         return 0.0
+
+    @api.model
+    def _visar_combo_offers(self, items, zone):
+        """Combos que la canasta NO alcanza, y qué le falta para alcanzarlos.
+
+        El cuestionario web llega al combo por su estructura: el paso de
+        cobertura ofrece "ambos" y el de servicios es multi-selección, así que
+        una canasta de fumigación + áreas verdes acaba con las tres dimensiones
+        juntas y el descuento cae solo. El chat arma la canasta con lo que el
+        cliente dijo, y una fumigación de solo interior deja la regla a una
+        dimensión de distancia **sin que nadie lo note**: el total es correcto
+        para lo que se pidió, y aun así es peor de lo que el cliente podía tener.
+
+        Esto lo calcula Odoo y no el prompt porque la regla vive aquí y la edita
+        un consultor. Un prompt que dijera "el combo exige interior y exterior"
+        se queda obsoleto el día que alguien toque `visar.combo.rule`, y nadie
+        se enteraría hasta ver la factura.
+
+        Devuelve solo combos **empezados**: si a la regla le faltan TODAS sus
+        dimensiones requeridas, el cliente no está cerca de ella y ofrecérsela es
+        publicidad, no ayuda.
+
+        ⚠️ `saving` es lo que bajan las LÍNEAS QUE YA ESTÁN en la canasta, y **no**
+        cuánto baja el total: lo que falta se cobra aparte. En el caso real —
+        interior + corte, a los que les falta Exterior— el corte pasa de 1,200 a
+        600, y aun así el total sube de 1,800 a 2,200 porque Exterior cuesta.
+        Decir "el total baja 600" sería falso y el cliente lo lee antes de
+        comprar. Por eso viaja el antes/después por línea y quien quiera el total
+        nuevo tiene que **volver a cotizar** con la canasta completa, que es lo
+        único que no se puede equivocar.
+
+        `saving` es 0.0 cuando la línea que se abarata todavía no se ha pedido:
+        sus metros no los sabe nadie, y una cifra inventada aquí es una promesa.
+        """
+        rules = self.env['visar.combo.rule'].sudo().search(
+            [('active', '=', True)], order='sequence')
+        if not rules or not items:
+            return []
+        dimension_ids = [i['dimension_id'] for i in items if i.get('dimension_id')]
+        Tier = self.env['visar.service.tier']
+
+        offers = []
+        for rule in rules:
+            faltan = rule._visar_missing_dimensions(dimension_ids)
+            if not faltan:
+                continue
+            if len(faltan) == len(rule.required_dimension_ids):
+                continue
+            percent = rule._visar_discount_percent()
+            if not percent:
+                continue
+            ahorro = 0.0
+            abarata = []
+            for item in items:
+                if not self._visar_item_gets_combo_discount(item, rule):
+                    continue
+                tier = Tier.browse(item.get('tier_id')).exists()
+                if not tier or item.get('is_free') or tier.is_free:
+                    continue
+                variant = tier._visar_get_variant_for_zone(zone)
+                if not variant:
+                    continue
+                unit = self._visar_list_unit_price(variant, zone)
+                if unit <= 0:
+                    continue
+                neto = unit * (1.0 - percent / 100.0)
+                ahorro += unit - neto
+                abarata.append({
+                    # La MISMA etiqueta que lleva la línea de la cotización: dos
+                    # nombres para la misma cosa y el cliente cree que son dos.
+                    'name': self._visar_quote_line_label(
+                        {'dimension_id': item.get('dimension_id'),
+                         'tier_name': item.get('tier_name')}, variant),
+                    'list_price': unit,
+                    'price': neto,
+                })
+            offers.append({
+                'name': rule.name,
+                'discount_percent': percent,
+                'missing': [{'service_code': dim.code, 'name': dim._visar_wizard_label()}
+                            for dim in faltan],
+                # QUÉ abarata, siempre — con precios o sin ellos. Sin esto el
+                # descuento se anuncia sin sujeto ("50% de descuento") y se lee
+                # como si fuera sobre el total: en una prueba real el agente
+                # dijo "50% en todo", y el 50% es solo del corte.
+                'discount_services': [
+                    {'service_code': dim.code, 'name': dim._visar_wizard_label()}
+                    for dim in rule.discount_dimension_ids],
+                'discounts': abarata,
+                'saving': ahorro,
+            })
+        return offers
 
     @api.model
     def _visar_offered_addons(self, items, zone, include_roedores=False):

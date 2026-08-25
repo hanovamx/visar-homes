@@ -153,10 +153,28 @@ class VisarAgentTools(models.AbstractModel):
 
         notes = self.env['ir.config_parameter'].sudo().get_param(NOTES_PARAM, '')
 
+        # Los combos, con sus condiciones. El catalogo no los mencionaba: la
+        # unica aparicion de la palabra era dentro del nombre de un producto. Sin
+        # esto el modelo no tiene forma de saber que conviene preguntar por la
+        # cobertura antes de cotizar, y cotiza de menos sin equivocarse en nada.
+        combos_payload = [
+            {
+                'name': rule.name,
+                'requires': [{'service_code': dim.code, 'name': dim._visar_wizard_label()}
+                             for dim in rule.required_dimension_ids],
+                'discounts': [{'service_code': dim.code, 'name': dim._visar_wizard_label()}
+                              for dim in rule.discount_dimension_ids],
+                'discount_percent': rule._visar_discount_percent(),
+            }
+            for rule in self.env['visar.combo.rule'].sudo().search(
+                [('active', '=', True)], order='sequence')
+        ]
+
         return {
             'generated_at': fields.Datetime.now().isoformat(),
             'groups': groups_payload,
             'zones': zones_payload,
+            'combos': combos_payload,
             'notes': notes,
         }
 
@@ -301,6 +319,16 @@ class VisarAgentTools(models.AbstractModel):
         aplican los descuentos de combo y los add-ons obligatorios que
         correspondan. Nunca devuelve un total a medias: si falta zona, si el
         codigo es ambiguo, o si algo exige valoracion, lo dice en `message`.
+
+        `combos_disponibles` son los combos que esta canasta NO alcanza y que
+        estan a una dimension de distancia, con lo que falta y lo que se
+        ahorraria. El total devuelto es correcto para lo que se pidio; esto dice
+        si habia una canasta mejor. Sin el, una fumigacion de solo interior mas
+        areas verdes se cotiza sin el 50% del corte y nadie lo nota.
+
+        Cada linea lleva `list_price` ademas de `unit_price`: el segundo ya viene
+        NETO del descuento, asi que sin el primero no se puede enseniar el
+        "antes/ahora" y recalcularlo a mano lo aplicaria dos veces.
         """
         base = {
             'served': False,
@@ -311,6 +339,7 @@ class VisarAgentTools(models.AbstractModel):
             'options': [],
             'lines': [],
             'total': None,
+            'combos_disponibles': [],
         }
 
         payload = payload or {}
@@ -347,6 +376,7 @@ class VisarAgentTools(models.AbstractModel):
                 'name': line['name'],
                 'quantity': line['quantity'],
                 'unit_price': line['unit_price'],
+                'list_price': line['list_price'],
                 'price': line['price'],
                 'is_free': line['is_free'],
                 'is_addon': line['is_addon'],
@@ -354,6 +384,12 @@ class VisarAgentTools(models.AbstractModel):
             }
             for line in quote['lines']
         ]
+
+        # Combos que esta canasta se esta perdiendo. Los calcula Odoo, que es
+        # donde vive `visar.combo.rule`: el modelo no puede saber que el descuento
+        # del corte exige interior Y exterior, y el catalogo no se lo decia.
+        combos = [] if is_valuation else self.env['appointment.type']._visar_combo_offers(
+            items, zone)
 
         if is_valuation:
             message = (
@@ -363,6 +399,33 @@ class VisarAgentTools(models.AbstractModel):
         else:
             message = "Total estimado en %s: %s %.2f." % (
                 zone.name, currency_name, quote['total'])
+            for combo in combos:
+                falta = ", ".join(m['name'] for m in combo['missing'])
+                if combo['discounts']:
+                    detalle = "; ".join(
+                        "%s pasa de %s %.2f a %s %.2f" % (
+                            d['name'], currency_name, d['list_price'],
+                            currency_name, d['price'])
+                        for d in combo['discounts'])
+                    # Solo HECHOS, y en un castellano que el cliente pueda leer
+                    # tal cual. El prompt manda "usa solo lo que devuelve la
+                    # herramienta", asi que todo lo que entre aqui puede acabar
+                    # citado en el chat: una instruccion para el modelo ("vuelve
+                    # a cotizar") se leeria como si el negocio hablara solo.
+                    # "se cobra aparte" hace el mismo trabajo -impide concluir
+                    # que el total baja- y delante de un cliente es verdad.
+                    message += (
+                        " Anadiendo %s se activa '%s' (%.0f%%): %s. %s se cobra"
+                        " aparte." % (
+                            falta, combo['name'], combo['discount_percent'],
+                            detalle, falta))
+                else:
+                    sobre = ", ".join(d['name'] for d in combo['discount_services'])
+                    message += (
+                        " Anadiendo %s se activaria '%s': %.0f%% de descuento"
+                        " sobre %s, y nada mas. %s se cobra aparte."
+                        % (falta, combo['name'], combo['discount_percent'],
+                           sobre or combo['name'], falta))
 
         return {
             **base,
@@ -371,6 +434,7 @@ class VisarAgentTools(models.AbstractModel):
             'is_valuation': is_valuation,
             'lines': lines,
             'total': quote['total'],
+            'combos_disponibles': combos,
             'message': message,
         }
 

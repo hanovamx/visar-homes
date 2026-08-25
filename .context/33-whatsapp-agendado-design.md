@@ -1583,6 +1583,113 @@ desglose el total parece el precio de una pieza.
   24 h. Es el único momento en que el cliente la lee, y es justo cuando acaba de
   pagar; enterarse el día que quiere cancelar es enterarse tarde.
 
+## 10.12 El combo que el chat no sabía pedir (24-ago-2026)
+
+Reportado desde pruebas: la ruta *Información* cotizaba **fumigación + áreas
+verdes sin el descuento**, y el mismo par de servicios agendado por el
+cuestionario salía con él.
+
+**No eran dos motores de precio.** Los dos caminos llaman a
+`_visar_quote_booking`, y los dos totales eran **correctos para su canasta**. La
+regla vive en `visar.combo.rule` y solo hay una:
+
+```
+requiere : Interior + Exterior + Corte de pasto (combo)
+descuenta: Corte de pasto (combo)  ->  50%
+```
+
+`_visar_applies_to_items` exige que las **tres** dimensiones estén en la misma
+lista de items. Medido sobre una copia:
+
+| Canasta | Total | Corte de pasto |
+|---|---|---|
+| interior + exterior + corte | 2,200 | 1,200 → **600** |
+| interior + corte (sin exterior) | 1,800 | 1,200, sin tocar |
+| cada servicio en su propia llamada | 2,800 | 1,200, sin tocar |
+
+**Por qué el cuestionario acierta y el chat no.** No calcula mejor: la canasta se
+la impone la estructura. El paso de cobertura ofrece "ambos" y el de servicios es
+multi-selección, así que fumigación + áreas verdes acaba con las tres dimensiones
+juntas. El chat arma la canasta con lo que el cliente dijo, y **nada le decía que
+el combo existiera**: el `agent_catalog_snapshot` mencionaba la palabra "combo"
+una sola vez, dentro del nombre de un producto.
+
+Los leads de CRM lo confirman —`expected_revenue` guarda el total de la canasta—:
+dos leads de la misma conversación con **totales distintos** (600 y 2,185, con un
+segundo de diferencia) son dos llamadas separadas a `quote_service`; y dos leads
+de 1,800 son exactamente `interior + corte` sin exterior.
+
+**El arreglo va en Odoo, no en el prompt.** La condición del combo es dato que
+edita un consultor: un prompt que dijera "el combo exige interior y exterior" se
+queda obsoleto el día que alguien toque la regla, y nadie se entera hasta ver la
+factura. Es el §11 otra vez, y por una vez se puede cerrar del lado correcto.
+
+* `visar.combo.rule._visar_missing_dimensions()` — lo que le falta a la canasta,
+  como dimensiones y no como booleano: la pregunta útil delante de un cliente no
+  es "¿aplica?" sino "¿qué tiene que añadir?".
+* `appointment.type._visar_combo_offers()` — los combos **empezados** que no se
+  alcanzan, con lo que falta y el antes/después de las líneas que se abaratarían.
+  Si faltan TODAS las dimensiones requeridas no se ofrece: eso es publicidad.
+* `_visar_item_gets_combo_discount()` — la elegibilidad de una línea, extraída a
+  **una sola definición** que usan el cobro y la oferta. Dos copias serían
+  prometer el descuento sobre una línea distinta de la que luego se abarata.
+* `agent_catalog_snapshot` publica las reglas activas (qué exige, qué abarata,
+  cuánto).
+* Las líneas de `agent_quote_service` ya llevan `list_price`. `unit_price` viene
+  **neto**, así que sin él no se puede enseñar el "antes/ahora" — y recalcularlo
+  a mano lo aplicaría dos veces.
+
+⚠️ **`saving` es de las líneas, NO del total.** Lo que falta se cobra aparte: en
+el caso real el corte pasa de 1,200 a 600 y el total **sube** de 1,800 a 2,200,
+porque Exterior cuesta. El primer borrador de este cambio decía "el total baja
+600" y era falso. Por eso viaja el antes/después por línea, y el mensaje manda
+**volver a cotizar** con la canasta completa para dar el total nuevo: es lo único
+que no se puede equivocar.
+
+### Probado con el LLM en el circuito, y lo que eso encontró
+
+Los campos nuevos llegan al modelo solos —el handler devuelve la respuesta de
+Odoo tal cual— pero **una prueba de RPC no prueba esto**. Se levantó un runtime
+aparte contra una copia y se recorrieron tres conversaciones reales con
+`claude-haiku-4-5`. El combo aparece:
+
+> *"si agregas fumigación exterior, se activa un combo y el corte de pasto te
+> baja a $600. El exterior se cobra aparte dependiendo de cuántos metros
+> tengas afuera."*
+
+Y salieron **cuatro fallos que ninguna prueba de Odoo podía ver**:
+
+1. **El modelo se inventaba los m² del servicio que falta**, y elegía el tramo
+   que hacía la oferta más atractiva: cotizó el exterior a 50 m² —el tramo
+   incluido— sin que el cliente dijera nada, y presentó $1,200 donde un patio de
+   200 m² cuesta **$2,200**. Cotizar de menos con una cifra que el cliente puede
+   citar al agendar es el I-11 otra vez, y **lo introducía este cambio**: antes
+   el agente nunca hacía la oferta, así que nunca tenía ocasión de suponer.
+2. **Entregaba al cuestionario sin enseñar el precio nuevo.** Un "sí, agrégale el
+   exterior" se leía como intención de reservar, así que el cliente pedía un
+   número y acababa contestando el cuestionario sin haberlo visto.
+3. **"50% de descuento" sin sujeto** se leyó como "50% en todo". El 50% es solo
+   del corte. Ahora `discount_services` viaja siempre, con precios o sin ellos.
+4. **La descripción de la tool traía códigos que no existen** (`FUM_INT`,
+   `MAV_JAR`; los reales son `fumigacion_interior`, `corte_poda`). Cada
+   conversación gastaba una llamada fallida antes de acertar. Venía de antes.
+
+Los tres primeros se arreglan en la **descripción de la tool** y no en `message`:
+el cliente nunca la lee, así que ahí sí caben instrucciones. En `message` solo
+van hechos, porque el prompt manda "usa solo lo que devuelve la herramienta" y
+todo lo que entre ahí puede acabar citado en el chat.
+
+**Y un quinto, que no es de este cambio pero lo destapó.** El presupuesto del
+loop eran **4 iteraciones** (`LLM_MAX_TOOL_ITERATIONS`), y cada iteración es una
+llamada al modelo. Una cotización que descubre un combo necesita cotizar, volver
+a cotizar con la canasta completa y redactar; con cuatro ya rozaba el techo, y
+una sola llamada inválida del modelo —se vio un `cp` de `'test'` y unos m² fuera
+de rango— agotaba el loop y el cliente recibía *"no logré completar la consulta"*
+**en mitad de la cotización**. Subido a **6**, que es el margen para que el modelo
+se recupere de su propio error. El default vive en `app/config.py`; ojo, el
+`.env` lo pisa y hay que moverlo en los dos sitios.
+
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio
