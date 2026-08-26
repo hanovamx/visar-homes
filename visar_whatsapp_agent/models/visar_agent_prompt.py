@@ -119,13 +119,23 @@ class VisarAgentPrompt(models.Model):
         el servicio no le contesta a NADIE. Degradar a None es aceptable; fallar,
         no.
 
+        **El `savepoint` es la mitad que importa**, y se comprobo: un `try/except`
+        a secas NO basta. Si la columna `ruta` no existe todavia -codigo nuevo en
+        el addons_path y `-u` sin correr, que es exactamente lo que pasa entre
+        desplegar y actualizar- el SELECT falla y deja la transaccion ABORTADA.
+        A partir de ahi cualquier otra consulta revienta con
+        `InFailedSqlTransaction`, incluida la de `visar.llm.config` que viene
+        despues, y el metodo levanta igual. Con savepoint, la consulta fallida se
+        deshace sola y la transaccion sigue sirviendo.
+
         `active_test=True` se ancla a mano: si algun dia se llega aqui desde un
         contexto que lo apago (una vista de archivados, un `odoo shell`), se
         estaria sirviendo un prompt archivado sin enterarse.
         """
         try:
-            record = self.with_context(active_test=True).search(
-                [('ruta', '=', ruta or False)], order='sequence, id', limit=1)
+            with self.env.cr.savepoint():
+                record = self.with_context(active_test=True).search(
+                    [('ruta', '=', ruta or False)], order='sequence, id', limit=1)
         except Exception:  # noqa: BLE001 - ver el docstring
             _logger.exception(
                 "visar.agent.prompt: no se pudo leer la ruta %s", ruta)
@@ -150,8 +160,9 @@ class VisarAgentPrompt(models.Model):
         """
         memorias = {}
         try:
-            records = self.with_context(active_test=True).search(
-                [('ruta', '!=', False)], order='sequence, id')
+            with self.env.cr.savepoint():
+                records = self.with_context(active_test=True).search(
+                    [('ruta', '!=', False)], order='sequence, id')
         except Exception:  # noqa: BLE001 - igual que `_agent_route_body`
             _logger.exception(
                 "visar.agent.prompt: no se pudieron leer las memorias de ruta")

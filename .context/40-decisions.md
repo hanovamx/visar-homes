@@ -671,3 +671,40 @@ no hay técnicos y no hay ni un día que ofrecer.
 
 Toca justo a los clientes que están peor: **termitas, chinches y "no sé qué es"** son los tres
 cortes a valoración. Ver §10.7 e I-17.
+
+## [APRENDIDO — 27-ago-2026] Un `try/except` alrededor de una consulta NO protege la transacción
+
+Los lectores de `visar.agent.prompt` tienen que ser **incapaces** de levantar: si
+`agent_runtime_config` falla y el runtime aún no tiene nada cacheado,
+`RuntimeConfigCache.refresh` re-lanza y el servicio **deja de contestarle a
+todos**. Se envolvieron en `try/except Exception`… y no bastaba.
+
+Comprobado sobre una copia de producción **sin** correr el `-u`, que es
+exactamente el estado que hay entre desplegar el código y actualizar el módulo:
+
+```
+RESULTADO: REVENTO -> InFailedSqlTransaction
+           current transaction is aborted, commands ignored until end of transaction block
+```
+
+El `SELECT` sobre la columna `ruta`, que todavía no existe, falla y deja la
+transacción **abortada**. El `except` devuelve `None` como se pedía, pero a partir
+de ahí **cualquier** consulta siguiente revienta — incluida la de
+`visar.llm.config`, que no tenía guardia — y el método levanta igual. La defensa
+protegía la línea, no el turno.
+
+La forma correcta en Odoo es el **savepoint**:
+
+```python
+with self.env.cr.savepoint():
+    record = self.search(...)
+```
+
+La consulta fallida se deshace sola y la transacción sigue sirviendo. Con eso, una
+base sin actualizar degrada como debe: `prompt: None`, `route_prompts: {}`, y el
+runtime cae a su `BASE_PROMPT` de respaldo.
+
+> **Regla que sale de esto:** "no puede levantar" en un método que corre dentro de
+> una transacción de Odoo significa **savepoint**, no `try/except`. Y la forma de
+> saberlo no es razonarlo: es restaurar una copia en el estado anterior y llamar
+> al método.
