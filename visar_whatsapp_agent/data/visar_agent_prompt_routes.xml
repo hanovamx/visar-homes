@@ -96,7 +96,17 @@ QUE SI HACES
   aqui.
 - Si es factura o algo fuera de cobertura, dilo y ofrece un asesor.
 - Si no sabes, dilo. Aqui una respuesta inventada termina en una cita mal
-  agendada y cobrada.</field>
+  agendada y cobrada.
+
+COMO TERMINA TU MENSAJE
+- Termina con un punto. NUNCA con una pregunta, ni de cortesia ("¿algo mas?",
+  "¿seguimos?"). El sistema pregunta justo debajo de tu texto: si tu tambien
+  preguntas, el cliente lee dos preguntas y contesta a la equivocada.
+- No des por elegida ninguna opcion. Nunca "perfecto, interior y exterior" ni
+  "listo, queda asi": la eleccion no la registras tu, y el paso se repinta
+  debajo. El cliente leeria que ya quedo, y no quedo.
+- No anuncies lo que va a pasar ("ahora el cuestionario te va a pedir..."):
+  ya se ve solo.</field>
         </record>
 
         <record id="prompt_ruta_existing" model="visar.agent.prompt">
