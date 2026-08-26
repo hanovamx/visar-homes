@@ -1690,6 +1690,35 @@ se recupere de su propio error. El default vive en `app/config.py`; ojo, el
 `.env` lo pisa y hay que moverlo en los dos sitios.
 
 
+## 10.13 Tres datos que faltaban para contestar escribiendo (26-ago-2026)
+
+El runtime quitó los menús del cuestionario (`85-motor-de-flujos-agendado.md`
+§11). Recorrer una reserva entera **escribiendo** dejó tres sitios donde el
+cliente escribía bien y el sistema repreguntaba — y los tres se arreglan aquí,
+porque los tres eran **dato del paso**, no lógica del canal.
+
+* **El paso de extras no tenía salida.** El botón *"Listo, Enviar"* era la única
+  forma de cerrarlo sin comprar; sin él, nueve formas de decir que no devolvían
+  "No entendí" y **lo único que avanzaba era aceptar el cargo**. Ahora lleva su
+  fila de *"No, gracias"* (`VISAR_EXTRAS_NONE`), igual que póliza — que ya había
+  tenido exactamente este bug (§4.1).
+* **El paso de jardín no se podía contestar con metros.** `visar.measure.band`
+  gana `m2_min`/`m2_max`: los límites estaban solo dentro de la etiqueta, y
+  leerlos al vuelo sería volver a parsear un nombre que un consultor puede
+  reescribir — el error que ya se corrigió con `is_valuation` (§10.11). La
+  migración los siembra una vez desde la etiqueta; lo que no se entienda se queda
+  vacío y esa banda se sigue eligiendo por su número.
+* **"Las dos" no era nadie.** Las opciones de cobertura viajan con `keywords`: el
+  vocabulario del cliente, que casi nunca es el de la etiqueta. Vive aquí porque
+  es copy de negocio.
+
+⚠️ **`m2_min` se manda `None`, nunca `0.0`.** Un `Float` vacío de Odoo vale cero,
+y una banda "de cero en adelante" se tragaría cualquier número que escriba el
+cliente. En un paso que decide el precio.
+
+**Necesita `-u visar_base`** (19.0.1.7.0 → 19.0.1.8.0): dos campos nuevos y su
+migración. `visar_appointment` es Python puro.
+
 ## 11. Riesgo estructural: dos front-ends, un flujo
 
 Esto crea un **segundo front-end sobre el mismo flujo de reserva**. Cada cambio

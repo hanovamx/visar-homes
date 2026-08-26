@@ -121,6 +121,12 @@ VISAR_STEP_SCHEDULE = 'schedule'
 # plan, y porque `_visar_wizard_id_list` ya lo descarta: la respuesta acaba en
 # `poliza_plan_id = False`, exactamente igual que si el cliente no eligiera nada.
 VISAR_POLIZA_NONE = 0
+# Misma idea para los extras. El paso es OPCIONAL y se cierra vacio, pero en el
+# chat un menu sin fila de rechazo es una pregunta sin respuesta valida: mientras
+# hubo boton, el "Listo, Enviar" hacia de salida; sin el, quien no queria nada se
+# quedaba en bucle o compraba el add-on para poder avanzar. El id 0 no existe en
+# `product.product`, asi que el filtro de ofertas lo descarta solo.
+VISAR_EXTRAS_NONE = 0
 
 # Periodicidad en espanol, por (unidad, singular/plural). El campo nativo
 # `billing_period_display_sentence` NO sirve para el chat: su fuente es inglesa
@@ -1516,10 +1522,29 @@ class AppointmentType(models.Model):
                 'hint': _('Te recomendamos fumigar tanto interior como '
                           'exterior: no hay costo adicional si tu patio o '
                           'jardín mide entre 1 y 50 m².'),
+                # `keywords` es el vocabulario del CLIENTE, que casi nunca es
+                # el de la etiqueta. Vive aqui y no en el runtime por lo de
+                # siempre: es copy de negocio y lo edita un consultor.
+                #
+                # "Ambos" lo necesita mas que ninguno. Es un paso de PRECIO y la
+                # forma mas comun de contestarlo -"las dos"- no se parecia en
+                # nada a la etiqueta: el cliente escribia bien y el sistema le
+                # repreguntaba. Las frases de varias palabras se comparan
+                # enteras, asi que "las dos" no se confunde con un "dos" suelto.
                 'options': [
-                    {'value': 'interior', 'label': _('Interior'), 'description': ''},
-                    {'value': 'exterior', 'label': _('Exterior'), 'description': ''},
-                    {'value': 'ambos', 'label': _('Ambos'), 'description': ''},
+                    {'value': 'interior', 'label': _('Interior'), 'description': '',
+                     'keywords': ['adentro', 'dentro', 'por dentro', 'la casa',
+                                  'solo la casa']},
+                    {'value': 'exterior', 'label': _('Exterior'), 'description': '',
+                     'keywords': ['afuera', 'fuera', 'por fuera', 'patio',
+                                  'jardin', 'solo el patio']},
+                    {'value': 'ambos', 'label': _('Ambos'), 'description': '',
+                     'keywords': ['ambo', 'amba', 'las dos', 'los dos', 'las 2',
+                                  'los 2', 'dos cosas', 'todo', 'completo',
+                                  'interior y exterior', 'exterior e interior',
+                                  'adentro y afuera', 'dentro y fuera',
+                                  'por dentro y por fuera', 'casa y patio',
+                                  'casa y jardin']},
                 ],
             }
 
@@ -1576,11 +1601,22 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'band_id',
                 'title': _('¿De qué tamaño es tu jardín o exterior?'),
+                # `m2_min`/`m2_max` viajan para que el paso se pueda contestar
+                # ESCRIBIENDO los metros. Sin ellos, la etiqueta ("101 – 150 m²")
+                # no da ni una palabra que clasificar y el unico camino era el
+                # numero de la fila. Vacios = esa banda solo se elige por su
+                # numero; degradar, nunca bloquear.
                 'options': [{
                     'value': band.id,
                     'label': band.name,
                     'description': band.comparative_label or '',
                     'is_valuation': band.is_valuation,
+                    # None, NO 0.0, cuando la banda no tiene limites puestos:
+                    # un Float vacio de Odoo vale 0.0, y una banda "de 0 a 0 y
+                    # sin tope" se tragaria cualquier numero que escriba el
+                    # cliente. Se manda solo si de verdad esta configurada.
+                    'm2_min': band.m2_min if band._visar_tiene_limites() else None,
+                    'm2_max': band.m2_max or None,
                 } for band in bands],
             }
 
@@ -1655,9 +1691,7 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
                 'title': _('¿Quieres agregar algo más?'),
-                # Los extras son OPCIONALES y el paso se cierra vacio; decirlo
-                # evita el bucle de quien no quiere nada y no encuentra la salida.
-                'hint': _('Si no quieres agregar nada, da click en "{done}".'),
+                'hint': _('Si no quieres agregar nada, elige "No, gracias".'),
                 'options': [{
                     'value': offer['product_id'],
                     'label': offer.get('name') or '',
@@ -1665,7 +1699,16 @@ class AppointmentType(models.Model):
                     'quantity': offer.get('quantity'),
                     'unit_price': offer.get('unit_price'),
                     'subtotal': offer.get('subtotal'),
-                } for offer in self._visar_wizard_extras_offers(booking)],
+                } for offer in self._visar_wizard_extras_offers(booking)] + [{
+                    # La salida explicita. Ver `VISAR_EXTRAS_NONE`: es la misma
+                    # correccion que ya se le hizo al paso de poliza, que tambien
+                    # se quedaba sin respuesta valida en el chat.
+                    'value': VISAR_EXTRAS_NONE,
+                    'label': _('No, gracias'),
+                    'description': _('Seguir sin agregar nada'),
+                    'keywords': ['no gracias', 'ninguno', 'ninguna', 'nada',
+                                 'asi esta bien', 'asi la dejo', 'nel'],
+                }],
             }
 
         if step_key == VISAR_STEP_POLIZA:

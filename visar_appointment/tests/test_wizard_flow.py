@@ -343,6 +343,65 @@ class TestWizardFlow(TransactionCase):
         self.assertTrue(resumen['lines'], 'el resumen no puede salir vacio')
         self.assertNotIn('Visita de valoración técnica', resumen['lines'])
 
+    def test_extras_trae_su_propia_salida(self):
+        """REGRESION (visto recorriendo la reserva escribiendo, 26-ago-2026).
+
+        Al quitar los botones del cuestionario, el "Listo, Enviar" —que era la
+        unica forma de cerrar los extras sin comprar nada— desaparecio. El paso
+        quedo sin respuesta valida para quien no queria el add-on: nueve formas
+        de decir que no ("no", "ninguno", "nada", "asi esta bien"...) devolvian
+        "No entendi", y lo unico que avanzaba era **aceptar el cargo**.
+
+        Es exactamente el mismo agujero que ya se habia tapado en el paso de
+        poliza, y por eso se tapa igual: con una fila explicita. La salida es
+        dato del paso, no una habilidad del canal.
+        """
+        opciones = self.AptType._visar_wizard_step_options(
+            self._booking_fum(), 'extras')
+        salidas = [o for o in opciones['options'] if o['value'] == 0]
+        self.assertEqual(len(salidas), 1, "una y solo una fila de rechazo")
+        self.assertIn('gracias', (salidas[0]['label'] or '').lower())
+        self.assertNotIn('{done}', opciones.get('hint') or '',
+                         "la pista no puede mandar a un boton que ya no existe")
+
+    def test_rechazar_los_extras_no_compra_nada(self):
+        """El id 0 no existe en `product.product`, asi que el filtro lo tira solo."""
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            self._booking_fum(), 'extras', {'extra_ids': [0]})
+        self.assertIsNone(error)
+        self.assertEqual(booking['extras_accepted'], [])
+        self.assertIn('extras_ids', booking['selections'],
+                      "el paso queda CONTESTADO, no pendiente")
+
+    def test_cobertura_lleva_el_vocabulario_del_cliente(self):
+        """"las dos" es como se dice "ambos", y es un paso de PRECIO.
+
+        Las frases viven aqui —son copy de negocio— y no en el runtime, que solo
+        las compara. Sin ellas el cliente escribia bien y el sistema repreguntaba.
+        """
+        opciones = self.AptType._visar_wizard_step_options(
+            self._booking_fum(), 'cobertura')
+        por_valor = {o['value']: o for o in opciones['options']}
+        ambos = por_valor['ambos'].get('keywords') or []
+        for frase in ('las dos', 'los dos', 'amba'):
+            self.assertIn(frase, ambos)
+        self.assertTrue(por_valor['interior'].get('keywords'))
+        self.assertTrue(por_valor['exterior'].get('keywords'))
+
+    def test_el_paso_de_jardin_manda_sus_limites(self):
+        """Sin ellos, la etiqueta ("101 – 150 m²") no deja contestar con metros."""
+        opciones = self.AptType._visar_wizard_step_options(
+            self._booking_fum(cobertura='exterior'), 'exterior')
+        filas = opciones['options']
+        self.assertTrue(filas)
+        self.assertTrue(any(f.get('m2_min') is not None for f in filas),
+                        "alguna banda tiene que traer limites")
+        for fila in filas:
+            if fila.get('m2_min') is None:
+                # Sin sembrar: se elige por numero, como antes. Nunca 0.0, que
+                # se leeria como "de cero en adelante" y se tragaria todo.
+                self.assertIsNone(fila.get('m2_max'))
+
     def test_cada_paso_lleva_la_pista_que_le_toca(self):
         """Qué decirle al cliente en cada paso es negocio, y lo escribe Odoo.
 
@@ -648,10 +707,24 @@ class TestWizardFlow(TransactionCase):
         recordsets (las plantillas web los necesitan), y la versión que sale
         hacia el runtime tiene que ser la serializada.
         """
+        escalares = (str, int, float, bool, type(None))
+
         def check(step, where, payload):
             for key, value in payload.items():
+                # Una LISTA de escalares tambien viaja por JSON-RPC, y hace
+                # falta: `keywords` son los sinonimos con que el cliente contesta
+                # el paso. Se comprueba elemento a elemento en vez de aceptar la
+                # lista entera — lo que esta prueba caza es un recordset colado, y
+                # un recordset dentro de una lista lo seguiria siendo.
+                if isinstance(value, (list, tuple)):
+                    for i, item in enumerate(value):
+                        self.assertIsInstance(
+                            item, escalares,
+                            "%s.%s.%s[%s] no es serializable: %r"
+                            % (step, where, key, i, item))
+                    continue
                 self.assertIsInstance(
-                    value, (str, int, float, bool, type(None)),
+                    value, escalares,
                     "%s.%s.%s no es serializable: %r" % (step, where, key, value))
 
         booking = self._booking_fum(motivo='correctivo', cobertura='ambos')
