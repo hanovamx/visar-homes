@@ -187,13 +187,37 @@ class VisarAgentTools(models.AbstractModel):
         """Config editable del runtime: prompt del sistema + knobs del LLM.
 
         NO devuelve secretos: las credenciales del LLM y de WhatsApp siguen en el
-        `.env` del runtime. `prompt` es None si no hay ninguno configurado -> el
-        runtime cae a su BASE_PROMPT de respaldo. Las notas del negocio NO van
-        aqui: ya viajan en `agent_catalog_snapshot` y se renderizan una sola vez.
+        `.env` del runtime. Las notas del negocio NO van aqui: ya viajan en
+        `agent_catalog_snapshot` y se renderizan una sola vez.
+
+        Contrato, para que el runtime pueda apoyarse en el:
+
+          `prompt`        str | None. Cuerpo del registro BASE (`ruta` vacia).
+                          None = no hay ninguno -> el runtime cae a su
+                          BASE_PROMPT de respaldo. Significado SIN CAMBIOS.
+          `route_prompts` dict[str, str]. SIEMPRE presente, SIEMPRE dict, nunca
+                          None. Claves entre {reception, info, schedule,
+                          existing, other}; valores, cadenas no vacias. Una ruta
+                          sin registro, archivada o en blanco esta AUSENTE, no
+                          presente con None.
+          `llm`           dict. Sin cambios ({} si no hay config).
+
+        Las dos direcciones de compatibilidad:
+
+          Odoo nuevo + runtime viejo -> `route_prompts` sobra y se ignora; el
+            runtime solo mira `prompt` y `llm`. Inerte.
+          Runtime nuevo + Odoo viejo -> `config.get("route_prompts") or {}`: sin
+            memorias, se comporta como antes. Degrada, no falla.
+
+        Por eso se despliega Odoo primero: el caso inerte es mas corto que el
+        degradado. Y despues, `POST /debug/runtime/refresh` — si no, el runtime
+        sirve la config anterior hasta que caduque su TTL (15 min).
         """
+        Prompt = self.env['visar.agent.prompt']
         return {
             'generated_at': fields.Datetime.now().isoformat(),
-            'prompt': self.env['visar.agent.prompt']._agent_active_body(),
+            'prompt': Prompt._agent_active_body(),
+            'route_prompts': Prompt._agent_route_memories(),
             'llm': self.env['visar.llm.config']._agent_active_payload(),
         }
 

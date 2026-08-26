@@ -9,11 +9,33 @@
         <field name="name">visar.agent.prompt.list</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <list string="Prompts del agente">
+            <list string="Prompts del agente" decoration-muted="not es_vigente">
                 <field name="sequence" widget="handle"/>
+                <field name="ruta"/>
                 <field name="name"/>
+                <field name="caracteres" string="Caracteres"/>
+                <field name="es_vigente" string="En uso" readonly="1"/>
                 <field name="active" column_invisible="1"/>
             </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_prompt_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.search</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <search string="Prompts del agente">
+                <field name="name"/>
+                <field name="ruta"/>
+                <filter name="solo_base" string="Solo el base"
+                        domain="[('ruta', '=', False)]"/>
+                <filter name="solo_rutas" string="Solo memorias de ruta"
+                        domain="[('ruta', '!=', False)]"/>
+                <group>
+                    <filter name="group_ruta" string="Ruta"
+                            context="{'group_by': 'ruta'}"/>
+                </group>
+            </search>
         </field>
     </record>
 
@@ -28,14 +50,34 @@
                         <h1><field name="name" placeholder="Atencion a clientes"/></h1>
                     </div>
                     <group>
+                        <field name="ruta"/>
                         <field name="sequence"/>
                         <field name="active"/>
+                        <field name="es_vigente" readonly="1"/>
                     </group>
                     <group string="Prompt del sistema">
-                        <div class="text-muted" colspan="2">
-                            El catalogo de servicios (grupos, tramos, zonas) se agrega
-                            automaticamente despues de este texto. No hace falta listarlo aqui.
-                            El runtime usa el prompt de mayor prioridad (menor secuencia).
+                        <div class="alert alert-info" role="alert" colspan="2" invisible="ruta">
+                            <strong>Prompt BASE.</strong> Se inyecta desde el primer mensaje de
+                            <em>toda</em> conversacion, en todas las rutas. El catalogo de
+                            servicios (grupos, tramos, zonas) se agrega automaticamente despues
+                            de este texto; no hace falta listarlo aqui. Aqui van el alcance, el
+                            tono, el formato de WhatsApp y las reglas de precio.
+                        </div>
+                        <div class="alert alert-warning" role="alert" colspan="2" invisible="not ruta">
+                            <strong>Memoria de ruta.</strong> Se anade <em>despues</em> del prompt
+                            base y del catalogo, y solo mientras la conversacion este en esta
+                            ruta. <strong>Mantenla corta</strong> (unas 15 lineas): es aditiva
+                            sobre un base de ~20 000 caracteres y se paga en cada mensaje.
+                        </div>
+                        <div class="alert alert-danger" role="alert" colspan="2"
+                             invisible="ruta or es_vigente">
+                            Este registro <strong>no lo usa el runtime</strong>: hay otro prompt
+                            base con menor secuencia. Archivalo o cambia la secuencia.
+                        </div>
+                        <div class="alert alert-danger" role="alert" colspan="2"
+                             invisible="not ruta or es_vigente">
+                            Este registro <strong>no lo usa el runtime</strong>: hay otra memoria
+                            de la misma ruta con menor secuencia.
                         </div>
                         <field name="body" nolabel="1" colspan="2"
                                widget="text" placeholder="Eres el asistente de atencion a clientes de Visar por WhatsApp..."/>
@@ -49,6 +91,8 @@
         <field name="name">Prompts del agente</field>
         <field name="res_model">visar.agent.prompt</field>
         <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="visar_agent_prompt_view_search"/>
+        <field name="context">{'search_default_group_ruta': 1}</field>
     </record>
 
     <!-- ============================================================== -->

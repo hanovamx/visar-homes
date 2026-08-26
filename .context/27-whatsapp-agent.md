@@ -35,7 +35,16 @@ arriesgar el negocio. Odoo se queda con lo que le corresponde: **datos y
 configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 (entrada nueva) y el `.context/40-decisions.md` de `visar_fastapi`.
 
-## `visar_whatsapp_agent` (v19.0.1.4.0)
+## `visar_whatsapp_agent` (v19.0.1.5.0)
+
+> **v19.0.1.5.0 (27-ago-2026) — el prompt base se inyecta siempre, y cada ruta
+> tiene su memoria.** `visar.agent.prompt` gana un campo `ruta`: el registro sin
+> ruta es el **base** (se inyecta desde el primer mensaje, en todas las rutas) y
+> los que la llevan son **memorias** que se añaden solo en la suya.
+> `agent_runtime_config()` las devuelve en `route_prompts`, aditivo y compatible
+> en las dos direcciones. Las cinco memorias se siembran desde `data/` con
+> `noupdate="1"`; **el base no se siembra**, para no crear un segundo candidato
+> en producción. Ver `34-prompt-agente-informacion.md`.
 
 **Dependencias:** `visar_appointment`, `visar_crm`.
 
@@ -53,7 +62,7 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 | Modelo | Archivo | Para qué |
 |---|---|---|
 | `visar.agent.tools` | `models/visar_agent_tools.py` | **AbstractModel**. Métodos `@api.model`. Sin tabla; se llama por RPC. |
-| `visar.agent.prompt` | `models/visar_agent_prompt.py` | Prompt del sistema editable (lista, uno activo por `sequence`). |
+| `visar.agent.prompt` | `models/visar_agent_prompt.py` | Prompt **base** (`ruta` vacía) + una **memoria por ruta**. Vigente = el primero por `sequence, id` **dentro de su ruta**. |
 | `visar.llm.config` | `models/visar_llm_config.py` | Proveedor/modelo/`max_tokens`/`max_tool_iterations` (sin credenciales). |
 | `visar.whatsapp.config` | `models/visar_whatsapp_config.py` | Cuenta de WhatsApp (no-secreto). **Display-only en 2a.** |
 | `visar.slot.hold` | `models/visar_slot_hold.py` | Apartado temporal de horario (extensión; el modelo vive en `visar_appointment`). |
@@ -66,7 +75,7 @@ Lectura:
 | Método | Entrada | Devuelve |
 |---|---|---|
 | `agent_catalog_snapshot()` | — | grupos, dimensiones, tramos y zonas (**sin** precios ni CPs) |
-| `agent_runtime_config()` | — | `{prompt\|None, llm{provider,model,max_tokens,max_tool_iterations}}` — **sin secretos, sin `notes`** (van en el catálogo) |
+| `agent_runtime_config()` | — | `{prompt\|None, route_prompts{}, llm{provider,model,max_tokens,max_tool_iterations}}` — **sin secretos, sin `notes`** (van en el catálogo). `route_prompts` siempre es un dict; una ruta sin registro, archivada o en blanco está **ausente**, no presente con `None` |
 | `agent_resolve_zone(cp)` | código postal | zona y cobertura |
 | `agent_quote_service(payload)` | `{cp, items:[{service_code, m2}...]}` o `{service_code, cp, m2}` | líneas y total |
 | `agent_customer_services(payload)` | `{phone, scope?}` | servicios del cliente: próximos (default), historial o ambos (etapa C) |

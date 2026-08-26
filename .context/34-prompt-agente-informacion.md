@@ -1,9 +1,35 @@
-# El prompt del agente de Información (texto vigente)
+# El prompt del agente: el BASE y las memorias por ruta
 
-**Dónde vive de verdad:** en la base, no aquí. Es el registro activo de
-`visar.agent.prompt` (Odoo → *Citas → Configuración → Prompt del agente*), y el
-runtime lo trae por RPC y lo cachea con TTL (`RuntimeConfigCache`). Se hizo así
-para que un consultor pueda afinarlo sin tocar código ni reiniciar nada.
+> **Renombrado el 27-ago-2026.** Este archivo era "el prompt del agente de
+> Información", en singular, porque solo esa ruta hablaba con el modelo. Desde
+> que el LLM atiende desde el primer mensaje hay **un prompt base + una memoria
+> por ruta**, y las seis piezas viven en la misma tabla.
+
+**Dónde vive de verdad:** en la base, no aquí. Son registros de
+`visar.agent.prompt` (Odoo → **Agente WhatsApp → Configuración → Prompts**), y el
+runtime los trae por RPC y los cachea con TTL (`RuntimeConfigCache`). Se hizo así
+para que un consultor pueda afinarlos sin tocar código ni reiniciar nada.
+
+> La ruta de menú de la línea de arriba estaba mal desde el principio: decía
+> *Citas → Configuración → Prompt del agente*, y los menús se declaran en
+> `visar_agent_config_views.xml` bajo un raíz propio, *Agente WhatsApp*.
+
+**Las dos clases de registro**, y las distingue el campo `ruta`:
+
+| `ruta` | Qué es | Cuándo se inyecta | Tamaño |
+|---|---|---|---|
+| vacía | **el prompt BASE** | desde el primer mensaje, en **todas** las rutas | ~20 000 caracteres |
+| `reception` `info` `schedule` `existing` `other` | **la memoria de esa ruta** | solo mientras la conversación esté ahí, **después** del base y del catálogo | ~700–1 600 caracteres |
+
+Vigente = el primero por `sequence, id` **dentro de su ruta**, entre los no
+archivados. La lista de Odoo viene agrupada por ruta y marca con *En uso* el que
+el runtime lee de verdad — porque nada impide crear dos de la misma ruta, y sin
+esa columna el segundo parece configurado y no lo lee nadie.
+
+⚠️ **Un registro sin `ruta` es un candidato a BASE.** Crear un prompt y olvidar
+ponerle la ruta no da error: queda compitiendo con el base por `sequence`. Si
+gana, sustituye a los 20 000 caracteres sin que nadie se entere. El aviso rojo
+del formulario y la columna *En uso* están para eso.
 
 **Por qué también está aquí:** porque no estar en ningún repo significaba que
 nadie podía ver *cómo* cambió, ni revisarlo en un diff, ni recuperarlo si alguien
@@ -59,7 +85,13 @@ agendan por aquí**.
 
 ---
 
-## Texto íntegro
+## Texto íntegro del prompt BASE
+
+> Las **memorias por ruta** no se copian aquí: nacen sembradas desde
+> `visar_whatsapp_agent/data/visar_agent_prompt_routes.xml` con `noupdate="1"`,
+> así que ese archivo **es** su copia de referencia versionada y un `-u` no las
+> vuelve a pisar. Este archivo sigue siendo la copia del base, que no se siembra
+> (sembrarlo crearía un segundo candidato a base en producción).
 
 ```
 Eres el asistente de atención a clientes de Visar por WhatsApp.

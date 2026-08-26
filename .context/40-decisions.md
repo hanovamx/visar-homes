@@ -375,6 +375,52 @@ solo lectura. Detalle en `27-whatsapp-agent.md`.
 - **Pendiente:** instalar y **validar paridad de precio** contra el wizard; modelos
   de configuración editables por consultores (`visar.llm.config`, etc.).
 
+## [IMPLEMENTADO — 27-ago-2026] El prompt base se inyecta siempre; cada ruta tiene su memoria
+
+`visar.agent.prompt` gana un campo `ruta`. Sin ruta = **prompt base**, que viaja
+en todas las conversaciones desde el primer mensaje. Con ruta = **memoria**, que
+se añade después del base y del catálogo y solo mientras la conversación esté
+ahí. `agent_runtime_config()` devuelve las memorias en `route_prompts`.
+
+- **Por qué extender el modelo y no crear uno nuevo:** reutiliza vista, acción,
+  menú, ACLs y el RPC que ya existían. Un modelo aparte habría sido más limpio en
+  el papel y tres archivos más de seguridad y vistas en la práctica.
+- **Matiza —no deroga— *"No modelar todo como prompt"* (jul-2026).** Aquello sigue
+  valiendo para los **salientes**, que son deterministas y disparados por evento.
+  Las rutas entrantes sí son todas handlers de LLM, y por eso caben en el mismo
+  modelo.
+- **Selection, no Char ni Many2one.** Los ids de ruta son constantes del runtime
+  (`app/routing/menu.py`). Con un Char, una errata se guarda limpia, parece
+  configurada y no la lee nadie.
+- **El base es `ruta` vacía, no un valor `'base'`.** Así el `-u` añade la columna
+  en NULL y **el registro de producción ya queda bien colocado sin escribir una
+  sola fila**. Con un `'base'` haría falta un `UPDATE`, y la fila que ese `UPDATE`
+  se dejara no sería ni base ni ruta: invisible para los dos lectores, o sea el
+  agente sin prompt en producción. Coste: `ruta` no puede ser `required`.
+- **Sin restricción de unicidad, y es deliberado.** Postgres trata los NULL como
+  distintos, así que un `unique(ruta)` no vigilaría precisamente los base;
+  impediría archivar una versión anterior (que es para lo que la lista de
+  registros existe); y **se crea durante el `-u`**, así que si producción tuviera
+  dos filas que la violan, la actualización abortaría a medias sobre la base
+  viva. En su lugar: desempate determinista (`sequence, id` — gana el titular) y
+  un calculado `es_vigente` que lo hace **visible** en la lista y en el formulario.
+- **La siembra va en `data/` con `noupdate="1"`, y el base NO se siembra.** Las
+  memorias son contenido nuevo: no hay nada que pisar, y `noupdate="1"` hace que
+  lo que afine el consultor sobreviva al siguiente `-u`. Sembrar el base, en
+  cambio, crearía un **segundo** candidato en producción; si ganara el desempate,
+  los 20 000 caracteres del prompt real desaparecerían sin un solo error.
+  Las memorias van a `sequence 20` para que, aun vaciando una `ruta` por
+  accidente, el base (secuencia 10) siga ganando.
+- **Los lectores no pueden levantar.** Si la RPC falla y el runtime aún no tiene
+  nada cacheado, `RuntimeConfigCache.refresh` re-lanza y el servicio deja de
+  contestar **a todos**. Degradar a `None`/`{}` es aceptable; fallar, no.
+- **Compatible en las dos direcciones**, así que el orden de despliegue no puede
+  romper nada: Odoo nuevo + runtime viejo ignora la clave; runtime nuevo + Odoo
+  viejo se queda sin memorias. Se despliega **Odoo primero** porque su caso es
+  inerte y el otro solo degradado.
+- **La migración no escribe nada, solo registra.** Y se ganó el sitio a la
+  primera: en producción hay **dos** prompts base activos, y el `WARNING` lo dijo.
+
 ## [DISEÑO — jul-2026] Fase 2: el número como plataforma de capacidades
 
 Un solo número que hace **varios trabajos** detrás de un **dispatcher**: dudas por
