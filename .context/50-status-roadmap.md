@@ -1,13 +1,45 @@
 # Estado y roadmap
 
-> Última actualización: **20-ago-2026** — **agendado completo por WhatsApp en producción**.
-> Versiones al día de hoy: **visar_base 19.0.1.6.0**, **visar_fsm 19.0.1.1.0**,
-> **visar_appointment 19.0.2.7.0**, **visar_field_app 19.0.1.26.0**,
+> Última actualización: **29-ago-2026** — reconciliada contra `git log` y contra producción
+> tras 8 días sin tocarse. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.9.0**,
+> **visar_fsm 19.0.1.1.0**, **visar_appointment 19.0.2.7.0**, **visar_field_app 19.0.1.26.0**,
 > **visar_subscription 19.0.1.4.0**, **visar_crm 19.0.1.3.0**,
-> **visar_whatsapp_agent 19.0.1.4.0**.
+> **visar_whatsapp_agent 19.0.1.7.0** (en producción: **1.6.0**; el repo va **6 commits por
+> delante de `origin/main`** y con la consola y el recontacto sin commitear).
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Hecho — desde el 20-ago, y que este archivo no registraba
+
+*Añadido el 29-ago al reconciliar. Ocho días y 18 commits sin que nadie tocara el roadmap.*
+
+- [x] **Se fueron los menús y los botones** (`6ada85c` + `a2a6865` del runtime). El cuestionario
+      se contesta escribiendo y **el LLM enruta desde el primer mensaje**. La consecuencia para
+      este módulo: `ruta` dejó de decidir qué handler corre y pasó a decidir **qué memoria
+      recibe el modelo**, que es lo que hizo falta rediseñar la consola.
+- [x] **Prompt base + memoria por ruta** (`ccdcd59`, `2018bb8`, `2d8ee13`). El base se inyecta
+      siempre y cada ruta añade la suya. `2d8ee13` es de los que valen releer: un `try/except`
+      no protege una transacción de Odoo — hacía falta un savepoint.
+- [x] **El chat no sabía que el combo existía** (`332ee5b`) y cotizaba de menos.
+- [x] **Consola del Agente WhatsApp** (`19.0.1.6.0`, desplegada en producción el 28-ago,
+      **sin commitear**): rutas y prompt base en pantallas separadas, con disparador,
+      herramientas, garantías y un `estado` en badge. Ver §"Consola" de
+      [`27-whatsapp-agent.md`](./27-whatsapp-agent.md).
+- [x] **Ronda de QA manual** (28-ago, Luis Ángel Ríos Jasso, 13 hallazgos). Cerrados los de
+      código: dos caminos de **venta silenciosa** —una pregunta que nombraba un servicio lo
+      seleccionaba, y una queja sobre un técnico vendía el tramo de valoración de 800 m²—
+      llegaban a la pantalla de pago sin que el cliente eligiera nada. Quedan los de prompt
+      (1.1, 2.1, 2.2, 2.3, 5.1) y el 6.3 de arriba.
+
+### En el árbol de trabajo, sin commitear ni desplegar
+
+- [ ] **Recontacto de leads fríos** (`19.0.1.7.0`): `visar.followup.config`, campos y cron en
+      `crm.lead`, buzón `visar.wa.lead.message`, y `agent_track_interest` /
+      `agent_drop_followup`. Diseño en `visar_fastapi/.context/86-recontacto-de-leads.md`.
+      Validado en `visar-test` (127 pruebas del módulo) y con 416 del runtime.
+- [ ] **Ajustes → Visar → Agendado** (`visar_base 19.0.1.8.0`): minutos de apartado y traslado
+      entre servicios, que llevaban desde siempre siendo parámetros del sistema sin pantalla.
 
 ## Hecho — Agendado completo por WhatsApp (19/20-ago-2026) — **EN PRODUCCIÓN**
 
@@ -38,22 +70,33 @@ salvo para pagar. 17 de los últimos 22 commits del repo son esto.
 
 ### Lo que NO cierra todavía
 
-- [ ] ⛔ **La rama de valoración no llega a horarios** (§10.7 / I-17). `valuation` es terminal:
-      nunca se pregunta la dirección → sin zona → sin técnicos → cero días → el runtime escala a
-      un humano. **Los clientes con termitas, chinches o "no sé qué es" no pueden agendar por
-      WhatsApp.** Contradice la decisión 3 del §12.
-- [ ] ⛔ **Factibilidad de traslado sin construir** (§5, decisiones 7/14). Ni una línea. Hoy se
-      ofrece cualquier horario con capacidad sin mirar si el técnico llega. Sostenible **solo**
-      porque hay un técnico usable con mediana de 2.5 paradas/día.
-- [ ] **CP temprano** (§4.0): decidido, sin construir. Es la salida probable para I-17.
-- [ ] **Equipo CRM de WhatsApp sin líder ni miembros** → el hand-off escala **a nadie**. Es
-      dato, no código, y es lo que separa "prometemos que le contactan" de que le contacten.
+*Revisado el 29-ago-2026 contra el log y contra la BD de producción. Los dos ⛔ que había aquí
+se cerraron el mismo día en que se escribieron y nadie los tachó.*
+
+- [x] ~~⛔ La rama de valoración no llega a horarios (§10.7 / I-17)~~ — **cerrada**
+      (`b9e7669`, `044e256`, y `b7a2aec` del lado runtime). El aviso de valoración es ahora
+      **un paso más del cuestionario**, que Odoo devuelve como `kind: 'single'` con su texto y
+      su precio. Quien reporta termitas agenda por WhatsApp.
+- [x] ~~⛔ Factibilidad de traslado sin construir~~ — **construida**
+      (`7369898`, `95792c3`, `584d2b1`, `cd888bb`, `d8ed83b`):
+      `visar_appointment/models/visar_travel_feasibility.py`, 585 líneas. Es un **presupuesto
+      entre paradas**, no un radio: 20 min (`visar.travel.minutes`) más el hueco que ya haya.
+      `depart_at` nace **apagado** tras el 422 de la beta de Mapbox.
+- [x] ~~CP temprano (§4.0), la salida probable para I-17~~ — **sin objeto**: I-17 se resolvió
+      por otro camino. Si se retoma, que sea por sus propios méritos, no por I-17.
+- [ ] **Equipo CRM de WhatsApp sin líder ni miembros** → el hand-off escala **a nadie**.
+      *Comprobado en producción el 29-ago: `crm_team` id 5, `user_id` vacío y **0 miembros**.*
+      Sigue siendo dato, no código, y sigue siendo lo que separa "prometemos que le contactan"
+      de que le contacten.
 - [ ] **Plantillas de Meta sin aprobar** → los avisos salientes están siempre fuera de la ventana
-      de 24 h: se encolan, dan 502 y caducan.
+      de 24 h: se encolan, dan 502 y caducan. *Comprobado el 29-ago: no hay ninguna
+      `WA_TEMPLATE_*` en el `.env` del runtime.*
 - [ ] **Stripe**: el pago sigue simulado (proveedor Demo).
-- [ ] **I-15** — cuatro planes de póliza se llaman igual ("Póliza Mensual" ×4 + "Monthly"). Por
-      RPC da igual; en WhatsApp serían **cuatro botones idénticos en el paso de mayor valor del
-      flujo**. Es dato, no código.
+- [ ] **I-15** — cuatro planes de póliza se llaman igual. *Comprobado el 29-ago: siguen los 4
+      "Póliza Mensual" + 1 "Monthly" activos.* Es dato, no código. **Relacionado y nuevo:** hay
+      además dos planes anuales activos, "Suscripción anual" (id 11) y "Suscripción anualV2"
+      (id 13) — el nombre interno se le enseñó a un cliente en la QA del 28-ago (hallazgo 6.3) y
+      renombrarlo crea un duplicado. **Falta decidir cuál es el vigente.**
 - [ ] **I-16** — nadie se entera de que un servicio se cayó: `visar-fastapi` estuvo ~2 días
       muerto sin que nadie lo notara.
 
