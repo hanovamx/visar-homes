@@ -119,3 +119,131 @@ class TestAgentPromptRoutes(TransactionCase):
         self.assertTrue(gana.es_vigente)
         self.assertFalse(pierde.es_vigente)
         self.assertTrue(self.base.es_vigente)
+
+
+@tagged('post_install', '-at_install')
+class TestAgentRouteMeta(TransactionCase):
+    """`ROUTE_META`: los metadatos que la consola pinta en cada ruta.
+
+    Son una COPIA de lo que vive en el runtime (`visar_fastapi/app/odoo/
+    tools.py`). Se acepta la duplicacion mientras la sujete una prueba: sin
+    ella, retirar una herramienta alla dejaria la pantalla enseniandola aqui
+    durante meses, que es el riesgo de "dos front-ends" que este proyecto ya se
+    cobro una vez (I-11).
+
+    Se sustituye por `agent_register_capabilities()` -el runtime registrando su
+    manifiesto al arrancar- cuando se despliegue esa fase.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.Prompt = cls.env['visar.agent.prompt']
+        # Mismo motivo que en la clase de arriba: el modulo SIEMBRA cinco
+        # memorias, y sin archivarlas `estado` describiria la siembra en vez de
+        # la regla — una memoria nueva con la misma secuencia pierde por id y
+        # sale 'eclipsada', que es correcto y no es lo que se fija aqui.
+        cls.Prompt.with_context(active_test=False).search([]).write({'active': False})
+
+    def _uno(self, ruta):
+        return self.Prompt.create({
+            'name': f"Memoria {ruta}", 'ruta': ruta, 'body': "x", 'sequence': 20,
+        })
+
+    def test_route_meta_cubre_todas_las_rutas(self):
+        """Anadir una ruta sin metadatos rompe AQUI, no en la pantalla.
+
+        Es lo unico que sostiene la copia. Si esta prueba se borra, la consola
+        pasa a poder mentir en silencio.
+        """
+        from odoo.addons.visar_whatsapp_agent.models.visar_agent_prompt import (
+            ROUTES, ROUTE_META, _TOOLS,
+        )
+        self.assertEqual(
+            set(ROUTE_META), {code for code, _label in ROUTES},
+            "cada ruta del Selection necesita su entrada en ROUTE_META")
+        for ruta, meta in ROUTE_META.items():
+            for nombre in meta.get('tools') or ():
+                self.assertIn(
+                    nombre, _TOOLS,
+                    f"la ruta {ruta} declara una herramienta que no existe")
+
+    def test_info_esta_marcada_como_inalcanzable(self):
+        """Ningun camino del runtime pone ya `Route.INFO`.
+
+        Se fija para que revivir la ruta obligue a pasar por aqui: si algun dia
+        vuelve a alcanzarse y esta prueba sigue en verde, la consola estara
+        diciendo que esta muerta cuando no lo esta.
+        """
+        info = self._uno('info')
+        self.assertFalse(info.alcanzable)
+        self.assertTrue(info.motivo_muerta, "y se dice POR QUE")
+
+    def test_las_demas_rutas_si_se_alcanzan(self):
+        for ruta in ('reception', 'schedule', 'existing', 'other'):
+            self.assertTrue(self._uno(ruta).alcanzable, ruta)
+
+    def test_agendar_solo_expone_una_herramienta(self):
+        """La diferencia que esta pantalla existe para contar.
+
+        Dentro del cuestionario el modelo ve `DIGRESSION_TOOLS` (solo
+        `resolve_zone`); fuera ve las cinco. Es lo que hace que una duda a media
+        reserva no pueda mover la reserva.
+        """
+        agendar = self._uno('schedule')
+        self.assertEqual(agendar.herramientas_num, 1)
+        self.assertIn('resolve_zone', agendar.herramientas)
+        self.assertNotIn('quote_service', agendar.herramientas)
+        self.assertTrue(agendar.garantias, "y se dice lo que NO puede pasar")
+
+        recepcion = self._uno('reception')
+        self.assertEqual(recepcion.herramientas_num, 5)
+        self.assertIn('quote_service', recepcion.herramientas)
+
+    def test_el_estado_se_dice_con_palabras(self):
+        """El aviso no puede vivir solo en el color de la fila.
+
+        Se reporto justo eso: `info` salia en la lista sin nada que la
+        distinguiera. Un `decoration-danger` depende de que el cliente web traiga
+        un campo que no se pinta, y aunque funcione deja el aviso en un color que
+        hay que saber interpretar. Esta prueba fija que el estado es un VALOR.
+        """
+        self.assertEqual(self._uno('info').estado, 'inalcanzable')
+        self.assertEqual(self._uno('schedule').estado, 'viva')
+
+        # Y el registro eclipsado -hay otro con menor secuencia- se distingue de
+        # la ruta muerta: se arreglan de forma distinta.
+        primera = self._uno('other')
+        primera.sequence = 5
+        segunda = self._uno('other')
+        segunda.sequence = 50
+        self.assertEqual(primera.estado, 'viva')
+        self.assertEqual(segunda.estado, 'eclipsada')
+
+    def test_el_prompt_base_no_tiene_metadatos_de_ruta(self):
+        """Con `ruta` vacia los campos quedan en blanco.
+
+        Es lo que permite que el mismo modelo tenga dos formularios: el del
+        prompt base no pinta ninguno de estos bloques.
+        """
+        base = self.Prompt.create({
+            'name': "Base", 'body': "BASE", 'sequence': 10,
+        })
+        self.assertFalse(base.disparador)
+        self.assertFalse(base.herramientas)
+        self.assertFalse(base.garantias)
+        self.assertEqual(base.herramientas_num, 0)
+
+    def test_los_campos_de_consola_no_viajan_al_runtime(self):
+        """El contrato RPC no se entera de nada de esto.
+
+        Los metadatos son de UI. Si se colaran en `agent_runtime_config`, el
+        runtime pagaria tokens por texto que no es un prompt.
+        """
+        self._uno('schedule')          # si no, `route_prompts` viaja vacio
+        payload = self.env['visar.agent.tools'].agent_runtime_config()
+        self.assertEqual(
+            set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm'})
+        self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
+        for cuerpo in payload['route_prompts'].values():
+            self.assertNotIn('resolve_zone  (lee)', cuerpo)

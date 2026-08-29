@@ -45,6 +45,105 @@ ROUTES = [
 ]
 
 
+# Las cinco herramientas del runtime (`visar_fastapi/app/odoo/tools.py`, `TOOLS`).
+# Se resumen en una linea; la descripcion completa que lee el MODELO vive alla y
+# no se copia entera a proposito: aqui solo hay que poder mirarla.
+_TOOLS = {
+    'resolve_zone': ("lee", "Averigua si un CP esta en cobertura y a que zona "
+                            "pertenece. Va siempre antes de dar un precio."),
+    'quote_service': ("lee", "Cotiza uno o varios servicios para un CP y "
+                             "devuelve el desglose y el total."),
+    'start_booking': ("entrega", "Entrega la conversacion al cuestionario de "
+                                 "agendado, que reserva de punta a punta."),
+    'my_services': ("entrega", "Muestra lo que el cliente YA tiene con Visar: "
+                               "proxima visita, historial, poliza."),
+    'escalate_to_human': ("entrega", "Entrega la conversacion a un asesor y deja "
+                                     "registro con el contexto recogido."),
+}
+
+# Fuera del cuestionario el modelo ve las cinco (`TOOLS`); dentro solo ve
+# `DIGRESSION_TOOLS`. Esa diferencia es la razon de ser de la pantalla.
+_TODAS = tuple(_TOOLS)
+_SOLO_ZONA = ('resolve_zone',)
+
+# Lo que NO puede pasar en el cuestionario, y no por prompt: no hay camino de
+# codigo de una digresion a los cinco metodos que mutan el flujo, y el estado se
+# restaura en un `finally`. Ver §14 de `85-motor-de-flujos-agendado.md`.
+_GARANTIAS_AGENDAR = (
+    "Contestar un paso del cuestionario por el cliente",
+    "Elegir fecha, horario o direccion",
+    "Dar por confirmada la reserva o mandar la liga de pago",
+    "Recalcular el total (lo escribe Odoo, no el modelo)",
+)
+
+# Metadatos de cada ruta, para que la consola pueda contar COMO SE LLEGA y QUE SE
+# PUEDE HACER sin que nadie tenga que leer el runtime.
+#
+# ⚠️ Es una copia deliberada de lo que vive en `visar_fastapi`. Lo que la sujeta
+# es `test_route_meta_cubre_todas_las_rutas`: anadir una ruta sin metadatos rompe
+# la suite en vez de dejar la pantalla mintiendo. Se sustituye por el manifiesto
+# del runtime (`agent_register_capabilities`) cuando se despliegue esa fase.
+ROUTE_META = {
+    'reception': {
+        'disparador': "Estado inicial - toda conversacion empieza aqui",
+        'cuando': "Es el primer contacto, y el estado al que se vuelve al escribir "
+                  "«menu» o «atras». Mientras el modelo solo conteste dudas, la "
+                  "conversacion se queda aqui: contestar no exige ninguna tool.",
+        'cuando_no': "",
+        'tools': _TODAS,
+        'garantias': (),
+        'alcanzable': True,
+    },
+    'info': {
+        'disparador': "Ninguno - ya no se asigna",
+        'cuando': "Solo se alcanza si un cliente toca un boton de un mensaje "
+                  "anterior a ago-2026. Ningun camino del runtime pone esta ruta.",
+        'cuando_no': "",
+        'tools': _TODAS,
+        'garantias': (),
+        'alcanzable': False,
+        'motivo_muerta': "Desde que el LLM enruta, atender una duda de servicios o "
+                         "precios ocurre en Recepcion y no cambia de ruta. Editar "
+                         "esta memoria no cambia nada de lo que ve un cliente.",
+    },
+    'schedule': {
+        'disparador': "El modelo llama start_booking()",
+        'cuando': "En cuanto el cliente muestra intencion de reservar o de cerrar: "
+                  "«quiero agendar», «si, agendame», «cuando pueden venir», o "
+                  "cuando contesta que si a una cotizacion. Cubre tambien la visita "
+                  "de valoracion tecnica.",
+        'cuando_no': "Quejas · facturas · CP fuera de cobertura · empresas y "
+                     "comercios · un «si» a un combo recien ofrecido (eso es "
+                     "cambio de canasta: se vuelve a cotizar)",
+        'tools': _SOLO_ZONA,
+        'garantias': _GARANTIAS_AGENDAR,
+        'alcanzable': True,
+    },
+    'existing': {
+        'disparador': "El modelo llama my_services()",
+        'cuando': "Cuando pregunta por lo suyo: «¿cuando toca?», «¿ya viene el "
+                  "tecnico?», «¿cuantas visitas me quedan?», «mi cita».",
+        'cuando_no': "Cotizar · agendar algo nuevo · cambiar o cancelar una cita ya "
+                     "agendada (eso va con un asesor)",
+        'tools': _TODAS,
+        'garantias': ("Inventar fechas o conteos de visitas: los escribe el sistema "
+                      "leyendo Odoo, no el modelo",),
+        'alcanzable': True,
+    },
+    'other': {
+        'disparador': "El modelo llama escalate_to_human(), o el escape «asesor»",
+        'cuando': "Quejas y garantias, errores de cobro y facturas, CP fuera de "
+                  "cobertura, clientes no residenciales, cambiar o cancelar una "
+                  "cita, o cuando el cliente pide hablar con una persona. Tambien "
+                  "si el modelo se queda sin poder ayudar.",
+        'cuando_no': "Una duda normal de servicios o precios · agendar",
+        'tools': _TODAS,
+        'garantias': ("Prometer tiempos de respuesta",),
+        'alcanzable': True,
+    },
+}
+
+
 class VisarAgentPrompt(models.Model):
     _name = 'visar.agent.prompt'
     _description = "Prompt del agente de WhatsApp"
@@ -79,6 +178,43 @@ class VisarAgentPrompt(models.Model):
         help="Longitud del texto. Las memorias de ruta se pagan en cada "
              "mensaje: conviene tenerlas cortas.")
 
+    # --- Metadatos de la ruta (solo lectura, de `ROUTE_META`) -------------
+    #
+    # No se almacenan: son constantes del codigo, no datos. Guardarlos obligaria
+    # a recalcularlos al desplegar y a migrar cada vez que cambie una linea de
+    # texto. En el prompt base (`ruta` vacia) quedan en blanco, que es lo que
+    # permite reusar el mismo modelo con dos formularios distintos.
+    disparador = fields.Char(
+        string="Disparador", compute='_compute_meta_ruta',
+        help="Que hace que la conversacion entre en esta ruta.")
+    entrada_cuando = fields.Text(
+        string="Cuando entra", compute='_compute_meta_ruta')
+    entrada_cuando_no = fields.Text(
+        string="Cuando NO", compute='_compute_meta_ruta')
+    herramientas = fields.Text(
+        string="Herramientas", compute='_compute_meta_ruta',
+        help="Lo que el modelo puede hacer en esta ruta ademas de escribir.")
+    herramientas_num = fields.Integer(
+        string="N.o de herramientas", compute='_compute_meta_ruta')
+    garantias = fields.Text(
+        string="Garantizado por codigo", compute='_compute_meta_ruta',
+        help="Lo que NO puede pasar aqui, y no depende del texto del prompt.")
+    alcanzable = fields.Boolean(
+        string="Alcanzable", compute='_compute_meta_ruta',
+        help="Si algun camino del runtime lleva a esta ruta hoy.")
+    motivo_muerta = fields.Text(
+        string="Por que no se alcanza", compute='_compute_meta_ruta')
+
+    # El estado en PALABRAS, y no solo en color. Un `decoration-danger` sobre la
+    # fila depende de que el cliente web traiga un campo que no se pinta, y
+    # ademas deja el aviso en un color: quien no lo sepa leer no ve nada. Un
+    # campo visible dice "Inalcanzable" y no hay que saber nada para entenderlo.
+    estado = fields.Selection(
+        [('viva', "En uso"),
+         ('inalcanzable', "Inalcanzable"),
+         ('eclipsada', "No la usa el runtime")],
+        string="Estado", compute='_compute_estado')
+
     # ------------------------------------------------------------------
     # Calculados (solo para que el admin VEA lo que el runtime hace)
     # ------------------------------------------------------------------
@@ -105,6 +241,56 @@ class VisarAgentPrompt(models.Model):
     def _compute_caracteres(self):
         for record in self:
             record.caracteres = len(record.body or '')
+
+    @api.depends('ruta')
+    def _compute_meta_ruta(self):
+        """Vuelca `ROUTE_META` en campos, para que las vistas los pinten.
+
+        Una ruta sin metadatos deja los campos vacios en vez de reventar: la
+        consola es informativa y no puede tumbar la edicion de un prompt. Quien
+        avisa de ese hueco es la prueba, no la pantalla.
+        """
+        for record in self:
+            meta = ROUTE_META.get(record.ruta) if record.ruta else None
+            if not meta:
+                record.disparador = False
+                record.entrada_cuando = False
+                record.entrada_cuando_no = False
+                record.herramientas = False
+                record.herramientas_num = 0
+                record.garantias = False
+                record.alcanzable = True
+                record.motivo_muerta = False
+                continue
+            tools = meta.get('tools') or ()
+            record.disparador = meta.get('disparador') or False
+            record.entrada_cuando = meta.get('cuando') or False
+            record.entrada_cuando_no = meta.get('cuando_no') or False
+            record.herramientas = "\n".join(
+                "%s  (%s)  %s" % (nombre, _TOOLS[nombre][0], _TOOLS[nombre][1])
+                for nombre in tools if nombre in _TOOLS) or False
+            record.herramientas_num = len(tools)
+            record.garantias = "\n".join(
+                "- %s" % g for g in (meta.get('garantias') or ())) or False
+            record.alcanzable = bool(meta.get('alcanzable', True))
+            record.motivo_muerta = meta.get('motivo_muerta') or False
+
+    @api.depends('ruta', 'sequence', 'active')
+    def _compute_estado(self):
+        """Las dos formas de no servir para nada, con nombres distintos.
+
+        `inalcanzable` es de la RUTA -ningun camino del runtime lleva ahi-;
+        `eclipsada` es de este REGISTRO -hay otro con menor secuencia-. Se
+        distinguen porque se arreglan de forma distinta: una no la arregla nadie
+        editando, la otra se arregla archivando.
+        """
+        for record in self:
+            if not record.alcanzable:
+                record.estado = 'inalcanzable'
+            elif not record.es_vigente:
+                record.estado = 'eclipsada'
+            else:
+                record.estado = 'viva'
 
     # ------------------------------------------------------------------
     # Lectores para el RPC. NINGUNO puede levantar (ver el `except`).

@@ -35,7 +35,7 @@ arriesgar el negocio. Odoo se queda con lo que le corresponde: **datos y
 configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 (entrada nueva) y el `.context/40-decisions.md` de `visar_fastapi`.
 
-## `visar_whatsapp_agent` (v19.0.1.5.0)
+## `visar_whatsapp_agent` (v19.0.1.6.0)
 
 > **v19.0.1.5.0 (27-ago-2026) — el prompt base se inyecta siempre, y cada ruta
 > tiene su memoria.** `visar.agent.prompt` gana un campo `ruta`: el registro sin
@@ -194,6 +194,93 @@ exterior solo, interior+exterior juntos (**una línea combinada**, 1150, que **n
 es la suma 690+1150=1840), y el combo triple (línea de corte a −50%). Round-trip
 por XML-RPC desde el `OdooRPCClient` de `visar_fastapi` con API key: mismos
 totales. Detalle en el `.context/50-status-roadmap.md` de `visar_fastapi`.
+
+## La consola de rutas (28-ago-2026, v19.0.1.6.0)
+
+Desde que el LLM enruta (`a2a6865`), `route` dejó de decidir qué handler corre y
+pasa a decidir **qué memoria recibe el modelo**. La ruta ya *era* la unidad de
+configuración; la UI seguía mostrando registros de `visar.agent.prompt` en una
+lista plana, y eso producía cuatro cosas concretas:
+
+1. Los dos prompts base vivían entre las memorias de ruta — objetos distintos
+   (20 000 caracteres que aplican siempre vs. ~700 que aplican en una ruta)
+   juntos porque comparten tabla, que es una razón de implementación.
+2. «Prompt base» (17 449 car.) es un registro **muerto** —pierde por secuencia—
+   visible y editable, con una columna que dice «No» como única señal.
+3. La lista no decía qué hace cada ruta: nombre y caracteres.
+4. **La ruta `info` no se alcanza** y nada lo indicaba. Nada en el camino del LLM
+   asigna ya `Route.INFO`; sólo llegan ahí los botones de mensajes anteriores a
+   ago-2026. Editar esos 900 caracteres no cambia ninguna conversación.
+
+### Lo que hay ahora
+
+Dos pantallas sobre el mismo modelo, y **ningún modelo nuevo ni migración**:
+
+- **Rutas** (`visar_agent_route_action`, dominio `ruta != False`) — cinco filas
+  con disparador, número de herramientas, caracteres y «en uso». El estado va en
+  una columna `estado` pintada como **badge con palabras** (*Viva* /
+  *Inalcanzable* / *Eclipsada*).
+- **Prompt base** (`visar_agent_base_action`, dominio `ruta = False`) — pantalla
+  propia, donde el registro muerto se ve por lo que es.
+
+Las dos suben un nivel en el menú; en «Configuración» quedan LLM y WhatsApp.
+
+El detalle de ruta contesta, en orden, las tres preguntas que alguien se hace
+antes de tocar nada — **cómo se llega**, **qué puede hacer el modelo aquí**, **qué
+no puede pasar** — y sólo después la memoria, que es el único campo editable.
+
+> **La distinción que sostiene el diseño:** la *capacidad* es código, el
+> *comportamiento* es configuración. Ningún texto de Odoo le da al modelo una
+> herramienta que no tiene. Cuando una memoria necesita describir una salida, la
+> salida tiene que existir primero en el runtime — escribirla sin construirla es
+> exactamente cómo se produce una respuesta inventada (§14 del doc 85 del
+> runtime).
+
+### `ROUTE_META`, y la prueba que lo sujeta
+
+Los metadatos son una **copia deliberada** de lo que vive en
+`visar_fastapi/app/odoo/tools.py`, en un dict junto a `ROUTES`, expuesta con
+campos calculados **no almacenados** (son constantes del código, no datos).
+
+Lo único que hace aceptable la duplicación es
+`test_route_meta_cubre_todas_las_rutas`: añadir una ruta sin sus metadatos rompe
+la suite en vez de dejar la pantalla mintiendo. Verificado dándole una ruta
+fantasma: la prueba falla y la nombra. **Si esa prueba se borra, la consola pasa
+a poder mentir en silencio.**
+
+Se sustituye por `agent_register_capabilities()` —el runtime registrando su
+manifiesto al arrancar— cuando se despliegue esa fase. Eso además delataría un
+runtime caído («último registro: hace 3 días»), que es I-16.
+
+### Detalles que costaron una pasada
+
+- **Un calculado no almacenado no se puede filtrar.** `es_vigente` y `alcanzable`
+  en el `domain` de un `<filter>` hacen que Odoo **rechace la vista entera** al
+  instalar (`Unsearchable field`). Se quitaron los filtros: con cinco filas la
+  columna de estado ya lo dice.
+- **El color solo no se ve, y encima no siempre se pinta.** La primera versión
+  marcaba la ruta muerta con `decoration-danger` sobre un campo
+  `column_invisible`, que no pinta nada. Se cambió por una columna `estado` con
+  el estado **escrito**: el color es un refuerzo, nunca el mensaje. Un badge que
+  dice «Inalcanzable» lo entiende cualquiera; una fila roja hay que saber
+  interpretarla.
+- **Odoo escribe en `logfile`, no en stderr.** Un `-u` que falla puede salir con
+  la consola en blanco y código 0. Verificar siempre en `/var/log/odoo/odoo.log`.
+
+### Lo que NO cambió
+
+`agent_runtime_config()` devuelve exactamente lo mismo
+(`{generated_at, prompt, route_prompts, llm}`), con una prueba que lo fija para
+que los campos de consola no se filtren al runtime y se paguen en tokens.
+**El runtime no se reinicia por esta entrega.**
+
+### Sigue abierto
+
+- **Qué hacer con `info`**: esta entrega la *marca*, no la resuelve. Fusionar su
+  memoria en `reception` y retirar el valor del `Selection` toca datos vivos.
+- **Permisos**: el menú sigue en `base.group_system`, así que un gerente de Visar
+  no lo ve. Decidido a propósito: abrir el acceso antes de que la pantalla deje
+  de engañar sería el orden equivocado.
 
 ## Puesta en marcha
 

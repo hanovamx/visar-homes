@@ -2,16 +2,166 @@
 <odoo>
 
     <!-- ============================================================== -->
-    <!-- visar.agent.prompt                                             -->
+    <!-- visar.agent.prompt - RUTAS                                     -->
     <!-- ============================================================== -->
+    <!--
+        Dos pantallas sobre el MISMO modelo, y esa es toda la diferencia con
+        lo que habia antes: una lista unica mezclaba el prompt base (20 000
+        caracteres, aplica siempre) con las memorias de ruta (~700, aplican en
+        una ruta) porque comparten tabla. Compartir tabla es una razon de
+        implementacion; no es una razon de uso.
+    -->
 
-    <record id="visar_agent_prompt_view_list" model="ir.ui.view">
-        <field name="name">visar.agent.prompt.list</field>
+    <record id="visar_agent_route_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.route.list</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <list string="Prompts del agente" decoration-muted="not es_vigente">
+            <!-- El estado va en una COLUMNA con palabras, no en el color de la
+                 fila: un `decoration-danger` depende de que el cliente traiga un
+                 campo que no se pinta, y aunque funcione deja el aviso en un
+                 color. "Inalcanzable" se entiende sin saber que el rojo
+                 significa algo. La decoracion de fila se queda como refuerzo,
+                 apoyada en `estado`, que si es una columna visible. -->
+            <list string="Rutas del agente"
+                  decoration-danger="estado == 'inalcanzable'"
+                  decoration-muted="estado == 'eclipsada'">
                 <field name="sequence" widget="handle"/>
                 <field name="ruta"/>
+                <field name="disparador" string="Como se llega"/>
+                <field name="herramientas_num" string="Herramientas"/>
+                <field name="caracteres" string="Caracteres"/>
+                <field name="estado" widget="badge"
+                       decoration-danger="estado == 'inalcanzable'"
+                       decoration-warning="estado == 'eclipsada'"
+                       decoration-success="estado == 'viva'"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_route_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.route.search</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <search string="Rutas del agente">
+                <field name="name"/>
+                <field name="ruta"/>
+                <!-- Sin filtros por `es_vigente` ni `alcanzable`: son calculados
+                     NO almacenados, y Odoo rechaza la vista entera si se usan en
+                     un dominio. Con cinco filas tampoco hacen falta — el estado
+                     se ve en la decoracion de la lista. -->
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_route_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.route.form</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <form string="Ruta del agente">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Memoria - Agendar"/></h1>
+                    </div>
+
+                    <div class="alert alert-danger" role="alert" invisible="alcanzable">
+                        <strong>Esta ruta no se alcanza.</strong>
+                        <field name="motivo_muerta" nolabel="1" readonly="1"/>
+                        Lo que escribas aqui no cambiara ninguna conversacion.
+                    </div>
+                    <div class="alert alert-danger" role="alert" invisible="es_vigente">
+                        Este registro <strong>no lo usa el runtime</strong>: hay otra
+                        memoria de la misma ruta con menor secuencia. Archivalo o
+                        cambia la secuencia.
+                    </div>
+
+                    <group>
+                        <field name="ruta"/>
+                        <field name="sequence"/>
+                        <field name="active"/>
+                        <field name="es_vigente" readonly="1"/>
+                        <field name="estado" widget="badge"
+                               decoration-danger="estado == 'inalcanzable'"
+                               decoration-warning="estado == 'eclipsada'"
+                               decoration-success="estado == 'viva'"/>
+                        <field name="alcanzable" invisible="1"/>
+                    </group>
+
+                    <!-- 1. Como se llega: por que existe esta conversacion. -->
+                    <group string="Como se llega aqui">
+                        <field name="disparador" readonly="1"/>
+                        <field name="entrada_cuando" string="Cuando entra" readonly="1"/>
+                        <field name="entrada_cuando_no" string="Cuando NO" readonly="1"
+                               invisible="not entrada_cuando_no"/>
+                    </group>
+
+                    <!-- 2. Capacidades: lo que puede hacer ademas de escribir. -->
+                    <group string="Que puede hacer el modelo aqui">
+                        <field name="herramientas" nolabel="1" colspan="2" readonly="1"/>
+                        <div class="alert alert-warning" role="alert" colspan="2"
+                             invisible="herramientas_num > 1">
+                            <strong>Solo una.</strong> Dentro del cuestionario el modelo
+                            pierde las demas: no puede cotizar, ni entregarse a otra
+                            ruta, ni escalar. Es lo que hace que una duda a media
+                            reserva no pueda mover la reserva.
+                        </div>
+                        <field name="herramientas_num" invisible="1"/>
+                    </group>
+
+                    <!-- 3. Garantias: lo que NO depende de lo que se escriba abajo. -->
+                    <group string="Que no puede pasar aqui - garantizado por codigo"
+                           invisible="not garantias">
+                        <field name="garantias" nolabel="1" colspan="2" readonly="1"/>
+                        <div class="alert alert-success" role="alert" colspan="2">
+                            Estas garantias <strong>no dependen del texto de abajo</strong>:
+                            no hay camino de codigo de una digresion al motor de flujos, y
+                            el estado se restaura pase lo que pase. Un prompt caduca al
+                            cambiar de modelo; esto no.
+                        </div>
+                    </group>
+
+                    <!-- 4. Lo unico editable. -->
+                    <group string="Memoria de la ruta">
+                        <div class="alert alert-warning" role="alert" colspan="2">
+                            Se anade <em>despues</em> del prompt base y del catalogo, y
+                            solo mientras la conversacion este en esta ruta.
+                            <strong>Mantenla corta</strong> (unas 15 lineas): es aditiva
+                            sobre un base de ~20 000 caracteres y se paga en cada mensaje.
+                        </div>
+                        <field name="body" nolabel="1" colspan="2" widget="text"
+                               placeholder="=== RUTA: ... ==="/>
+                        <field name="caracteres" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_route_action" model="ir.actions.act_window">
+        <field name="name">Rutas</field>
+        <field name="res_model">visar.agent.prompt</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('ruta', '!=', False)]</field>
+        <field name="context">{'default_ruta': 'reception'}</field>
+        <field name="search_view_id" ref="visar_agent_route_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Aqui no hay ninguna memoria de ruta</p>
+            <p>El runtime seguira funcionando con las memorias de respaldo que trae
+               dentro, pero nadie podra ajustarlas desde aqui.</p>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- visar.agent.prompt - PROMPT BASE                               -->
+    <!-- ============================================================== -->
+
+    <record id="visar_agent_base_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.base.list</field>
+        <field name="model">visar.agent.prompt</field>
+        <field name="arch" type="xml">
+            <list string="Prompt base" decoration-muted="not es_vigente">
+                <field name="sequence" widget="handle"/>
                 <field name="name"/>
                 <field name="caracteres" string="Caracteres"/>
                 <field name="es_vigente" string="En uso" readonly="1"/>
@@ -20,79 +170,54 @@
         </field>
     </record>
 
-    <record id="visar_agent_prompt_view_search" model="ir.ui.view">
-        <field name="name">visar.agent.prompt.search</field>
+    <record id="visar_agent_base_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.prompt.base.form</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <search string="Prompts del agente">
-                <field name="name"/>
-                <field name="ruta"/>
-                <filter name="solo_base" string="Solo el base"
-                        domain="[('ruta', '=', False)]"/>
-                <filter name="solo_rutas" string="Solo memorias de ruta"
-                        domain="[('ruta', '!=', False)]"/>
-                <group>
-                    <filter name="group_ruta" string="Ruta"
-                            context="{'group_by': 'ruta'}"/>
-                </group>
-            </search>
-        </field>
-    </record>
-
-    <record id="visar_agent_prompt_view_form" model="ir.ui.view">
-        <field name="name">visar.agent.prompt.form</field>
-        <field name="model">visar.agent.prompt</field>
-        <field name="arch" type="xml">
-            <form string="Prompt del agente">
+            <form string="Prompt base">
                 <sheet>
                     <div class="oe_title">
                         <label for="name"/>
                         <h1><field name="name" placeholder="Atencion a clientes"/></h1>
                     </div>
+
+                    <div class="alert alert-danger" role="alert" invisible="es_vigente">
+                        Este registro <strong>no lo usa el runtime</strong>: hay otro
+                        prompt base con menor secuencia. Editarlo no cambia nada.
+                        Archivalo o cambia la secuencia.
+                    </div>
+
                     <group>
-                        <field name="ruta"/>
+                        <field name="ruta" invisible="1"/>
                         <field name="sequence"/>
                         <field name="active"/>
                         <field name="es_vigente" readonly="1"/>
+                        <field name="caracteres" readonly="1"/>
                     </group>
+
                     <group string="Prompt del sistema">
-                        <div class="alert alert-info" role="alert" colspan="2" invisible="ruta">
-                            <strong>Prompt BASE.</strong> Se inyecta desde el primer mensaje de
-                            <em>toda</em> conversacion, en todas las rutas. El catalogo de
-                            servicios (grupos, tramos, zonas) se agrega automaticamente despues
-                            de este texto; no hace falta listarlo aqui. Aqui van el alcance, el
-                            tono, el formato de WhatsApp y las reglas de precio.
+                        <div class="alert alert-info" role="alert" colspan="2">
+                            <strong>Se inyecta desde el primer mensaje de
+                            <em>toda</em> conversacion, en todas las rutas.</strong>
+                            El catalogo de servicios (grupos, tramos, zonas) se agrega
+                            automaticamente despues de este texto; no hace falta
+                            listarlo aqui. Aqui van el alcance, el tono, el formato de
+                            WhatsApp y las reglas de precio.
                         </div>
-                        <div class="alert alert-warning" role="alert" colspan="2" invisible="not ruta">
-                            <strong>Memoria de ruta.</strong> Se anade <em>despues</em> del prompt
-                            base y del catalogo, y solo mientras la conversacion este en esta
-                            ruta. <strong>Mantenla corta</strong> (unas 15 lineas): es aditiva
-                            sobre un base de ~20 000 caracteres y se paga en cada mensaje.
-                        </div>
-                        <div class="alert alert-danger" role="alert" colspan="2"
-                             invisible="ruta or es_vigente">
-                            Este registro <strong>no lo usa el runtime</strong>: hay otro prompt
-                            base con menor secuencia. Archivalo o cambia la secuencia.
-                        </div>
-                        <div class="alert alert-danger" role="alert" colspan="2"
-                             invisible="not ruta or es_vigente">
-                            Este registro <strong>no lo usa el runtime</strong>: hay otra memoria
-                            de la misma ruta con menor secuencia.
-                        </div>
-                        <field name="body" nolabel="1" colspan="2"
-                               widget="text" placeholder="Eres el asistente de atencion a clientes de Visar por WhatsApp..."/>
+                        <field name="body" nolabel="1" colspan="2" widget="text"
+                               placeholder="Eres el asistente de atencion a clientes de Visar por WhatsApp..."/>
                     </group>
                 </sheet>
             </form>
         </field>
     </record>
 
-    <record id="visar_agent_prompt_action" model="ir.actions.act_window">
-        <field name="name">Prompts del agente</field>
+    <record id="visar_agent_base_action" model="ir.actions.act_window">
+        <field name="name">Prompt base</field>
         <field name="res_model">visar.agent.prompt</field>
         <field name="view_mode">list,form</field>
-        <field name="search_view_id" ref="visar_agent_prompt_view_search"/>
-        <field name="context">{'search_default_group_ruta': 1}</field>
+        <field name="domain">[('ruta', '=', False)]</field>
+        <field name="context">{'default_ruta': False}</field>
     </record>
 
     <!-- ============================================================== -->
@@ -226,27 +351,36 @@
               sequence="95"
               groups="base.group_system"/>
 
+    <!-- Rutas y prompt base suben un nivel: es lo que se usa, no configuracion
+         avanzada. Lo que queda en "Configuracion" son los ajustes de conexion. -->
+
+    <menuitem id="menu_agent_routes"
+              name="Rutas"
+              parent="menu_agent_root"
+              action="visar_agent_route_action"
+              sequence="10"/>
+
+    <menuitem id="menu_agent_base_prompt"
+              name="Prompt base"
+              parent="menu_agent_root"
+              action="visar_agent_base_action"
+              sequence="20"/>
+
     <menuitem id="menu_agent_config"
               name="Configuracion"
               parent="menu_agent_root"
-              sequence="10"/>
-
-    <menuitem id="menu_agent_prompt"
-              name="Prompts"
-              parent="menu_agent_config"
-              action="visar_agent_prompt_action"
-              sequence="10"/>
+              sequence="30"/>
 
     <menuitem id="menu_agent_llm_config"
               name="LLM"
               parent="menu_agent_config"
               action="visar_llm_config_action"
-              sequence="20"/>
+              sequence="10"/>
 
     <menuitem id="menu_agent_whatsapp_config"
               name="WhatsApp"
               parent="menu_agent_config"
               action="visar_whatsapp_config_action"
-              sequence="30"/>
+              sequence="20"/>
 
 </odoo>
