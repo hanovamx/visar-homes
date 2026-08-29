@@ -1,5 +1,26 @@
 # -*- coding: utf-8 -*-
-from odoo import fields, models
+"""Ajustes globales de Visar que hoy solo existían como parámetros del sistema.
+
+Los cuatro valores de aquí abajo ya gobernaban producción; lo único que faltaba
+era una pantalla. Estaban en *Ajustes técnicos → Parámetros del sistema*, que es
+donde se ponen las cosas que nadie debe tocar — y estas sí hay que tocarlas: son
+decisiones de negocio (¿cuánto tiempo aguanto un horario sin cobrar?, ¿cuánto
+traslado le presupuesto al técnico?) que hoy exigen un desarrollador.
+
+**Por qué aquí y no en el módulo del agente de WhatsApp.** El apartado y el
+traslado NO son del chat: el asistente web de agendado usa exactamente los mismos
+dos números. Colgarlos del menú "Agente WhatsApp" diría que cambiarlos solo
+afecta al chat, y no es verdad. Lo que sí es del agente —las ventanas de
+recontacto— vive en su módulo.
+"""
+from odoo import api, fields, models
+from odoo.exceptions import ValidationError
+
+# Cotas de cordura. No son gustos: fuera de ellas el sistema se comporta mal de
+# formas que el usuario no puede ver desde esta pantalla.
+MIN_HOLD_MINUTES = 1
+MAX_HOLD_MINUTES = 120
+MAX_TRAVEL_MINUTES = 120
 
 
 class ResConfigSettings(models.TransientModel):
@@ -16,3 +37,63 @@ class ResConfigSettings(models.TransientModel):
         domain="[('visar_is_valuation', '=', True)]",
         config_parameter='visar.valuation_product_tmpl_id',
         help="Producto usado en el flujo de valoración técnica.")
+
+    # ------------------------------------------------------------------
+    # Agendado
+    # ------------------------------------------------------------------
+
+    # Lo que caduca es el APARTADO, no la liga. Decisión de agosto 2026: mientras
+    # nadie más haya tomado el lugar, la liga que ya se envió sigue cobrando y el
+    # cliente recibe "se acabó el apartado, pero el horario sigue ahí". Cobrar y
+    # descubrir después que no hay cita es el peor final posible, y matar una liga
+    # buena para llegar a él sería elegirlo a propósito.
+    visar_slot_hold_minutes = fields.Integer(
+        string="Minutos de apartado",
+        config_parameter='visar.slot_hold_minutes',
+        default=10,
+        help="Cuánto tiempo se le guarda el horario al cliente mientras paga. Al "
+             "vencer, el horario vuelve al inventario y se le avisa por WhatsApp. "
+             "La liga de pago NO se cancela: si al cliente le sigue interesando y "
+             "nadie tomó el lugar, pagarla confirma la cita igual.")
+
+    # Presupuesto ENTRE paradas, no radio de servicio: son estos minutos MÁS el
+    # hueco que ya exista antes del horario candidato. Un trayecto de 40 min es
+    # perfectamente ofrecible si el técnico tiene la mañana libre por delante; lo
+    # que no se puede es comerse el traslado de la cita siguiente.
+    visar_travel_minutes = fields.Integer(
+        string="Minutos de traslado entre servicios",
+        config_parameter='visar.travel.minutes',
+        default=20,
+        help="Traslado que se le presupuesta al técnico entre una parada y la "
+             "siguiente. No es un radio máximo: a este presupuesto se le suma el "
+             "hueco que haya antes del horario. Los horarios a los que no le da "
+             "tiempo de llegar simplemente no se le ofrecen al cliente.")
+
+    # ------------------------------------------------------------------
+    # Validación
+    # ------------------------------------------------------------------
+
+    @api.constrains('visar_slot_hold_minutes', 'visar_travel_minutes')
+    def _check_visar_agendado(self):
+        """Rechaza los valores que romperían el agendado en silencio.
+
+        Un apartado de 0 minutos vence antes de que el cliente abra la liga; uno
+        de 8 horas bloquea la agenda con gente que ya se fue. Un traslado mayor
+        que el bloque de una hora deja el presupuesto por encima del servicio y
+        vacía el calendario sin decir por qué.
+        """
+        for record in self:
+            minutos = record.visar_slot_hold_minutes
+            if minutos is not None and not (MIN_HOLD_MINUTES <= minutos <= MAX_HOLD_MINUTES):
+                raise ValidationError(
+                    "El apartado tiene que estar entre %s y %s minutos. Con menos "
+                    "el horario se suelta antes de que al cliente le dé tiempo de "
+                    "pagar; con más se bloquea la agenda con clientes que ya se "
+                    "fueron." % (MIN_HOLD_MINUTES, MAX_HOLD_MINUTES))
+            traslado = record.visar_travel_minutes
+            if traslado is not None and not (0 <= traslado <= MAX_TRAVEL_MINUTES):
+                raise ValidationError(
+                    "El traslado tiene que estar entre 0 y %s minutos. Un "
+                    "presupuesto mayor que el bloque de servicio deja al "
+                    "calendario sin horarios que ofrecer."
+                    % MAX_TRAVEL_MINUTES)

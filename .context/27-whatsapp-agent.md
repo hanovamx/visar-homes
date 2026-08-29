@@ -88,6 +88,8 @@ Escritura:
 | Método | Escribe | Para qué |
 |---|---|---|
 | `agent_track_lead(payload)` | `crm.lead` | seguimiento CRM: la cotización del agente crea lead en *Nuevo*. |
+| `agent_track_interest(payload)` | `crm.lead` | ficha para quien mostró interés **sin llegar a cotizar**, y (re)programa su recontacto. Admite grupo vacío. |
+| `agent_drop_followup(payload)` | `crm.lead` | cancela el recontacto: el cliente dijo que no, o se quejó. Las dos únicas exclusiones que Odoo no puede ver por su cuenta. |
 | `agent_request_handoff(payload)` | `crm.lead` + `mail.activity` | hand-off humano: nota en el chatter con todo lo recogido + actividad asignada. |
 | `agent_hold_slot(payload)` | `visar.slot.hold` | aparta un horario ~10 min a nombre de un teléfono. Acepta `mode` (`wizard`\|`valuation`). |
 | `agent_prepare_booking(payload)` | `calendar.booking`, `sale.order` | arma la reserva y devuelve la **liga de pago** (`payment.link.wizard`). |

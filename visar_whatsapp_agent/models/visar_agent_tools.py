@@ -874,12 +874,140 @@ class VisarAgentTools(models.AbstractModel):
                 pass
         lead.message_post(body=self._agent_lead_quote_note(dimension, quote))
 
+        # Una cotizacion sin respuesta es el caso tipico de lead frio: se programa
+        # el recontacto aqui mismo. Idempotente: si el cliente sigue escribiendo,
+        # cada turno lo vuelve a empujar seis horas mas adelante.
+        lead._visar_wa_schedule_followup(
+            context=self._agent_followup_context(payload, dimension, quote))
+
         return {
             'lead_id': lead.id,
             'created': created,
             'stage': lead.stage_id.name,
             'skipped_reason': None,
         }
+
+    # ------------------------------------------------------------------
+    # Interes sin cotizacion (leads frios)
+    # ------------------------------------------------------------------
+    #
+    # `agent_track_lead` solo existe cuando el modelo COTIZO, y esa no es la unica
+    # forma de perder a un cliente: se pierde igual al que pregunto por cobertura
+    # y no volvio, y al que contesto medio cuestionario y se fue. Esos no dejaban
+    # rastro ninguno en el CRM -ni lead, ni nada que recontactar-.
+    #
+    # El disparador es la SENAL COMERCIAL, no el mensaje: nombrar un servicio,
+    # preguntar un precio, preguntar si hay cobertura, entrar al cuestionario. Un
+    # "hola", un numero equivocado o un audio que no se entendio NO abren lead, o
+    # el pipeline se llena de fichas que nadie puede trabajar. Quien decide si
+    # hubo senal es el runtime, que es quien ve el mensaje; Odoo decide si esa
+    # senal merece ficha.
+
+    @api.model
+    def agent_track_interest(self, payload):
+        """Abre (o refresca) el lead de un cliente interesado, sin cotizacion.
+
+        `payload` = {
+          "phone":        "5218112345678",
+          "service_code": "FUM_INT" | None,   # puede no saberse todavia
+          "context":      {...},              # foto para redactar el recontacto
+          "source":       "whatsapp"          # opcional
+        }
+
+        A diferencia de `agent_track_lead`, **el grupo puede quedar vacio**: es la
+        misma forma que ya usa `agent_request_handoff` cuando se escala sin saber
+        que queria el cliente. Devuelve la misma forma que `agent_track_lead`.
+
+        Best-effort de punta a punta: ningun fallo de aqui puede tumbar la
+        respuesta al cliente, que es lo unico que el cliente ve.
+        """
+        payload = payload or {}
+
+        nat = self._agent_normalize_phone(payload.get('phone'))
+        if len(nat) != 10:
+            return self._agent_lead_skip('invalid_phone')
+
+        # Sin service_code el grupo queda vacio y el lead se abre igual. Con uno
+        # que no resuelve, tambien: no saber que servicio quiere no es razon para
+        # perderle la pista a alguien que pregunto.
+        group = self.env['visar.service.group']
+        if payload.get('service_code'):
+            dimension, _options = self._agent_resolve_dimension(
+                payload.get('service_code'))
+            group = dimension.group_id if dimension else group
+
+        partner = self._agent_find_partner(payload.get('phone'))
+        if group and self._agent_partner_has_service_in_group(partner, group):
+            return self._agent_lead_skip('existing_customer')
+
+        try:
+            lead, created, reason = self._agent_open_lead(
+                nat, group, partner=partner, phone=payload.get('phone'),
+                source=payload.get('source'))
+        except Exception:  # noqa: BLE001 - el seguimiento nunca tumba el turno
+            _logger.exception(
+                "agent_track_interest: no se pudo abrir el lead del telefono "
+                "terminado en %s", nat[-4:])
+            return self._agent_lead_skip('lead_failed')
+        if reason:
+            return self._agent_lead_skip(reason)
+
+        contexto = payload.get('context')
+        lead._visar_wa_schedule_followup(
+            context=contexto if isinstance(contexto, dict) else None)
+
+        return {
+            'lead_id': lead.id,
+            'created': created,
+            'stage': lead.stage_id.name,
+            'skipped_reason': None,
+        }
+
+    @api.model
+    def agent_drop_followup(self, payload):
+        """Cancela el recontacto de un cliente. `payload` = {phone, reason}.
+
+        Existe porque hay dos exclusiones que Odoo **no puede ver**: que el
+        cliente haya dicho que no, y que se haya quejado. Las dos viven en el
+        texto del mensaje, y el texto solo lo lee el runtime. El resto de
+        exclusiones (etapa, escalamiento, cliente existente) se comprueban al
+        enviar y no necesitan que nadie avise.
+
+        Cancela **todos** los leads abiertos del telefono: quien dice "ya no,
+        gracias" no lo esta diciendo de un grupo de servicio en particular.
+        """
+        payload = payload or {}
+        nat = self._agent_normalize_phone(payload.get('phone'))
+        if len(nat) != 10:
+            return {'dropped': 0}
+
+        reason = payload.get('reason') or 'declino'
+        leads = self.env['crm.lead'].sudo().search([
+            ('visar_wa_phone_norm', '=', nat),
+            ('visar_wa_followup_state', 'in', ('scheduled', 'queued')),
+        ])
+        if not leads:
+            return {'dropped': 0}
+        leads._visar_wa_drop_followup(reason)
+        return {'dropped': len(leads)}
+
+    @api.model
+    def _agent_followup_context(self, payload, dimension, quote):
+        """Foto minima con la que el modelo puede redactar un recontacto.
+
+        Lo que el runtime mande en `context` manda; esto solo rellena lo que se
+        sabe desde Odoo cuando la llamada vino por `agent_track_lead`, que no
+        trae foto propia.
+        """
+        contexto = dict(payload.get('context') or {})
+        contexto.setdefault('wa_id', payload.get('phone') or '')
+        contexto.setdefault('etapa', 'cotizado')
+        if dimension:
+            contexto.setdefault('servicio', dimension.display_name)
+        for clave in ('cp', 'm2', 'total', 'currency'):
+            if quote.get(clave) not in (None, False, ''):
+                contexto.setdefault(clave, quote.get(clave))
+        return contexto
 
     # ------------------------------------------------------------------
     # Horarios disponibles (solo lectura)

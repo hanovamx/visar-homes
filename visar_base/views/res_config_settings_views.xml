@@ -18,6 +18,22 @@
                             <field name="visar_combo_corte_factor"/>
                         </setting>
                     </block>
+                    <!-- Estos dos gobiernan el agendado ENTERO: el chat de
+                         WhatsApp y el asistente web usan los mismos números. Por
+                         eso están aquí y no bajo "Agente WhatsApp". -->
+                    <block title="Agendado"
+                           name="visar_agendado">
+                        <setting string="Minutos de apartado"
+                                 help="Cuánto se le guarda el horario al cliente mientras paga. Al vencer, el horario vuelve al inventario y se le avisa por WhatsApp. La liga de pago NO se cancela: si nadie tomó el lugar, pagarla confirma la cita igual.">
+                            <field name="visar_slot_hold_minutes"/>
+                            <span class="text-muted">minutos (entre 1 y 120)</span>
+                        </setting>
+                        <setting string="Traslado entre servicios"
+                                 help="Traslado que se le presupuesta al técnico entre una parada y la siguiente. No es un radio máximo: se le suma el hueco que ya haya antes del horario. Los horarios a los que no le da tiempo de llegar no se le ofrecen al cliente.">
+                            <field name="visar_travel_minutes"/>
+                            <span class="text-muted">minutos (0 desactiva el presupuesto)</span>
+                        </setting>
+                    </block>
                 </app>
             </xpath>
         </field>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: los valores son de negocio. Una vez que Visar los ajuste, un
+         upgrade del modulo no puede devolverlos a los de fabrica. -->
+    <data noupdate="1">
+        <!-- 6 h de espera, 6:00 a 18:00. El peor caso son 18 h, con 6 h de
+             margen contra la ventana de 24 h de WhatsApp. -->
+        <record id="visar_followup_config_default" model="visar.followup.config">
+            <field name="name">Recontacto de leads</field>
+            <field name="enabled" eval="True"/>
+            <field name="delay_minutes">360</field>
+            <field name="window_start_hour">6</field>
+            <field name="window_end_hour">18</field>
+        </record>
+    </data>
+</odoo>

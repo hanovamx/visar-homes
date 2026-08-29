@@ -6,3 +6,4 @@ from . import test_agent_booking_step
 from . import test_agent_day_slots
 from . import test_wa_booking_outbox
 from . import test_agent_prompt_routes
+from . import test_followup

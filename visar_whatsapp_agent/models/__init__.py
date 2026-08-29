@@ -6,3 +6,6 @@ from . import visar_agent_tools
 from . import wa_booking_outbox
 from . import calendar_booking
 from . import visar_slot_hold
+from . import visar_followup_config
+from . import crm_lead
+from . import wa_lead_outbox

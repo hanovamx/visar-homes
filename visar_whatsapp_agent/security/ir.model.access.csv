@@ -24,3 +24,7 @@ access_agent_optional_line,agent.optional.line.readonly,visar_base.model_visar_p
 access_agent_website,agent.website.readonly,website.model_website,group_whatsapp_agent_readonly,1,0,0,0
 access_wa_booking_message_user,visar.wa.booking.message user,model_visar_wa_booking_message,base.group_user,1,0,0,0
 access_wa_booking_message_manager,visar.wa.booking.message manager,model_visar_wa_booking_message,base.group_system,1,1,1,1
+access_wa_lead_message_user,visar.wa.lead.message user,model_visar_wa_lead_message,base.group_user,1,0,0,0
+access_wa_lead_message_manager,visar.wa.lead.message manager,model_visar_wa_lead_message,base.group_system,1,1,1,1
+access_followup_config_manager,visar.followup.config manager,model_visar_followup_config,base.group_system,1,1,1,1
+access_followup_config_readonly,visar.followup.config readonly,model_visar_followup_config,group_whatsapp_agent_readonly,1,0,0,0

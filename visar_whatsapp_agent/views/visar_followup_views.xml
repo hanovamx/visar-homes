@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================== -->
+    <!-- Ventanas de recontacto                                         -->
+    <!-- ============================================================== -->
+
+    <record id="visar_followup_config_view_form" model="ir.ui.view">
+        <field name="name">visar.followup.config.form</field>
+        <field name="model">visar.followup.config</field>
+        <field name="arch" type="xml">
+            <form string="Recontacto de leads">
+                <sheet>
+                    <div class="alert alert-info" role="alert">
+                        Seis horas después de que un cliente deja de escribir, el
+                        agente vuelve con un mensaje que <b>redacta el modelo</b> a
+                        partir de esa conversación: qué servicio preguntó, qué
+                        cotización recibió, en qué paso se quedó. Aquí se configura
+                        <b>cuándo</b>; el <b>qué</b> se ajusta en la memoria de la
+                        ruta correspondiente.
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Recontacto de leads"/></h1>
+                    </div>
+                    <group>
+                        <group string="Interruptor">
+                            <field name="enabled"/>
+                            <field name="active" invisible="1"/>
+                            <field name="sequence" groups="base.group_no_one"/>
+                        </group>
+                        <group string="Espera">
+                            <label for="delay_minutes"/>
+                            <div>
+                                <field name="delay_minutes" class="oe_inline"/>
+                                <span class="ms-1">minutos desde el último mensaje del cliente</span>
+                            </div>
+                        </group>
+                    </group>
+                    <group string="Horario hábil">
+                        <group>
+                            <field name="window_start_hour"/>
+                            <field name="window_end_hour"/>
+                        </group>
+                        <group>
+                            <div class="text-muted">
+                                Hora local de Monterrey. Si la espera vence fuera de
+                                este horario, el recontacto se guarda para la
+                                siguiente apertura — nunca suena de madrugada.
+                            </div>
+                        </group>
+                    </group>
+                    <div class="alert alert-warning" role="alert">
+                        <b>La espera tiene que caber dentro del horario hábil.</b>
+                        WhatsApp solo entrega mensajes libres dentro de las 24 h
+                        siguientes al último mensaje del cliente; pasado ese punto
+                        Meta los descarta <b>en silencio</b>, sin error que nadie
+                        pueda ver. El peor caso es que la espera venza justo al
+                        cerrar y haya que aguantar toda la noche, así que una
+                        combinación que no quepa se rechaza al guardar en vez de
+                        fallar callada meses después.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_followup_config_view_list" model="ir.ui.view">
+        <field name="name">visar.followup.config.list</field>
+        <field name="model">visar.followup.config</field>
+        <field name="arch" type="xml">
+            <list string="Recontacto de leads">
+                <field name="name"/>
+                <field name="enabled" widget="boolean_toggle"/>
+                <field name="delay_minutes"/>
+                <field name="window_start_hour"/>
+                <field name="window_end_hour"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_followup_config_action" model="ir.actions.act_window">
+        <field name="name">Recontacto de leads</field>
+        <field name="res_model">visar.followup.config</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Configura el recontacto</p>
+            <p>
+                Sin configuración no se recontacta a nadie: la ausencia de reglas
+                no puede significar "manda lo que quieras cuando sea".
+            </p>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Buzon de salida de recontactos                                 -->
+    <!-- ============================================================== -->
+
+    <record id="visar_wa_lead_message_view_list" model="ir.ui.view">
+        <field name="name">visar.wa.lead.message.list</field>
+        <field name="model">visar.wa.lead.message</field>
+        <field name="arch" type="xml">
+            <list string="Recontactos enviados" create="false">
+                <field name="create_date" string="Encolado"/>
+                <field name="lead_id"/>
+                <field name="partner_id" optional="show"/>
+                <field name="phone"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'sent'"
+                       decoration-warning="state == 'pending'"
+                       decoration-danger="state in ('failed', 'expired')"/>
+                <field name="attempts" optional="hide"/>
+                <field name="mode_used" optional="hide"/>
+                <field name="last_error" optional="show"/>
+                <field name="sent_at" optional="hide"/>
+                <button name="action_visar_retry" type="object" icon="fa-repeat"
+                        string="Reintentar" invisible="state not in ('failed', 'expired')"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_wa_lead_message_action" model="ir.actions.act_window">
+        <field name="name">Recontactos</field>
+        <field name="res_model">visar.wa.lead.message</field>
+        <field name="view_mode">list</field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- El recontacto, visto desde el lead                             -->
+    <!-- ============================================================== -->
+
+    <record id="crm_lead_view_form_visar_followup" model="ir.ui.view">
+        <field name="name">crm.lead.form.visar.followup</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.crm_lead_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Recontacto por WhatsApp"
+                       invisible="visar_wa_followup_state == 'none'">
+                    <group>
+                        <field name="visar_wa_followup_state" readonly="1"/>
+                        <field name="visar_wa_followup_due" readonly="1"
+                               invisible="visar_wa_followup_state != 'scheduled'"/>
+                        <field name="visar_wa_followup_sent_at" readonly="1"
+                               invisible="visar_wa_followup_state != 'sent'"/>
+                        <field name="visar_wa_followup_skip_reason" readonly="1"
+                               invisible="visar_wa_followup_state != 'skipped'"/>
+                    </group>
+                    <group>
+                        <field name="visar_wa_followup_context" readonly="1"
+                               groups="base.group_no_one"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
+    <!-- Menus                                                          -->
+    <!-- ============================================================== -->
+
+    <menuitem id="menu_agent_followup_config"
+              name="Recontacto"
+              parent="menu_agent_config"
+              action="visar_followup_config_action"
+              sequence="30"/>
+
+    <menuitem id="menu_agent_followup_outbox"
+              name="Recontactos enviados"
+              parent="menu_agent_root"
+              action="visar_wa_lead_message_action"
+              sequence="25"/>
+
+</odoo>
