@@ -253,6 +253,14 @@ class AppointmentType(models.Model):
             ('appointment_resource_id', 'in', resources.ids),
             ('event_start', '!=', False),
         ]
+        # La cita que se esta REAGENDANDO no es una parada del dia: si contara,
+        # se bloquearia a si misma. Y no solo su propia franja — al ser una
+        # parada, se come el presupuesto de traslado de las franjas vecinas, asi
+        # que mover una cita de las 10:00 a las 11:00 pareceria imposible por un
+        # viaje contra si misma que dura cero minutos.
+        ignorar = self.env.context.get('visar_ignore_event_id')
+        if ignorar:
+            domain.append(('calendar_event_id', '!=', ignorar))
         if window:
             domain += [('event_start', '<=', window[1]),
                        ('event_stop', '>=', window[0])]

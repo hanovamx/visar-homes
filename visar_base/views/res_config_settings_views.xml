@@ -34,6 +34,22 @@
                             <span class="text-muted">minutos (0 desactiva el presupuesto)</span>
                         </setting>
                     </block>
+                    <block title="Reagendar" name="visar_reagenda">
+                        <setting string="Antelación mínima"
+                                 help="Horas que tienen que faltar para la cita actual Y para el horario nuevo. Por debajo de eso, el cambio lo hace un asesor.">
+                            <field name="visar_reschedule_min_hours"/>
+                            <span class="text-muted">horas, en las dos puntas</span>
+                        </setting>
+                        <setting string="Cambios permitidos por cita"
+                                 help="Cuántas veces puede el cliente mover la misma cita por su cuenta. Agotados, se le pasa a un asesor.">
+                            <field name="visar_reschedule_max_times"/>
+                            <span class="text-muted">veces</span>
+                        </setting>
+                        <div class="text-muted mt-2 ms-1">
+                            Cancelar nunca está disponible desde el chat: el servicio
+                            ya está cobrado y no existe un flujo de reembolso.
+                        </div>
+                    </block>
                 </app>
             </xpath>
         </field>

@@ -69,6 +69,28 @@ class ResConfigSettings(models.TransientModel):
              "hueco que haya antes del horario. Los horarios a los que no le da "
              "tiempo de llegar simplemente no se le ofrecen al cliente.")
 
+    # Las DOS puntas: para poder mover una cita tienen que faltar al menos estas
+    # horas, y el horario nuevo tiene que estar igual de lejos. Un cambio de
+    # última hora desordena la ruta del técnico se pida desde donde se pida.
+    visar_reschedule_min_hours = fields.Integer(
+        string="Antelación mínima para reagendar",
+        config_parameter='visar.reschedule.min_hours',
+        default=24,
+        help="Horas que tienen que faltar para la cita actual —y para el horario "
+             "nuevo— para que el cliente pueda moverla él mismo desde WhatsApp. "
+             "Por debajo de eso, el cambio lo hace un asesor.")
+
+    # Sin tope, una cita rebota por la agenda comiéndose huecos que otros
+    # clientes habrían usado. Al llegar al límite hace falta una persona, que es
+    # quien puede juzgar si el motivo lo merece.
+    visar_reschedule_max_times = fields.Integer(
+        string="Cambios permitidos por cita",
+        config_parameter='visar.reschedule.max_times',
+        default=2,
+        help="Cuántas veces puede el cliente mover la MISMA cita por su cuenta. "
+             "Agotados, se le pasa a un asesor. Cancelar nunca está disponible: "
+             "el servicio ya está cobrado.")
+
     # ------------------------------------------------------------------
     # Validación
     # ------------------------------------------------------------------
@@ -97,3 +119,23 @@ class ResConfigSettings(models.TransientModel):
                     "presupuesto mayor que el bloque de servicio deja al "
                     "calendario sin horarios que ofrecer."
                     % MAX_TRAVEL_MINUTES)
+
+    @api.constrains('visar_reschedule_min_hours', 'visar_reschedule_max_times')
+    def _check_visar_reagenda(self):
+        """Los dos números que deciden quién puede mover una cita.
+
+        El tope de 168 h (una semana) no es un gusto: por encima, la antelación
+        exigida supera el horizonte de días que el agente llega a ofrecer, y el
+        cliente vería "no puedes moverla" para toda cita que exista.
+        """
+        for record in self:
+            horas = record.visar_reschedule_min_hours
+            if horas is not None and not (0 <= horas <= 168):
+                raise ValidationError(
+                    "La antelación para reagendar tiene que estar entre 0 y 168 "
+                    "horas (una semana). Más allá, ninguna cita sería movible.")
+            veces = record.visar_reschedule_max_times
+            if veces is not None and not (0 <= veces <= 10):
+                raise ValidationError(
+                    "Los cambios permitidos por cita tienen que estar entre 0 y "
+                    "10. Con 0, nadie puede reagendar desde el chat.")

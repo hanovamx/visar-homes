@@ -90,6 +90,15 @@ Escritura:
 | `agent_track_lead(payload)` | `crm.lead` | seguimiento CRM: la cotización del agente crea lead en *Nuevo*. |
 | `agent_track_interest(payload)` | `crm.lead` | ficha para quien mostró interés **sin llegar a cotizar**, y (re)programa su recontacto. Admite grupo vacío. |
 | `agent_drop_followup(payload)` | `crm.lead` | cancela el recontacto: el cliente dijo que no, o se quejó. Las dos únicas exclusiones que Odoo no puede ver por su cuenta. |
+| `agent_reschedule_days(payload)` | — (lectura) | días con hueco para mover una cita, excluyéndola de su propia ocupación. |
+| `agent_reschedule_slots(payload)` | — (lectura) | horarios de un día para esa cita, ya podados por la antelación mínima. |
+| `agent_reschedule_confirm(payload)` | `calendar.event`, `appointment.booking.line`, `project.task` | **mueve** la cita y todo lo que cuelga. No toca pedido ni pago. |
+
+> **No hay `agent_cancel_*`, y es deliberado.** El servicio está cobrado y no
+> existe flujo de reembolso: el agente reconoce "cancelar" para poder decir que
+> no se puede y ofrecer mover. Hay una prueba que falla si alguien añade un
+> método de cancelación sin resolver antes qué pasa con el dinero. Diseño
+> completo en `visar_fastapi/.context/87-reagendar-citas.md`.
 | `agent_request_handoff(payload)` | `crm.lead` + `mail.activity` | hand-off humano: nota en el chatter con todo lo recogido + actividad asignada. |
 | `agent_hold_slot(payload)` | `visar.slot.hold` | aparta un horario ~10 min a nombre de un teléfono. Acepta `mode` (`wizard`\|`valuation`). |
 | `agent_prepare_booking(payload)` | `calendar.booking`, `sale.order` | arma la reserva y devuelve la **liga de pago** (`payment.link.wizard`). |

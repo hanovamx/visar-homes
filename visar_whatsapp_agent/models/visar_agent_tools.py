@@ -626,12 +626,20 @@ class VisarAgentTools(models.AbstractModel):
             if scope != 'all' and bucket != scope:
                 continue
             event = line.calendar_event_id
+            # `event_id` es lo que convierte una lista en algo accionable: sin el,
+            # el cliente puede decir "muevela" y no hay forma de saber cual.
+            # Viaja por el chat, asi que TODOS los metodos de reagenda vuelven a
+            # comprobar que la cita es de este telefono.
+            bloqueo = event._visar_reschedule_blocked() if event else 'sin_fecha'
             entries.append({
                 'service': line.product_id.display_name,
                 'date': date.isoformat() if date else None,
                 'date_label': self._agent_format_date(date, tz),
                 'status': self._agent_service_status(line, date, now),
                 'zone': event.visar_zone_id.name if event and event.visar_zone_id else None,
+                'event_id': event.id if event else None,
+                'can_reschedule': bool(event) and bloqueo is None,
+                'reschedule_reason': bloqueo,
                 '_sort': date or fields.Datetime.end_of(now, 'year'),
             })
 
@@ -1213,6 +1221,265 @@ class VisarAgentTools(models.AbstractModel):
             'slots': slots_payload,
             'message': ("%d horario(s) disponibles." % len(slots_payload)
                         if slots_payload else "No hay horarios ese dia."),
+        }
+
+    # ------------------------------------------------------------------
+    # Reagendar una cita ya pagada
+    # ------------------------------------------------------------------
+    #
+    # El cliente que ya pago y quiere mover su cita no tenia camino: la reagenda
+    # era trabajo a mano de oficina. Estos tres metodos son ese camino.
+    #
+    # **No se puede cancelar, solo mover** (decision de negocio, ago-2026): el
+    # servicio esta cobrado y no existe ningun flujo de reembolso en el sistema.
+    # Por eso aqui no hay `agent_cancel_*` y no debe anadirse uno sin resolver
+    # antes que pasa con el dinero.
+    #
+    # **La pertenencia se comprueba en los TRES.** El id de la cita viaja por el
+    # chat y un id es adivinable: sin esta comprobacion, cualquiera podria mover
+    # la cita de otro escribiendo un numero. Se verifica contra el telefono en
+    # cada llamada, no solo al listar.
+    #
+    # ## De donde salen los horarios que se ofrecen
+    #
+    # NO se reconstruye lo que el cliente eligio en su dia. Se penso hacerlo
+    # desde `calendar.event.visar_booking_items`, y **ese campo esta vacio en las
+    # 90 citas de produccion**: lo escribe solo una rama del controlador web y
+    # nunca llego a poblarse. Reconstruir desde ahi habria funcionado en pruebas
+    # y con ninguna cita real.
+    #
+    # En su lugar se deriva de lo que SI existe: el tipo de cita del evento, la
+    # zona del domicilio del cliente y los tecnicos elegibles de esa zona. Es el
+    # mismo camino que la rama de valoracion, incluida la factibilidad de ruta.
+    #
+    # **Limitacion conocida:** una cita multi-servicio se listaba exigiendo que
+    # los tecnicos de TODAS las dimensiones estuvieran libres a la vez
+    # (`_visar_filter_slots_multi_service`). Aqui se exige el pool del tipo de
+    # cita del evento con la capacidad que la cita ya tiene. Para mover una cita
+    # es suficiente y es conservador —pide los mismos tecnicos simultaneos que ya
+    # tenia—, pero no es identico. Si algun dia se puebla `visar_booking_items`,
+    # este es el sitio donde conviene volver.
+
+    @api.model
+    def _agent_reschedule_event(self, payload):
+        """(evento, motivo_de_error). Resuelve el evento Y comprueba que es suyo.
+
+        Devolver el mismo motivo `not_found` cuando la cita no existe y cuando
+        existe pero es de otro cliente es deliberado: distinguirlos convertiria
+        este metodo en un oraculo para saber que ids de cita existen.
+        """
+        payload = payload or {}
+        partner = self._agent_find_partner(payload.get('phone'))
+        if not partner:
+            return self.env['calendar.event'].browse(), 'not_found'
+        try:
+            event_id = int(payload.get('event_id') or 0)
+        except (TypeError, ValueError):
+            return self.env['calendar.event'].browse(), 'not_found'
+        if not event_id:
+            return self.env['calendar.event'].browse(), 'not_found'
+
+        event = self.env['calendar.event'].sudo().browse(event_id).exists()
+        if not event:
+            return self.env['calendar.event'].browse(), 'not_found'
+
+        lineas = self.env['sale.order.line'].sudo().search([
+            ('calendar_event_id', '=', event.id),
+        ])
+        if partner not in lineas.mapped('order_id.partner_id'):
+            return self.env['calendar.event'].browse(), 'not_found'
+        return event, None
+
+    @api.model
+    def _agent_reschedule_tree(self, event):
+        """(apt_type, arbol de meses, tz_info) para mover ESTA cita.
+
+        Corre siempre con `visar_ignore_event_id` puesto: la cita que se mueve no
+        cuenta ni como capacidad ocupada ni como parada del dia. Sin eso, el
+        cliente no veria libre ni el horario que ya tiene, y las franjas vecinas
+        pareceran inalcanzables por un viaje contra si mismo de cero minutos.
+        """
+        AptType = self.env['appointment.type'].sudo()
+        vacio = (AptType.browse(), [], None)
+        apt_type = event.appointment_type_id
+        if not apt_type:
+            return vacio
+
+        zone = self._agent_reschedule_zone(event)
+        if not zone:
+            return vacio
+
+        tz_name = self.env['ir.config_parameter'].sudo().get_param(
+            TZ_PARAM, DEFAULT_TZ)
+        tz_info = pytz.timezone(tz_name)
+
+        apt_type = apt_type.sudo().with_context(visar_ignore_event_id=event.id)
+        resources = apt_type._visar_eligible_resources(zone)
+        if not resources:
+            return vacio
+
+        # La capacidad que ya tiene la cita: mover no es cambiar de tamano.
+        capacidad = max(len(event.appointment_resource_ids), 1)
+        months = apt_type._get_appointment_slots(
+            tz_name, filter_resources=resources, asked_capacity=capacidad)
+        destination = AptType.with_context(
+            visar_ignore_event_id=event.id)._visar_travel_destination(
+                {'delivery_address': self._agent_reschedule_address(event)})
+        months = AptType.with_context(
+            visar_ignore_event_id=event.id)._visar_filter_slots_travel(
+                apt_type, months, tz_name, destination, require='any')
+        return apt_type, months, tz_info
+
+    @api.model
+    def _agent_reschedule_partner(self, event):
+        """El cliente de la cita, desde sus lineas de pedido."""
+        lineas = self.env['sale.order.line'].sudo().search([
+            ('calendar_event_id', '=', event.id),
+        ])
+        partners = lineas.mapped('order_id.partner_id')
+        return partners[:1]
+
+    @api.model
+    def _agent_reschedule_address(self, event):
+        """Domicilio del servicio, para el filtro de traslado."""
+        partner = self._agent_reschedule_partner(event)
+        if not partner:
+            return {}
+        destino = partner.child_ids.filtered(
+            lambda p: p.type == 'delivery')[:1] or partner
+        return {
+            'street': destino.street or '',
+            'zip': destino.zip or '',
+            'city': destino.city or '',
+        }
+
+    @api.model
+    def _agent_reschedule_zone(self, event):
+        """Zona del servicio: la del evento si la tiene, si no la del CP."""
+        if event.visar_zone_id:
+            return event.visar_zone_id
+        cp = (self._agent_reschedule_address(event) or {}).get('zip')
+        record = self.env['visar.zone.cp'].sudo()._get_cp_record(cp)
+        return record.zone_id if record else self.env['visar.zone'].sudo().browse()
+
+    @api.model
+    def agent_reschedule_days(self, payload):
+        """Dias con hueco para mover una cita. `payload` = {phone, event_id}."""
+        event, error = self._agent_reschedule_event(payload)
+        if error:
+            return {'days': [], 'min_hours': 0, 'blocked': error,
+                    'message': "No encontre esa cita a tu nombre."}
+        motivo = event._visar_reschedule_blocked()
+        if motivo:
+            return {'days': [], 'min_hours': 0, 'blocked': motivo,
+                    'message': "Esa cita no se puede mover."}
+
+        apt_type, months, _tz = self._agent_reschedule_tree(event)
+        if not apt_type:
+            return {'days': [], 'min_hours': 0, 'blocked': None,
+                    'message': "No hay horarios disponibles por ahora."}
+
+        days = []
+        for day, slots in self._agent_iter_days(months):
+            if not day:
+                continue
+            days.append({'date': fields.Date.to_string(day),
+                         'slot_count': len(slots)})
+            if len(days) >= self.MAX_AVAILABLE_DAYS:
+                break
+        return {
+            'days': days,
+            'min_hours': max(apt_type.min_schedule_hours or 0,
+                             event._visar_reschedule_min_hours()),
+            'blocked': None,
+            'message': ("%d dia(s) con disponibilidad." % len(days) if days
+                        else "No hay horarios disponibles por ahora."),
+        }
+
+    @api.model
+    def agent_reschedule_slots(self, payload):
+        """Horarios de un dia para mover una cita. `payload` = {phone, event_id, date}."""
+        event, error = self._agent_reschedule_event(payload)
+        if error:
+            return {'date': None, 'slots': [], 'blocked': error,
+                    'message': "No encontre esa cita a tu nombre."}
+        motivo = event._visar_reschedule_blocked()
+        if motivo:
+            return {'date': None, 'slots': [], 'blocked': motivo,
+                    'message': "Esa cita no se puede mover."}
+
+        target = fields.Date.to_date(payload.get('date'))
+        if not target:
+            return {'date': None, 'slots': [], 'blocked': None,
+                    'message': "Falta la fecha."}
+
+        apt_type, months, tz_info = self._agent_reschedule_tree(event)
+        if not apt_type:
+            return {'date': payload.get('date'), 'slots': [], 'blocked': None,
+                    'message': "No hay horarios disponibles."}
+
+        # El nuevo horario tambien tiene que respetar la antelacion minima; se
+        # podan aqui para no ofrecer lo que `_visar_reschedule` rechazaria.
+        limite = fields.Datetime.add(fields.Datetime.now(),
+                                     hours=event._visar_reschedule_min_hours())
+        slots_payload = []
+        for day, slots in self._agent_iter_days(months):
+            if day != target:
+                continue
+            for slot in slots:
+                start, stop = self._agent_slot_bounds(slot, tz_info, apt_type)
+                if not start or start < limite:
+                    continue
+                slots_payload.append({
+                    'start': fields.Datetime.to_string(start),
+                    'stop': fields.Datetime.to_string(stop),
+                    'start_local': self._agent_to_local(start, tz_info),
+                    'stop_local': self._agent_to_local(stop, tz_info),
+                    'resource_ids': self._agent_slot_resource_ids(slot),
+                })
+            break
+        return {
+            'date': fields.Date.to_string(target),
+            'slots': slots_payload,
+            'blocked': None,
+            'message': ("%d horario(s) disponibles." % len(slots_payload)
+                        if slots_payload else "No hay horarios ese dia."),
+        }
+
+    @api.model
+    def agent_reschedule_confirm(self, payload):
+        """Mueve la cita. `payload` = {phone, event_id, start, stop, resource_ids}.
+
+        ESCRIBE, con sudo() acotado a mover la cita y lo que cuelga de ella. No
+        toca el pedido ni el pago: el servicio ya esta cobrado y lo unico que
+        cambia es cuando se presta.
+        """
+        event, error = self._agent_reschedule_event(payload)
+        if error:
+            return {'ok': False, 'reason': error,
+                    'message': "No encontre esa cita a tu nombre."}
+
+        start = fields.Datetime.to_datetime(payload.get('start'))
+        stop = fields.Datetime.to_datetime(payload.get('stop'))
+        if not start or not stop:
+            return {'ok': False, 'reason': 'sin_horario',
+                    'message': "Falta el horario nuevo."}
+
+        ok, motivo = event._visar_reschedule(
+            start, stop, resource_ids=payload.get('resource_ids') or [])
+        if not ok:
+            return {'ok': False, 'reason': motivo,
+                    'message': "No se pudo mover la cita."}
+
+        tz_name = self.env['ir.config_parameter'].sudo().get_param(
+            TZ_PARAM, DEFAULT_TZ)
+        return {
+            'ok': True,
+            'reason': None,
+            'when_label': self._agent_window_label(event.start, event.stop),
+            'remaining': max(event._visar_reschedule_max()
+                             - event.visar_reschedule_count, 0),
+            'message': "Cita movida.",
         }
 
     # ------------------------------------------------------------------

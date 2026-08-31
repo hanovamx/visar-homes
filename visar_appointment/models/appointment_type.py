@@ -569,7 +569,18 @@ class AppointmentType(models.Model):
           * `visar_hold_owner`     — clave del cliente cuyos apartados NO cuentan
                                      (quien apartó el horario debe poder reservarlo);
           * `visar_ignore_hold_ids`— ids concretos a ignorar (re-validación de un
-                                     apartado ya identificado).
+                                     apartado ya identificado);
+          * `visar_ignore_event_id`— la cita que se está REAGENDANDO no compite
+                                     consigo misma (ver abajo).
+
+        **Una cita no compite contra sí misma al reagendarse.** Es el mismo error
+        que `calendar_booking._filter_unavailable_bookings` ya tuvo que corregir
+        con los apartados, y salió caro: el nativo declaraba sin cupo el horario
+        que el propio cliente ocupaba, y *todas* las reservas por WhatsApp
+        acababan cobradas y sin cita. Al reagendar reaparece con otra cara: quien
+        quiere mover su cita de las 10:00 a las 11:00 del mismo día vería su
+        propia cita bloqueando la franja, y quien solo quiere confirmar el mismo
+        horario no lo encontraría libre.
 
         Ver `visar_slot_hold.py` para el porqué del modelo.
         """
@@ -600,16 +611,44 @@ class AppointmentType(models.Model):
             considered, slot_start_utc, slot_stop_utc,
             exclude_owner=self.env.context.get('visar_hold_owner'),
             exclude_ids=self.env.context.get('visar_ignore_hold_ids'))
-        if not used:
+        # Lo que ocupa la propia cita que se reagenda se SUMA de vuelta: el
+        # nativo ya lo habia restado, y una cita no compite consigo misma.
+        propia = self._visar_own_capacity(considered, slot_start_utc, slot_stop_utc)
+        if not used and not propia:
             return capacity
 
         total = 0
         for key in resource_keys:
-            remaining = capacity[key] - used.get(key.id, 0)
+            remaining = (capacity[key] - used.get(key.id, 0)
+                         + propia.get(key.id, 0))
             capacity[key] = remaining
             total += remaining
         capacity['total_remaining_capacity'] = total
         return capacity
+
+    @api.model
+    def _visar_own_capacity(self, resources, slot_start_utc, slot_stop_utc):
+        """Capacidad que consume, en esa franja, la cita que se está reagendando.
+
+        Se devuelve para SUMARLA de vuelta: el nativo ya la restó al contar las
+        líneas de reserva, y mientras dura el reagendado esa cita no debe contar
+        como ocupación propia. Sin evento en contexto no hay nada que devolver, y
+        este método no cuesta ni una consulta.
+        """
+        event_id = self.env.context.get('visar_ignore_event_id')
+        if not event_id or not resources:
+            return {}
+        lines = self.env['appointment.booking.line'].sudo().search([
+            ('appointment_resource_id', 'in', resources.ids),
+            ('calendar_event_id', '=', event_id),
+            ('event_start', '<', slot_stop_utc),
+            ('event_stop', '>', slot_start_utc),
+        ])
+        propia = {}
+        for line in lines:
+            clave = line.appointment_resource_id.id
+            propia[clave] = propia.get(clave, 0) + (line.capacity_used or 0)
+        return propia
 
     # Filtra la estructura de slots del calendario dejando solo los con técnicos simultáneos disponibles.
     @api.model
