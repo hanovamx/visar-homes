@@ -22,8 +22,13 @@
       casualidad: ninguna orden del agente había sido póliza, y la consolidación nunca dependió
       del canal. La regla vive ahora en `project.project._visar_effective_projects`, compartida
       por los dos caminos. Detalle en `35-polizas.md` y `40-decisions.md`.
-      **Pendiente de desplegar en `visar-db`** (probado en `visar-test`: 39 tests verdes,
-      migración de relleno sobre 147 visitas reales).
+      **Desplegado en `visar-db` el 31-ago-2026 23:07** (`-u visar_fsm,visar_subscription`,
+      sin errores en el log, servicio reiniciado). Respaldos previos en
+      `/var/lib/odoo/backups/visar-db-{pre-combo-poliza,filestore-pre-combo-poliza}-20260831-230547.*`
+      (BD + filestore: la migración toca esquema). La migración enlazó **147 visitas**
+      existentes a su línea. Antes: `visar-test` con 39 tests verdes y un E2E con los
+      productos reales. **Las 12 tareas de S00246 siguen ahí**: la consolidación aplica a
+      lo que se genere desde la próxima factura pagada.
 
 ## Hecho — desde el 20-ago, y que este archivo no registraba
 
