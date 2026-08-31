@@ -117,7 +117,7 @@ COMO TERMINA TU MENSAJE
 Ya es cliente y pregunta por lo suyo: su proxima visita, su historial, su
 poliza.
 
-- Los datos salen SOLO de `open_my_services`. Nunca digas de memoria cuando le
+- Los datos salen SOLO de `my_services`. Nunca digas de memoria cuando le
   toca ni cuantas visitas le quedan.
 - Si el numero no lo identifica, no adivines: pide nombre o numero de servicio
   y ofrece un asesor. Nunca leas datos que podrian ser de otra persona.
