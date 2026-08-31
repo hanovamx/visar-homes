@@ -577,9 +577,15 @@ lo que no se puede es **comerse el traslado de otra cita**.
 Consecuencia buscada: la disponibilidad depende de **quién reservó antes**. Al cliente no hay
 nada que explicarle, porque **nunca ve la opción que no cabe**.
 
-> ⛔ **Sin implementar.** No hay ni una línea de esto en código. Hoy se ofrece cualquier horario
-> con capacidad. Sostenible solo mientras haya **un** técnico usable con mediana de 2.5
-> paradas/día; deja de serlo con el segundo.
+> ✅ **IMPLEMENTADA** el 21-ago-2026 en `visar_appointment/models/visar_travel_feasibility.py`
+> (593 líneas). Este aviso decía *"Sin implementar. No hay ni una línea de esto en código"* y se
+> quedó ahí; corregido el 31-ago-2026.
+>
+> Los 20 min son ahora `visar.travel.minutes`, editable en **Ajustes → Visar → Agendado** (0–120,
+> con validación), y hay una prueba que revienta si alguien vuelve a hornear el número.
+> **Degrada, nunca bloquea**: sin coordenadas, sin token de Mapbox o con Mapbox caído, el horario
+> se ofrece igual — una falla de geocodificación no puede costar una reserva. El interruptor
+> `visar.travel.enabled` nace **encendido**; `visar.travel.depart_at`, apagado.
 
 ## [DECIDIDA — 19-ago-2026] Los bordes del día no se restringen por viaje
 
@@ -639,8 +645,10 @@ Se pide justo después del servicio, para (1) rechazar fuera de cobertura en la 
 y no después de seis, y (2) **precalentar** zona, pools, agenda y matrices de viaje mientras el
 cliente contesta el resto. Es tiempo gratis.
 
-> ⛔ **Sin implementar.** Hoy la dirección se sigue pidiendo al final. Es la salida probable para
-> desbloquear la rama de valoración (I-17).
+> ⛔ **Sin implementar**, y desde el 21-ago-2026 **sin objeto**: la razón que le quedaba —*"es la
+> salida probable para desbloquear la rama de valoración (I-17)"*— murió cuando I-17 se cerró por
+> otro camino. Hoy la dirección se sigue pidiendo al final. Si se retoma, que sea por sus dos
+> méritos propios (rechazar fuera de cobertura temprano y precalentar), no por I-17.
 
 ## [DECIDIDA — 17-ago-2026] Los `items` NUNCA se arman a mano
 
@@ -663,14 +671,22 @@ rechazado** y **pago pendiente** desde el primer día, y el apartado **se congel
 una transacción en vuelo** — con Stripe una transacción puede quedar `pending` (3-D Secure,
 SPEI/OXXO), y soltar el horario a mitad del cobro sería el peor caso posible.
 
-## [ABIERTA] La rama de valoración no cierra
+## ~~[ABIERTA]~~ [CERRADA — 21-ago-2026] La rama de valoración no cerraba
 
-**Contradice la decisión 3 del doc 33 §12** ("valoración: SÍ la maneja el agente, hasta el mismo
-paso de horarios"). `valuation` es terminal: nunca se pregunta la dirección, así que no hay zona,
-no hay técnicos y no hay ni un día que ofrecer.
+> Esta entrada seguía marcada **[ABIERTA]** diez días después de resolverse. Corregida el
+> 31-ago-2026.
 
-Toca justo a los clientes que están peor: **termitas, chinches y "no sé qué es"** son los tres
-cortes a valoración. Ver §10.7 e I-17.
+**Contradecía la decisión 3 del doc 33 §12** ("valoración: SÍ la maneja el agente, hasta el mismo
+paso de horarios"): `valuation` era terminal, nunca se preguntaba la dirección, así que no había
+zona, ni técnicos, ni un día que ofrecer. Tocaba justo a los clientes que están peor —**termitas,
+chinches y "no sé qué es"** son los tres cortes a valoración.
+
+**Ya no.** `valuation` es un paso que se **acusa** (precio + motivo, una opción) y sigue al de
+dirección. Se acotó al chat con `valuation_inline`, bandera que pone solo `agent_booking_step`,
+así que el web no cambió. Sus items salen de `_visar_wizard_valuation_items()`. De paso cerró un
+bug de cobro que solo se veía con la rama abierta: en el corte **mixto**, la pantalla de revisión
+cotizaba interior mientras `agent_prepare_booking` cobraba la valoración. Ver §10.7 y §(a) del
+doc 33, e I-17.
 
 ## [APRENDIDO — 27-ago-2026] Un `try/except` alrededor de una consulta NO protege la transacción
 

@@ -11,13 +11,17 @@
 > hora local, apartado de 10 min, pantalla de revisión con corrección por paso, liga de pago que
 > vive y muere con el apartado, avisos salientes y hand-off humano.
 >
-> **Lo que NO cierra:**
-> - ⛔ **§10.7 / I-17 — la rama de valoración no llega a horarios.** `valuation` es terminal.
->   Termitas, chinches y "no sé qué es" **no pueden agendar por WhatsApp**.
-> - ⛔ **§5 — la factibilidad de traslado no existe en código.** Decisiones 7 y 14 son prosa. Hoy
->   se ofrece cualquier horario con capacidad sin mirar si el técnico llega. Sostenible solo
->   mientras haya **un** técnico usable (§5.3.2).
-> - **§4.0 — el CP temprano** está marcado "decidido" y **sin construir**.
+> **Lo que NO cierra** *(recontado el 31-ago-2026: los dos ⛔ se cerraron el 21-ago y esta
+> cabecera se quedó anunciándolos, contradiciendo al diario de este mismo documento — §(a) y
+> siguientes cuentan cómo se arreglaron)*:
+> - [x] ~~⛔ **§10.7 / I-17 — la rama de valoración no llega a horarios.**~~ → **cerrada.**
+>   `valuation` dejó de ser terminal en el chat: se acusa y sigue al paso de dirección. Ver §(a).
+> - [x] ~~⛔ **§5 — la factibilidad de traslado no existe en código.**~~ → **construida**
+>   (`visar_travel_feasibility.py`, 593 líneas). Las decisiones 7 y 14 dejaron de ser prosa: es
+>   un presupuesto **entre paradas**, con los minutos configurables (`visar.travel.minutes`).
+> - **§4.0 — el CP temprano** está marcado "decidido" y **sin construir** — y quedó **sin
+>   objeto**: era la salida probable para I-17, que se resolvió por otro camino. Si se retoma,
+>   que sea por sus propios méritos.
 >
 > **Cómo leer este documento:** §1–§9 son el diseño; §10.1–§10.9 son el diario de a bordo, en
 > orden cronológico, y son la fuente de verdad sobre qué está hecho. §12 son las 15 decisiones,
@@ -128,7 +132,7 @@ Orden real del wizard, según `_visar_wizard_next_step` y el grafo `_VISAR_STEP_
 | 4 | `cobertura` | `cobertura` | Botones: interior / exterior / ambos |
 | 5 | `group_<id>`, `dimensiones` | dimensiones por grupo | Lista |
 | 6 | `interior` / `exterior` | tramo por eje | Lista de bandas de m² (**paginar**) |
-| — | `valuation` | `requiere_valoracion` | **Corte.** Ver §4.1 y ⛔ §10.7 |
+| — | `valuation` | `requiere_valoracion` | **Corte**, ya no terminal: se acusa y sigue a dirección. Ver §4.1, §10.7 y §(a) |
 | 7 | `address` | `delivery_address`, `zone_id` | Varios campos, guiados de uno en uno |
 | 8 | **`nombre`** | `nombre` | Texto libre. **Solo si el teléfono no resuelve a un `res.partner`** — ver §10.6(c) |
 | 9 | `extras` | `extras_ids` (marca) / `extras_accepted` (lo que se compra) | Lista multi-selección |
@@ -212,8 +216,10 @@ El agente lo trata como el web: al detectar el corte, **avisa** (precio de la
 valoración y por qué) y continúa por la rama de valoración hasta el mismo paso de
 horarios.
 
-> ⛔ **Esto es la intención, no lo que hace el código.** Hoy `valuation` es **terminal** y la rama
-> no llega a horarios — ver §10.7 e I-17.
+> ✅ **Esto ya ES lo que hace el código** (desde el 21-ago-2026; verificado el 31-ago). Este
+> aviso decía *"Esto es la intención, no lo que hace el código. Hoy `valuation` es terminal"* —
+> falso desde que se cerró I-17. La rama llega al mismo paso de horarios que la normal. Ver §(a)
+> del diario.
 
 > ⚠️ **Corrección (20-ago-2026).** Esta sección decía *"la factibilidad de ruta (§5) aplica
 > idéntica"*. **No aplica en absoluto, a ninguna de las dos ramas**: el predicado del §5 no está
@@ -1163,9 +1169,17 @@ final—, así que para el web el paso no existe.
 > **El Odoo falso del runtime sí conservaba la clave**, así que sus pruebas
 > pasaban en verde: es el modo de fallo que avisa `60-conventions-testing.md`.
 
-## 10.7 ⛔ La rama de valoración NO llega a horarios por WhatsApp
+## 10.7 ~~⛔ La rama de valoración NO llega a horarios por WhatsApp~~ — **CORREGIDO**
 
-Encontrado al verificar lo anterior, **sin corregir todavía**. Contradice la
+> ✅ **Cerrado el 21-ago-2026** (`b9e7669`, `044e256` en Odoo; `b7a2aec` en el runtime). Lo que
+> sigue es el **diagnóstico original**, que se conserva porque explica bien el fallo — pero ya
+> no describe el código. El arreglo, y los dos bloqueadores que salieron al hacerlo, están en
+> §(a) más abajo. **Y ojo con el último párrafo:** proponía que el runtime mandara
+> `mode: 'valuation'`, y se hizo **al revés** —lo deriva Odoo (`_agent_booking_mode`)—, así que
+> ese trozo es un encargo que no hay que ejecutar.
+
+Encontrado al verificar lo anterior, **sin corregir todavía** *(al escribirse; ver arriba)*.
+Contradice la
 decisión 3 de §12 ("valoración: SÍ la maneja el agente, hasta el mismo paso de
 horarios").
 

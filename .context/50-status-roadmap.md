@@ -1,11 +1,13 @@
 # Estado y roadmap
 
-> Última actualización: **29-ago-2026** — reconciliada contra `git log` y contra producción
-> tras 8 días sin tocarse. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.9.0**,
-> **visar_fsm 19.0.1.1.0**, **visar_appointment 19.0.2.7.0**, **visar_field_app 19.0.1.26.0**,
+> Última actualización: **31-ago-2026** — versiones releídas de los `__manifest__.py`, no de la
+> memoria. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.10.0**,
+> **visar_fsm 19.0.1.1.0**, **visar_appointment 19.0.2.8.0**, **visar_field_app 19.0.1.26.0**,
 > **visar_subscription 19.0.1.4.0**, **visar_crm 19.0.1.3.0**,
-> **visar_whatsapp_agent 19.0.1.7.0** (en producción: **1.6.0**; el repo va **6 commits por
-> delante de `origin/main`** y con la consola y el recontacto sin commitear).
+> **visar_whatsapp_agent 19.0.1.8.0** (en producción: **1.6.0**).
+> Entrada anterior: 29-ago-2026, reconciliada contra `git log` tras 8 días sin tocarse. Sus
+> versiones ya iban una menor en tres módulos, que es el aviso de siempre: **estas cifras
+> caducan en días — reléelas del manifiesto antes de usarlas para nada.**
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
@@ -32,14 +34,30 @@
       llegaban a la pantalla de pago sin que el cliente eligiera nada. Quedan los de prompt
       (1.1, 2.1, 2.2, 2.3, 5.1) y el 6.3 de arriba.
 
-### En el árbol de trabajo, sin commitear ni desplegar
+### En el árbol de trabajo, sin desplegar
 
+*Actualizado el 31-ago-2026. La sección se llamaba "sin commitear ni desplegar": del lado
+runtime **ya está todo commiteado** (`58897f1` recontacto, `aa65144` reagendar), así que lo que
+falta es el despliegue. El repo de Odoo no es un repo git en este checkout, así que aquí
+"commiteado" no es una propiedad observable.*
+
+- [ ] **Reagendar una cita ya pagada** (`19.0.1.8.0` + `visar_appointment 19.0.2.8.0` +
+      `visar_base 19.0.1.10.0`): `agent_reschedule_days` / `_slots` / `_confirm`, el contexto
+      `visar_ignore_event_id` para que una cita no compita consigo misma, y **Ajustes → Visar →
+      Reagendar**. Cancelar **no existe** a propósito. Diseño en
+      `visar_fastapi/.context/87-reagendar-citas.md`. Validado en `visar-test` (142 pruebas del
+      módulo) y con **443** del runtime.
 - [ ] **Recontacto de leads fríos** (`19.0.1.7.0`): `visar.followup.config`, campos y cron en
       `crm.lead`, buzón `visar.wa.lead.message`, y `agent_track_interest` /
       `agent_drop_followup`. Diseño en `visar_fastapi/.context/86-recontacto-de-leads.md`.
-      Validado en `visar-test` (127 pruebas del módulo) y con 416 del runtime.
-- [ ] **Ajustes → Visar → Agendado** (`visar_base 19.0.1.8.0`): minutos de apartado y traslado
-      entre servicios, que llevaban desde siempre siendo parámetros del sistema sin pantalla.
+      Validado en `visar-test` (127 pruebas del módulo).
+- [x] ~~**Ajustes → Visar → Agendado**~~ — **construida**, y creció: la pantalla existe en
+      `visar_base` (`models/res_config_settings.py` + `views/res_config_settings_views.xml`) con
+      **tres** bloques, no dos — *Configuración Visar*, **Agendado** (minutos de apartado
+      `visar.slot_hold_minutes` y traslado entre servicios `visar.travel.minutes`) y
+      **Reagendar** (`visar.reschedule.min_hours`, `visar.reschedule.max_times`), todos con
+      `@api.constrains` de cordura. Sigue **sin desplegar**, como el resto de esta sección.
+      *(Esta línea decía `visar_base 19.0.1.8.0`; el módulo va por 19.0.1.10.0.)*
 
 ## Hecho — Agendado completo por WhatsApp (19/20-ago-2026) — **EN PRODUCCIÓN**
 

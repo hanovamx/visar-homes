@@ -13,15 +13,19 @@ visar_base
                                   visar_crm ──► visar_whatsapp_agent
 ```
 
-| Módulo | Versión (20-ago-2026) | Depende de |
+| Módulo | Versión (**31-ago-2026**) | Depende de |
 |---|---|---|
-| `visar_base` | 19.0.1.6.0 | `sale`, `product`, `appointment` |
+| `visar_base` | 19.0.1.10.0 | `sale`, `product`, `appointment` |
 | `visar_fsm` | 19.0.1.1.0 | `visar_base`, `appointment`, `hr`, `industry_fsm`, `industry_fsm_sale` |
-| `visar_appointment` | 19.0.2.7.0 | `visar_base`, `visar_fsm`, `visar_subscription`, `website_appointment*`, `website_sale`, `hr`, `worksheet` |
+| `visar_appointment` | 19.0.2.8.0 | `visar_base`, `visar_fsm`, `visar_subscription`, `website_appointment*`, `website_sale`, `hr`, `worksheet` |
 | `visar_field_app` | 19.0.1.26.0 | `visar_fsm`, `website`, `industry_fsm_report`, `base_geolocalize`, `account_payment` |
 | `visar_subscription` | 19.0.1.4.0 | — ver [`35-polizas.md`](./35-polizas.md) |
 | `visar_crm` | 19.0.1.3.0 | — ver [`31-`](./31-whatsapp-crm-lead-mapping.md) / [`32-whatsapp-crm-lead-implementation.md`](./32-whatsapp-crm-lead-implementation.md) |
-| `visar_whatsapp_agent` | 19.0.1.4.0 | `visar_appointment`, `visar_crm` — ver [`27-whatsapp-agent.md`](./27-whatsapp-agent.md) |
+| `visar_whatsapp_agent` | 19.0.1.8.0 | `visar_appointment`, `visar_crm` — ver [`27-whatsapp-agent.md`](./27-whatsapp-agent.md) |
+
+> Esta tabla iba fechada el 20-ago y llevaba **cuatro** versiones atrasadas en `visar_base`
+> (1.6.0), dos en `visar_whatsapp_agent` (1.4.0) y una en `visar_appointment`. Releída de los
+> `__manifest__.py` el 31-ago-2026.
 
 > ⚠️ **`visar_field_app` y `visar_appointment` son hermanos, no parientes.** Ninguno depende
 > del otro. Su ancestro común es **`visar_base`**. Importa al decidir dónde vive código
@@ -35,7 +39,7 @@ visar_base
 
 ---
 
-## `visar_base` (v19.0.1.6.0)
+## `visar_base` (v19.0.1.10.0)
 
 **Dependencias:** `sale`, `product`, `appointment`.
 
@@ -166,10 +170,17 @@ Tres cosas que no son evidentes y que se pagaron caro:
 > *"no quiero ningún extra"* y *"todavía no le he preguntado"* son el mismo estado, y al
 > corregir cualquier cosa se le volvía a preguntar todo.
 
-> ⛔ **`valuation` es un paso TERMINAL, y es un bug conocido** (diseño 33 §10.7 / backlog I-17).
-> El corte a valoración nunca llega a preguntar la dirección, así que no hay zona, no hay
-> técnicos y no hay ni un día que ofrecer. Los clientes con termitas, chinches o "no sé qué es"
-> no pueden agendar por WhatsApp.
+> ✅ **`valuation` ya NO es terminal** (I-17 cerrado; verificado contra el código el
+> 31-ago-2026). Este párrafo decía lo contrario —*"es un paso TERMINAL, y es un bug conocido"*—
+> y llevaba así desde antes de que se arreglara.
+>
+> En el chat el corte a valoración es **un paso que se acusa** (precio + motivo, una sola
+> opción) y de ahí sigue al paso de dirección que ya existía. Lo habilita `valuation_inline`,
+> bandera que pone **solo** `agent_booking_step`: en el web no cambia nada. Sus items salen de
+> `_visar_wizard_valuation_items()` —uno, precio fijo, `is_valuation: True`— porque
+> `_visar_resolve_wizard_items` no emite nada para un corte que nunca elige tramo. Quien
+> reporta termitas, chinches o "no sé qué es" **sí puede agendar por WhatsApp**. Detalle
+> completo en §(a) del diario del diseño 33.
 
 ### `visar_slot_hold.py` — apartado de horario (butaca de cine)
 
@@ -287,7 +298,7 @@ Cada uno tiene su documento; aquí solo lo justo para saber qué es y dónde enc
 | `visar_subscription` (19.0.1.4.0) | **Pólizas.** Cobro adelantado como línea real del pedido, listas (zona × plan), visitas incluidas por plan independientes del cobro. | [`35-polizas.md`](./35-polizas.md) |
 | `visar_field_app` (19.0.1.26.0) | **App de campo.** PIN, worksheet, fotos solo por cámara, firma, reporte PDF al cliente, avisos por WhatsApp. **Aquí vive Mapbox**: geocodificación (`_visar_geo_localize_mapbox`) y ETA de traslado (`_visar_enroute_eta_minutes`, Directions `driving-traffic` con fijo de respaldo). | [`25-field-app.md`](./25-field-app.md) |
 | `visar_crm` (19.0.1.3.0) | **Pipeline de leads** del agente: `agent_track_lead` crea el lead en *Nuevo*; avance de etapa, *won* y cron de caducidad. Es donde aterriza el hand-off humano. | [`31-`](./31-whatsapp-crm-lead-mapping.md) / [`32-`](./32-whatsapp-crm-lead-implementation.md) |
-| `visar_whatsapp_agent` (19.0.1.4.0) | **Superficie RPC del agente**: 12 métodos, seis de ellos escriben. Cuestionario por RPC, días y horarios, apartado, reserva, liga de pago, hand-off y buzón de avisos. | [`27-`](./27-whatsapp-agent.md) / [`33-`](./33-whatsapp-agendado-design.md) |
+| `visar_whatsapp_agent` (19.0.1.8.0) | **Superficie RPC del agente**: **17** métodos, **siete** de ellos escriben. Cuestionario por RPC, días y horarios, apartado, reserva, liga de pago, **reagendado**, recontacto de leads, hand-off y buzón de avisos. | [`27-`](./27-whatsapp-agent.md) / [`33-`](./33-whatsapp-agendado-design.md) / [`87-`](../../../visar_fastapi/.context/87-reagendar-citas.md) |
 
 ## Diagrama de flujos
 
@@ -321,7 +332,14 @@ WhatsApp (agendado, en producción desde 19/20-ago-2026)
         → APARTADO 10 min (agent_hold_slot)
         → revisión → liga de pago (agent_prepare_booking)
         → /internal/booking-event ──► el chat avisa y queda listo
-   ⛔ rama de valoración: se corta en `valuation` y NO llega a horarios (I-17)
+   rama de valoración: `valuation` se acusa y sigue a dirección (I-17 CERRADO)
+   los horarios ya pasan por el filtro de traslado (visar_travel_feasibility)
+
+WhatsApp (reagendar — implementado, SIN DESPLEGAR)
+   my_services → el cliente dice "mueve la 2"
+        → días (agent_reschedule_days) → horarios (agent_reschedule_slots)
+        → agent_reschedule_confirm ──► calendar.event + booking.line + project.task
+   no aparta ni cobra; cancelar NO existe (servicio ya cobrado, sin reembolso)
 
 visar_base: product.template ── visar_tier_ids ──► visar.service.tier ──► product.product
 visar_base: visar.zone ── pricelist_id ──► product.pricelist (% zona; Valoración $500 fijo)

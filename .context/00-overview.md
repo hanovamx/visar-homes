@@ -14,7 +14,7 @@ flujo a la medida.
 > con **varias líneas/productos** cobrados. El flujo 1:1 anterior (D-03) queda **superado** para
 > reservas multi-servicio, pero sigue disponible en tipos de cita individuales (legacy).
 
-**Punto de entrada (`visar_appointment` v19.0.2.7.0):**
+**Punto de entrada (`visar_appointment` v19.0.2.8.0):**
 - Cuadro nativo **`/appointment`** con **solo dos** tipos publicados:
   - **Valoración Técnica** (`visar_flow=valuation`) → prequalify **solo Zona** → horario → cita **$500**.
   - **Cita de Servicios** (`visar_flow=wizard`) → wizard D-05 (`/appointment/visar/booking`).
@@ -43,22 +43,33 @@ El tabulador completo está en [`70-tabulador.md`](./70-tabulador.md).
 
 Detalle en [`10-requirements.md`](./10-requirements.md).
 
-## Estado actual (resumen — 20-ago-2026)
+## Estado actual (resumen — 31-ago-2026)
 
 - **Agendado completo por WhatsApp: EN PRODUCCIÓN.** El cliente recorre el cuestionario,
   elige día y hora, aparta el horario y recibe una liga de pago **sin salir del chat**. Entró
   entre el 19 y el 20 de agosto de 2026. El módulo `visar_whatsapp_agent` **ya no es de solo
-  lectura**: escribe `visar.slot.hold`, `calendar.booking`, `sale.order`, `crm.lead` y
-  `visar.wa.booking.message`. Diseño y estado detallado en
+  lectura**: escribe `visar.slot.hold`, `calendar.booking`, `sale.order`, `crm.lead`,
+  `calendar.event`, `project.task` y `visar.wa.booking.message`. Diseño y estado detallado en
   [`33-whatsapp-agendado-design.md`](./33-whatsapp-agendado-design.md).
 
-  Dos huecos abiertos, los dos documentados:
-  - ⛔ **La rama de valoración no llega a horarios** (§10.7 / I-17): `valuation` es terminal,
-    nunca se pregunta la dirección, y los clientes que reportan **termitas, chinches o "no sé
-    qué es"** no pueden agendar por WhatsApp.
-  - ⛔ **La factibilidad de traslado no existe en código** (§5, decisiones 7/14): hoy se ofrece
-    cualquier horario con capacidad sin mirar si el técnico puede llegar. Sostenible solo
-    mientras haya **un** técnico usable con mediana de 2.5 paradas/día.
+  > ⚠️ **Los "dos huecos abiertos" que decía aquí están CERRADOS** (verificado contra el código
+  > el 31-ago-2026). Se dejan nombrados porque medio `.context/` sigue citándolos:
+  > - ~~⛔ La rama de valoración no llega a horarios (§10.7 / I-17)~~ → **cerrada**. `valuation`
+  >   dejó de ser terminal en el chat: es un paso que se acusa y sigue al de dirección
+  >   (`valuation_inline`, `_visar_wizard_valuation_items`). Ver §(a) del diario del doc 33.
+  > - ~~⛔ La factibilidad de traslado no existe en código (§5, decisiones 7/14)~~ →
+  >   **construida**: `visar_appointment/models/visar_travel_feasibility.py` (593 líneas). Es un
+  >   **presupuesto entre paradas**, no un radio, y sus minutos son configurables
+  >   (`visar.travel.minutes`, por defecto 20).
+
+- **Reagendar por WhatsApp:** implementado, **sin desplegar**. El cliente mueve una cita ya
+  pagada desde el chat, con 24 h de antelación en las dos puntas y 2 cambios por cita
+  (`visar.reschedule.*`). Cancelar **no existe** a propósito: el servicio está cobrado y no hay
+  flujo de reembolso. Ver `visar_fastapi/.context/87-reagendar-citas.md`.
+- **Recontacto de leads fríos:** implementado, **sin desplegar**. Ver
+  `visar_fastapi/.context/86-recontacto-de-leads.md`.
+- **Ajustes → Visar** (`res.config.settings` en `visar_base`): apartado, traslado entre
+  servicios y las dos reglas de reagendado dejaron de ser parámetros del sistema sin pantalla.
 
 - **Pólizas (suscripciones):** implementado y **desplegado en producción**. El cobro de
   2 meses por adelantado es una **línea real del pedido** (antes era un multiplicador al
@@ -84,20 +95,20 @@ Ver [`50-status-roadmap.md`](./50-status-roadmap.md).
 ## Mapa de carpetas
 
 **Siete módulos**, con la cadena de dependencias `visar_base → visar_fsm →
-{visar_appointment, visar_field_app}`. Versiones tomadas de los `__manifest__.py`
-(20-ago-2026):
+{visar_appointment, visar_field_app}`. Versiones **releídas de los `__manifest__.py` del árbol
+de trabajo el 31-ago-2026** — las que había aquí llevaban once días viejas:
 
 ```
 VISAR/repo/                ← Git: github.com/luisgarza-g/visar-luisg (rama main)
 ├── .context/              ← esta carpeta (documentación para desarrollar)
-├── visar_base/            ← catálogos compartidos + buzón WhatsApp saliente (v19.0.1.6.0)
+├── visar_base/            ← catálogos compartidos + buzón WhatsApp saliente + Ajustes → Visar (v19.0.1.10.0)
 ├── visar_fsm/             ← FSM: tareas agrupadas por proyecto (v19.0.1.1.0)
-├── visar_appointment/     ← wizard web + citas + cuestionario compartido (v19.0.2.7.0)
+├── visar_appointment/     ← wizard web + citas + cuestionario compartido + factibilidad de traslado (v19.0.2.8.0)
 │   └── migrations/        ← post-migrate catálogo legacy (¡solo en upgrade!)
 ├── visar_field_app/       ← app de campo técnicos (PIN/POS) (v19.0.1.26.0) — ver 25-field-app.md
 ├── visar_subscription/    ← pólizas: cobro adelantado + visitas FSM por periodo (v19.0.1.4.0) — ver 35-polizas.md
 ├── visar_crm/             ← pipeline de leads del agente (v19.0.1.3.0) — ver 31/32-whatsapp-crm-lead-*.md
-└── visar_whatsapp_agent/  ← superficie RPC del agente WhatsApp, lectura Y escritura (v19.0.1.4.0) — ver 27-whatsapp-agent.md
+└── visar_whatsapp_agent/  ← superficie RPC del agente WhatsApp, lectura Y escritura (v19.0.1.8.0) — ver 27-whatsapp-agent.md
 ```
 
 > **4º módulo (jul-2026):** `visar_field_app` se añadió después de la última revisión general
@@ -140,6 +151,10 @@ módulos custom viven en **`/opt/custom`** (no en una ruta `visar-homes/`).
 10. `35-polizas.md` — **pólizas / suscripciones** (`visar_subscription`, 6º módulo): cobro
     adelantado, listas (zona × plan) y paso de póliza en el wizard.
 11. `33-whatsapp-agendado-design.md` — **el agendado completo por WhatsApp** (todo en el chat
-    salvo el pago). **Implementado y en producción** desde el 19/20-ago-2026, con dos huecos
-    abiertos: la rama de valoración (§10.7) y la factibilidad de ruta (§5). Es el documento
-    vivo del proyecto y el más largo: si vas a tocar agendado, empieza por aquí.
+    salvo el pago). **Implementado y en producción** desde el 19/20-ago-2026. Los dos huecos que
+    este índice anunciaba —la rama de valoración (§10.7) y la factibilidad de ruta (§5)— están
+    **cerrados**; el diario del propio documento (§(a) y siguientes) lo cuenta, pero su cabecera
+    todavía los anuncia como abiertos. Es el documento vivo del proyecto y el más largo: si vas
+    a tocar agendado, empieza por aquí — y lee el diario antes que la cabecera.
+12. `visar_fastapi/.context/87-reagendar-citas.md` — **mover una cita ya pagada desde el chat**
+    (y por qué cancelar no existe). Implementado, sin desplegar.

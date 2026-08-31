@@ -35,7 +35,16 @@ arriesgar el negocio. Odoo se queda con lo que le corresponde: **datos y
 configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 (entrada nueva) y el `.context/40-decisions.md` de `visar_fastapi`.
 
-## `visar_whatsapp_agent` (v19.0.1.6.0)
+## `visar_whatsapp_agent` (v19.0.1.8.0)
+
+> **v19.0.1.8.0 (ago-2026) — reagendar una cita ya pagada desde el chat.**
+> `agent_reschedule_days` / `_slots` / `_confirm`. Las dos reglas (antelación mínima y cambios
+> por cita) se configuran en **Ajustes → Visar → Reagendar**, no aquí, porque son política de
+> agenda. **Implementado, sin desplegar.** Ver `visar_fastapi/.context/87-reagendar-citas.md`.
+
+> **v19.0.1.7.0 (ago-2026) — recontacto de leads fríos.** `visar.followup.config`, cron en
+> `crm.lead`, buzón `visar.wa.lead.message`, `agent_track_interest` / `agent_drop_followup`.
+> **Implementado, sin desplegar.** Ver `visar_fastapi/.context/86-recontacto-de-leads.md`.
 
 > **v19.0.1.5.0 (27-ago-2026) — el prompt base se inyecta siempre, y cada ruta
 > tiene su memoria.** `visar.agent.prompt` gana un campo `ruta`: el registro sin
@@ -68,7 +77,13 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 | `visar.slot.hold` | `models/visar_slot_hold.py` | Apartado temporal de horario (extensión; el modelo vive en `visar_appointment`). |
 | `visar.wa.booking.message` | `models/wa_booking_outbox.py` | Buzón de avisos salientes de reserva, con cron. |
 
-### Los métodos RPC — **12**, y seis de ellos escriben
+### Los métodos RPC — **17**, y siete de ellos escriben
+
+> Decía "12, y seis de ellos escriben". Recontado contra `visar_agent_tools.py` el
+> 31-ago-2026: **17** métodos `agent_*`, de los que escriben **siete** (`agent_track_lead`,
+> `agent_track_interest`, `agent_drop_followup`, `agent_reschedule_confirm`,
+> `agent_request_handoff`, `agent_hold_slot`, `agent_prepare_booking`). El runtime implementa
+> los 17 en `app/odoo/client.py`, uno a uno.
 
 Lectura:
 
@@ -93,15 +108,18 @@ Escritura:
 | `agent_reschedule_days(payload)` | — (lectura) | días con hueco para mover una cita, excluyéndola de su propia ocupación. |
 | `agent_reschedule_slots(payload)` | — (lectura) | horarios de un día para esa cita, ya podados por la antelación mínima. |
 | `agent_reschedule_confirm(payload)` | `calendar.event`, `appointment.booking.line`, `project.task` | **mueve** la cita y todo lo que cuelga. No toca pedido ni pago. |
+| `agent_request_handoff(payload)` | `crm.lead` + `mail.activity` | hand-off humano: nota en el chatter con todo lo recogido + actividad asignada. |
+| `agent_hold_slot(payload)` | `visar.slot.hold` | aparta un horario ~10 min a nombre de un teléfono. Acepta `mode` (`wizard`\|`valuation`). |
+| `agent_prepare_booking(payload)` | `calendar.booking`, `sale.order` | arma la reserva y devuelve la **liga de pago** (`payment.link.wizard`). |
 
 > **No hay `agent_cancel_*`, y es deliberado.** El servicio está cobrado y no
 > existe flujo de reembolso: el agente reconoce "cancelar" para poder decir que
 > no se puede y ofrecer mover. Hay una prueba que falla si alguien añade un
 > método de cancelación sin resolver antes qué pasa con el dinero. Diseño
 > completo en `visar_fastapi/.context/87-reagendar-citas.md`.
-| `agent_request_handoff(payload)` | `crm.lead` + `mail.activity` | hand-off humano: nota en el chatter con todo lo recogido + actividad asignada. |
-| `agent_hold_slot(payload)` | `visar.slot.hold` | aparta un horario ~10 min a nombre de un teléfono. Acepta `mode` (`wizard`\|`valuation`). |
-| `agent_prepare_booking(payload)` | `calendar.booking`, `sale.order` | arma la reserva y devuelve la **liga de pago** (`payment.link.wizard`). |
+>
+> *(Este aviso estaba metido **dentro** de la tabla, que la partía en dos: las tres últimas
+> filas se renderizaban como texto suelto.)*
 
 > **Los dos relojes de `agent_day_slots`.** `start`/`stop` van en **UTC naive** porque es lo
 > que `agent_hold_slot` y `agent_prepare_booking` esperan de vuelta. `start_local`/`stop_local`
@@ -164,9 +182,11 @@ Helpers de `visar_base` que también reutiliza: `visar.zone.cp._get_zone_for_cp`
 >
 > El grupo `group_whatsapp_agent_readonly` **sigue** siendo de solo lectura en el CSV —
 > ninguna línea de `ir.model.access.csv` le da `perm_write` sobre catálogo o producto, y eso
-> está bien. Pero los métodos que escriben (`agent_track_lead`, `agent_request_handoff`,
-> `agent_hold_slot`, `agent_prepare_booking`) **escalan con `sudo()` por dentro**: hay 41
-> `sudo()` en `visar_agent_tools.py`.
+> está bien. Pero los **siete** métodos que escriben (`agent_track_lead`,
+> `agent_track_interest`, `agent_drop_followup`, `agent_reschedule_confirm`,
+> `agent_request_handoff`, `agent_hold_slot`, `agent_prepare_booking`) **escalan con `sudo()`
+> por dentro**: hay **54** `sudo()` en `visar_agent_tools.py` (eran 41 cuando se escribió este
+> párrafo; recontado el 31-ago-2026).
 >
 > Consecuencia para quien audite esto: **el límite real ya no son las ACLs, es la superficie
 > de los métodos.** Ninguno acepta nombres de modelo, dominios ni SQL, y cada uno escribe
@@ -330,10 +350,18 @@ tools expuestas al LLM siguen siendo `resolve_zone` y `quote_service`.
 
 ### Lo que sigue abierto
 
-- ⛔ **Rama de valoración** (§10.7 / I-17): `valuation` es terminal, no llega a horarios. Los
-  clientes con termitas, chinches o "no sé qué es" **no pueden agendar por WhatsApp**.
-- ⛔ **Factibilidad de traslado** (§5, decisiones 7/14): sin construir. Hoy se ofrece cualquier
-  horario con capacidad sin mirar si el técnico llega.
+*Revisado contra el código el 31-ago-2026. Los dos ⛔ que encabezaban esta lista estaban
+**cerrados** desde el 21-ago y nadie los tachó — el `50-status-roadmap.md` sí los daba por
+cerrados el 29-ago, así que los dos documentos se contradecían.*
+
+- [x] ~~⛔ **Rama de valoración** (§10.7 / I-17): `valuation` es terminal~~ → **cerrada**.
+      Es un paso que se acusa y sigue al de dirección (`valuation_inline`). Quien reporta
+      termitas, chinches o "no sé qué es" sí puede agendar por WhatsApp.
+- [x] ~~⛔ **Factibilidad de traslado** (§5, decisiones 7/14): sin construir~~ → **construida**
+      (`visar_appointment/models/visar_travel_feasibility.py`, 593 líneas). Presupuesto entre
+      paradas, no radio; minutos configurables en **Ajustes → Visar → Agendado**.
+- **Desplegar reagendar y recontacto** — los dos están en el árbol de trabajo y validados en
+  `visar-test`, ninguno en `visar-db`.
 - **Equipo CRM de WhatsApp sin líder ni miembros** — `agent_request_handoff` deja la nota y la
   actividad, pero **escala a nadie**. Es dato, no código, y bloquea el hand-off real.
 - **Plantillas de Meta sin aprobar** — hasta entonces los avisos salientes están siempre fuera

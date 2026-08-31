@@ -6,8 +6,15 @@
 > (the Odoo module) and, once the FastAPI repo is cloned, its own
 > `.context/` + `deploy/RUNBOOK.md`.
 >
-> **Written:** 2026-07-24. **Not yet executed** — this is the plan for an agent
-> to run, not a record of a done deploy.
+> **Written:** 2026-07-24. **⚠️ HISTORICAL — this deploy WAS executed.** The banner said
+> *"Not yet executed — this is the plan for an agent to run, not a record of a done deploy"* and
+> kept saying it long after the fact. The agent has been **live in production since
+> 19/20-Aug-2026**, answering real customers and taking real bookings. Corrected 2026-08-31.
+>
+> Keep using it as a **runbook for a fresh host** (the steps are still the right ones), never as
+> a status report. Two things below are stale by construction: the module is no longer a
+> "read-only RPC surface with three typed methods" (it is **17 methods, seven of which write**),
+> and the versions quoted are from July. Re-read the manifests.
 
 ---
 
