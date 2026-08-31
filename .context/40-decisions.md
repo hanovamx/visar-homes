@@ -39,10 +39,32 @@ campos.
   nativa al nacer (`_compute_worksheet_template_id`), así que un guardia "solo si está vacío"
   nunca dispararía. `wire_combined_project` la escribe si está vacía **o** si sigue en la
   nativa, y respeta cualquier elección hecha a mano.
-- **Pólizas: fase 2.** `_visar_generate_period_visit` es otro camino (una visita por línea y
-  por factura pagada, idempotencia por `(orden, factura, línea)`), y consolidar ahí exige una
-  regla nueva para una visita que pertenece a dos líneas, un guardia para conteos de visitas
-  distintos, y aceptar que se **reduce a la mitad** el conteo que alimenta la siniestralidad.
+- **Pólizas — [IMPLEMENTADO 31-ago-2026].** `_visar_generate_period_visit` es otro camino (una
+  visita por línea y por factura pagada) y hasta hoy partía en dos la visita de una póliza combo.
+  En la BD hay **17 pólizas con dos servicios**; S00246 tiene **12 tareas** —dos de ellas a la
+  misma hora del 1-sep— donde debía haber 6. Se veía como "la web falla y WhatsApp no": es
+  casualidad. Ninguna de las 19 órdenes del agente era póliza, y la consolidación nunca dependió
+  del canal. La regla se subió a `project.project._visar_effective_projects`, que ahora comparten
+  los dos caminos: llegan al proyecto por campos distintos (`product.template.project_id` vs
+  `visar_fsm_project_id`) y obedecen la misma configuración. Lo que la fase 2 exigía, y cómo
+  quedó:
+  - **Una visita que pertenece a dos líneas** → `project.task.visar_source_line_ids` (m2m). El
+    m2o `visar_source_line_id` se conserva como **representante** (vistas y datos anteriores); el
+    m2m es el que manda para la idempotencia por `(orden, factura, grupo)` y para
+    `visar_service_group_ids`, que en una visita de póliza **no** puede salir de
+    `sale.order.line.task_id`: la línea genera N visitas a lo largo del contrato y ese m2o solo
+    apunta a una.
+  - **Guardia de conteos distintos** → si las líneas del grupo piden distinto nº de visitas por
+    factura (12 podas y 6 fumigaciones al año) **no se consolidan**. Consolidar solo la parte que
+    coincide dejaría al cliente sin las visitas de la diferencia.
+  - **Siniestralidad** → sí, una póliza combo pasa a contar **la mitad** de servicios ejecutados
+    (`visar_service_visit_count`) y su tasa de garantía sube en consecuencia. Es lo que se quiso:
+    la métrica cuenta visitas y ahora la visita es una. Los históricos no se recalculan, así que
+    las pólizas viejas y las nuevas **no son comparables** en esa cifra.
+  - **La garantía NO se consolida:** se vuelve a prestar el servicio que falló, no los dos.
+  - **Datos existentes:** las parejas ya creadas se quedan como están, por la misma razón que
+    arriba. La migración `19.0.1.5.0` solo rellena el m2m desde el m2o — sin eso, la siguiente
+    factura pagada de una póliza vieja volvería a generar visitas ya generadas.
 - **Datos existentes:** las parejas de tareas combo que ya existan se quedan como están; la
   consolidación aplica a pedidos nuevos. Mezclar hojas ya capturadas no tiene respuesta limpia.
 - **Módulos:** `visar_fsm` v19.0.1.1.0 (+ su primera migración), `visar_field_app` v19.0.1.24.0.

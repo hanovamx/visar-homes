@@ -50,3 +50,54 @@ class ProjectProject(models.Model):
                     "«%(project)s» ya es el destino de otros proyectos, así que no "
                     "puede apuntar a su vez a uno combinado.",
                     project=project.display_name))
+
+    # ------------------------------------------------------------------
+    # Regla de consolidación (compartida por venta puntual y póliza)
+    # ------------------------------------------------------------------
+    def _visar_combined_target(self):
+        """Proyecto combinado USABLE de este proyecto, o vacío.
+
+        Un combinado archivado, que dejó de ser FSM o de otra compañía no puede
+        recibir tareas: mejor dos servicios externos que uno roto.
+        """
+        self.ensure_one()
+        combined = self.visar_fsm_combined_project_id
+        if (not combined or not combined.active or not combined.is_fsm
+                or (combined.company_id
+                    and combined.company_id != self.company_id)):
+            return self.browse()
+        return combined
+
+    @api.model
+    def _visar_effective_projects(self, projects):
+        """{id de proyecto origen: proyecto EFECTIVO} para el trabajo de UNA visita.
+
+        El proyecto efectivo es el propio, salvo que la visita traiga trabajo de
+        **dos o más** proyectos distintos que apunten al mismo combinado: una
+        fumigación sola no debe caer en "Servicios combinados" (recibiría la hoja
+        combinada y se le exigiría captura de áreas verdes que nadie contrató).
+
+        Es el primitivo que comparten los DOS caminos que crean servicios externos —
+        la confirmación de un pedido puntual (`visar_fsm/models/sale_order_fsm.py`) y
+        la visita por periodo de una póliza (`visar_subscription`)—, que llegan al
+        proyecto por campos distintos (`product.template.project_id` vs
+        `visar_fsm_project_id`) pero obedecen la MISMA regla. Tenerla dos veces sería
+        que el combo se consolidara en una venta y no en la póliza del mismo cliente.
+
+        Sigue siendo configuración pura: ningún nombre ni id de proyecto en código.
+        """
+        sources_by_combined = {}
+        for project in projects:
+            combined = project._visar_combined_target()
+            if combined:
+                sources_by_combined.setdefault(combined.id, set()).add(project.id)
+        active_combined = {
+            combined_id for combined_id, source_ids in sources_by_combined.items()
+            if len(source_ids) > 1
+        }
+        effective = {}
+        for project in projects:
+            combined = project._visar_combined_target()
+            effective[project.id] = (
+                combined if combined.id in active_combined else project)
+        return effective

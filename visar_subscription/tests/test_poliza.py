@@ -443,3 +443,133 @@ class TestPoliza(TransactionCase):
         self.assertEqual(len(order.invoice_ids), 1, "una sola factura")
         visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
         self.assertEqual(len(visits), 12, "12 visitas contra esa única factura")
+
+    # ------------------------------------------------------------------
+    # Consolidación del combo en UNA visita
+    #
+    # La venta puntual ya lo hacía desde el 13-ago-2026 (`visar_fsm`); la póliza
+    # seguía por su propio camino (`_visar_generate_period_visit`) y partía la visita
+    # en dos. Estos tests fijan que las dos rutas obedecen la MISMA configuración.
+    # ------------------------------------------------------------------
+    def _combo_poliza_setup(self):
+        """Dos servicios de proyectos distintos que comparten visita, con sus grupos.
+
+        Es la configuración real de producción: cada proyecto de servicio apunta al
+        proyecto anfitrión con `visar_fsm_combined_project_id`. Devuelve
+        (proyecto combinado, segundo servicio).
+        """
+        combined = self.env['project.project'].create({
+            'name': 'FSM Combinados Póliza Test', 'is_fsm': True,
+            'company_id': self.env.company.id})
+        (self.project | self.project2).write(
+            {'visar_fsm_combined_project_id': combined.id})
+        service2 = self._make_service(
+            'Servicio Combo Visita Test', self.project2, 200.0)
+        self.group_a = self.env['visar.service.group'].create(
+            {'name': 'Fumigación Visita Test', 'code': 'GRPVA'})
+        self.group_b = self.env['visar.service.group'].create(
+            {'name': 'Áreas Verdes Visita Test', 'code': 'GRPVB'})
+        self.env['visar.service.dimension'].create({
+            'name': 'Dim Visita A Test', 'code': 'DIMVA',
+            'group_id': self.group_a.id, 'product_tmpl_id': self.service.id})
+        self.env['visar.service.dimension'].create({
+            'name': 'Dim Visita B Test', 'code': 'DIMVB',
+            'group_id': self.group_b.id, 'product_tmpl_id': service2.id})
+        return combined, service2
+
+    def test_22_combo_poliza_es_una_sola_visita(self):
+        """Una póliza combo genera UNA visita por periodo, no una por servicio."""
+        combined, service2 = self._combo_poliza_setup()
+        order = self._make_poliza([self.service, service2])
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 2,
+                         "2 periodos pagados = 2 visitas, no 4 (una por servicio)")
+        self.assertEqual(visits.mapped('project_id'), combined,
+                         "la visita se presta en el proyecto anfitrión del combo")
+
+        lines = self._service_lines(order)
+        for visit in visits:
+            self.assertEqual(visit.visar_source_line_ids, lines,
+                             "la visita cubre las DOS líneas de la póliza")
+            self.assertIn(visit.visar_source_line_id, lines,
+                          "el m2o conserva una de ellas como representante")
+            self.assertEqual(visit.visar_service_group_ids,
+                             self.group_a | self.group_b,
+                             "cuenta en las dos líneas de negocio")
+            # El técnico lee este título en su tarjeta: tiene que nombrar el trabajo
+            # completo, no el producto de una de las dos líneas.
+            self.assertIn(' + ', visit.name)
+            self.assertIn(self.group_a.name, visit.name)
+            self.assertIn(self.group_b.name, visit.name)
+
+        inv._invoice_paid_hook()
+        self.assertEqual(
+            len(order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)), 2,
+            "idempotente por (orden, factura, grupo de líneas)")
+
+    def test_23_conteos_distintos_no_consolidan(self):
+        """Con distinto nº de visitas por servicio, mejor dos visitas separadas."""
+        combined, service2 = self._combo_poliza_setup()
+        order = self._make_poliza([self.service, service2])
+        line_b = self._service_lines(order).filtered(
+            lambda l: l.product_id.product_tmpl_id == service2)
+        # El servicio B queda con un solo periodo pagado de entrada; el A con dos.
+        self._anticipo_lines(order).filtered(
+            lambda l: l.visar_anticipo_for_line_id == line_b
+        ).visar_anticipo_periods = 0
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertFalse(visits.filtered(lambda t: t.project_id == combined),
+                         "consolidar solo la parte que coincide dejaría al cliente "
+                         "sin las visitas de la diferencia")
+        self.assertEqual(
+            len(visits.filtered(lambda t: t.project_id == self.project)), 2)
+        self.assertEqual(
+            len(visits.filtered(lambda t: t.project_id == self.project2)), 1)
+
+    def test_24_un_servicio_solo_no_cae_en_combinados(self):
+        """Un servicio solo se queda en su proyecto: la regla exige dos orígenes."""
+        combined, _service2 = self._combo_poliza_setup()
+        order = self._make_poliza([self.service])
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+
+        visits = order.visar_visit_ids.filtered(lambda t: not t.visar_is_warranty)
+        self.assertEqual(len(visits), 2)
+        self.assertEqual(visits.mapped('project_id'), self.project,
+                         "una fumigación sola no debe recibir la hoja del combo")
+        self.assertFalse(visits.filtered(lambda t: t.project_id == combined))
+
+    def test_25_primera_visita_consolidada_hereda_cita(self):
+        """La visita consolidada recoge el horario que el cliente eligió UNA vez."""
+        if 'calendar_event_id' not in self.env['sale.order.line']._fields:
+            self.skipTest("website_appointment_sale no está instalado")
+        _combined, service2 = self._combo_poliza_setup()
+        order = self._make_poliza([self.service, service2])
+        start = fields.Datetime.to_datetime('2026-01-15 16:00:00')
+        stop = fields.Datetime.to_datetime('2026-01-15 18:00:00')
+        event = self.env['calendar.event'].create({
+            'name': 'Cita Combo Póliza Test', 'start': start, 'stop': stop})
+        self._service_lines(order).calendar_event_id = event.id
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+
+        visits = order.visar_visit_ids.filtered(
+            lambda t: not t.visar_is_warranty).sorted('id')
+        self.assertEqual(len(visits), 2)
+        self.assertEqual(visits[0].planned_date_begin, start,
+                         "la 1ª visita conserva el horario de la cita")
+        self.assertEqual(visits[0].date_deadline, stop)
+        self.assertFalse(visits[1].planned_date_begin,
+                         "la 2ª visita del ciclo se agenda después")

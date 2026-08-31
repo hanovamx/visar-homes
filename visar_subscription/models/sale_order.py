@@ -1,7 +1,11 @@
+import logging
+
 from dateutil.relativedelta import relativedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
 
 
 class SaleOrder(models.Model):
@@ -302,6 +306,64 @@ class SaleOrder(models.Model):
             return self.visar_included_visits
         return self._visar_prepaid_periods_for_line(line) if is_first else 1
 
+    def _visar_visit_lines(self):
+        """Líneas de la póliza que generan visita y tienen proyecto FSM configurado."""
+        self.ensure_one()
+        return self.order_line.filtered(
+            lambda l: l.product_id.product_tmpl_id.visar_generates_visit
+            and l.product_id.product_tmpl_id.visar_fsm_project_id)
+
+    def _visar_visit_groups(self, is_first):
+        """[(líneas, proyecto, nº de visitas)] — el trabajo del periodo, ya consolidado.
+
+        Una póliza combo (fumigación + áreas verdes) es UNA visita, no dos: el técnico
+        va una vez, llena una hoja, firma una vez y el cliente recibe UN aviso de "voy
+        en camino". Se agrupa por proyecto EFECTIVO con la MISMA regla de configuración
+        que la venta puntual (`project.project._visar_effective_projects`), así que dar
+        de alta un tercer servicio combinable sigue siendo marcar un campo en su
+        proyecto y no tocar código, y el resultado no depende de por dónde se contrató
+        (wizard web, agente de WhatsApp o alta manual en Ventas).
+
+        GUARDIA — nº de visitas distinto: si dos líneas del mismo grupo generan
+        distinto número de visitas por factura (p. ej. 12 podas y 6 fumigaciones al
+        año), no se consolidan. Consolidar solo la parte que coincide dejaría al
+        cliente sin las visitas de la diferencia, y consolidarlo todo le regalaría o
+        le quitaría servicios: mejor dos visitas separadas, como hasta ahora.
+        """
+        self.ensure_one()
+        lines = self._visar_visit_lines()
+        if not lines:
+            return []
+        Project = self.env['project.project']
+        line_project = {
+            line.id: line.product_id.product_tmpl_id.visar_fsm_project_id
+            for line in lines}
+        projects = Project.browse(
+            sorted({project.id for project in line_project.values()}))
+        effective = Project._visar_effective_projects(projects)
+
+        grouped = {}
+        for line in lines:
+            project = effective[line_project[line.id].id]
+            grouped.setdefault(project.id, self.env['sale.order.line'])
+            grouped[project.id] |= line
+
+        groups = []
+        for project_id, group_lines in grouped.items():
+            counts = {self._visar_visits_for_line(line, is_first)
+                      for line in group_lines}
+            if len(group_lines) > 1 and len(counts) > 1:
+                _logger.info(
+                    "Póliza %s: %s líneas comparten proyecto pero piden %s visitas "
+                    "distintas; se generan por separado.",
+                    self.name, len(group_lines), sorted(counts))
+                for line in group_lines:
+                    groups.append((line, line_project[line.id],
+                                   self._visar_visits_for_line(line, is_first)))
+                continue
+            groups.append((group_lines, Project.browse(project_id), counts.pop()))
+        return groups
+
     def _visar_generate_period_visit(self, invoice):
         self.ensure_one()
         if not self.is_subscription or self.subscription_state != '3_progress':
@@ -312,16 +374,12 @@ class SaleOrder(models.Model):
         first_invoice = self.invoice_ids.filtered(
             lambda m: m.move_type == 'out_invoice').sorted('id')[:1]
         is_first = invoice == first_invoice
-        for line in self.order_line:
-            tmpl = line.product_id.product_tmpl_id
-            if not tmpl.visar_generates_visit or not tmpl.visar_fsm_project_id:
-                continue
-            n = self._visar_visits_for_line(line, is_first)
-            # Idempotencia por (orden, factura, línea): crear las que falten.
+        for lines, project, n in self._visar_visit_groups(is_first):
+            # Idempotencia por (orden, factura, grupo de líneas): crear las que falten.
             existing = Task.search_count([
                 ('visar_subscription_order_id', '=', self.id),
                 ('visar_source_invoice_id', '=', invoice.id),
-                ('visar_source_line_id', '=', line.id),
+                ('visar_source_line_ids', 'in', lines.ids),
                 ('visar_is_warranty', '=', False),
             ])
             # Se arranca el rango en las que ya existen (y no en 0) para que el
@@ -329,13 +387,12 @@ class SaleOrder(models.Model):
             # dejó el lote a medias.
             for seq in range(existing, n):
                 Task.create(self._visar_visit_vals(
-                    line, tmpl.visar_fsm_project_id, invoice,
-                    seq=seq + 1, total=n))
+                    lines, project, invoice, seq=seq + 1, total=n))
             if is_first:
-                self._visar_enrich_first_visit(line)
+                self._visar_enrich_first_visit(lines)
 
-    def _visar_enrich_first_visit(self, line):
-        """La PRIMERA visita de la línea hereda fecha y técnicos de la cita reservada.
+    def _visar_enrich_first_visit(self, lines):
+        """La PRIMERA visita del grupo hereda fecha y técnicos de la cita reservada.
 
         Al confirmar una póliza, `_timesheet_service_generation` saca las líneas de
         póliza antes de que visar_fsm cree su tarea, así que el horario y el técnico
@@ -350,18 +407,38 @@ class SaleOrder(models.Model):
         self.ensure_one()
         first = self.env['project.task'].search([
             ('visar_subscription_order_id', '=', self.id),
-            ('visar_source_line_id', '=', line.id),
+            ('visar_source_line_ids', 'in', lines.ids),
             ('visar_is_warranty', '=', False),
         ], order='id', limit=1)
         if first and not first.planned_date_begin:
             self._visar_enrich_fsm_tasks(first)
 
-    def _visar_visit_vals(self, line, project, invoice, warranty=False, seq=0, total=0):
+    @api.model
+    def _visar_visit_service_label(self, lines):
+        """Qué servicios cubre la visita, para su título.
+
+        Una visita consolidada se nombra con sus GRUPOS de servicio ("Fumigación +
+        Mantenimiento de áreas verdes"), igual que la tarea consolidada de la venta
+        puntual (`project.task._visar_rename_from_services`): el nombre del producto de
+        una sola línea nombraría media visita, y es lo que el técnico lee en su tarjeta.
+        Un producto de póliza sin dimensión configurada no tiene grupo, así que se cae a
+        los nombres de producto (sin repetir).
+        """
+        if len(lines) == 1:
+            return lines.product_id.name
+        groups = lines.mapped('product_id.product_tmpl_id')._visar_service_groups()
+        if len(groups) > 1:
+            return ' + '.join(groups.mapped('name'))
+        return ' + '.join(dict.fromkeys(lines.mapped('product_id.name')))
+
+    def _visar_visit_vals(self, lines, project, invoice, warranty=False, seq=0, total=0):
+        """Valores de UNA visita. `lines` es el grupo que atiende (una o varias)."""
         self.ensure_one()
         period = invoice.invoice_date if invoice else fields.Date.context_today(self)
         label = _("Garantía") if warranty else _("Visita")
         name = _("%(label)s póliza %(period)s — %(product)s",
-                 label=label, period=period, product=line.product_id.name)
+                 label=label, period=period,
+                 product=self._visar_visit_service_label(lines))
         # Un lote de N visitas nace con la misma fecha y el mismo servicio, así que sin
         # consecutivo quedarían N tareas de título idéntico en el tablero.
         if total > 1:
@@ -373,7 +450,10 @@ class SaleOrder(models.Model):
             'company_id': self.company_id.id,
             'visar_subscription_order_id': self.id,
             'visar_source_invoice_id': False if warranty else (invoice.id if invoice else False),
-            'visar_source_line_id': False if warranty else line.id,
+            # El m2o guarda la línea REPRESENTANTE (compatibilidad con vistas y datos
+            # anteriores); el conjunto real de líneas atendidas va en el m2m.
+            'visar_source_line_id': False if warranty else lines[:1].id,
+            'visar_source_line_ids': False if warranty else [(6, 0, lines.ids)],
             'visar_is_warranty': warranty,
         }
 
@@ -404,13 +484,15 @@ class SaleOrder(models.Model):
 
     def action_visar_add_warranty_visit(self):
         """Crea una visita de garantía (sin costo) ligada a la póliza, validando
-        elegibilidad (póliza activa + reincidencia <30 días)."""
+        elegibilidad (póliza activa + reincidencia <30 días).
+
+        La garantía NO se consolida aunque la póliza sea combo: se regresa a repetir el
+        servicio que falló, no a prestar los dos otra vez. Va al proyecto de la primera
+        línea de servicio; si el que reincidió es el otro, se cambia a mano.
+        """
         self.ensure_one()
         self._visar_check_warranty_eligibility()
-        line = self.order_line.filtered(
-            lambda l: l.product_id.product_tmpl_id.visar_generates_visit
-            and l.product_id.product_tmpl_id.visar_fsm_project_id
-        )[:1]
+        line = self._visar_visit_lines()[:1]
         if not line:
             return False
         tmpl = line.product_id.product_tmpl_id

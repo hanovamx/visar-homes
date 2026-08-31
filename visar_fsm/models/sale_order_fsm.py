@@ -39,39 +39,18 @@ class SaleOrderLine(models.Model):
     def _visar_effective_project_map(self, visar_service_lines):
         """{line.id: proyecto EFECTIVO} — el propio, o el combinado si aplica.
 
-        Un proyecto declara con qué otros comparte visita apuntando al mismo
-        `visar_fsm_combined_project_id` (ver `models/project_project.py`). La
-        consolidación solo se activa cuando la cita trae trabajo de **dos o más**
-        proyectos distintos que apuntan a ese mismo combinado: una fumigación sola
-        no debe caer en "Servicios combinados" (recibiría la hoja combinada y se le
-        exigiría captura de áreas verdes que nadie contrató).
-
-        Es configuración pura: ningún nombre ni id de proyecto vive en el código.
+        La regla (qué proyectos comparten visita, y los guardias sobre un combinado
+        inutilizable) vive en `project.project._visar_effective_projects` porque la
+        comparten las visitas de póliza, que llegan al proyecto por otro campo. Aquí
+        solo se traduce línea -> proyecto.
         """
-        projects_by_combined = {}
-        for line in visar_service_lines:
-            project = self._visar_line_project(line)
-            combined = project.visar_fsm_combined_project_id
-            # Un combinado archivado, que dejó de ser FSM o de otra compañía no puede
-            # recibir tareas: mejor dos servicios externos que uno roto.
-            if (not combined or not combined.active or not combined.is_fsm
-                    or (combined.company_id
-                        and combined.company_id != project.company_id)):
-                continue
-            projects_by_combined.setdefault(combined, set()).add(project.id)
-
-        active_combined = {
-            combined for combined, source_ids in projects_by_combined.items()
-            if len(source_ids) > 1
-        }
-
-        effective = {}
-        for line in visar_service_lines:
-            project = self._visar_line_project(line)
-            combined = project.visar_fsm_combined_project_id
-            effective[line.id] = (
-                combined if combined in active_combined else project)
-        return effective
+        line_project = {
+            line.id: self._visar_line_project(line) for line in visar_service_lines}
+        projects = self.env['project.project'].browse(
+            sorted({project.id for project in line_project.values()}))
+        effective = projects._visar_effective_projects(projects)
+        return {line_id: effective[project.id]
+                for line_id, project in line_project.items()}
 
     def _visar_create_grouped_tasks(self, visar_service_lines):
         """Create one FSM task per effective project group; returns {project_id: task}.

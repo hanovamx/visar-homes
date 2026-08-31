@@ -143,6 +143,47 @@ servicio con el plan, los extras como cargo único, y la línea de mensualidad
 adelantada. La **primera visita hereda fecha y técnico** de la cita que el cliente
 acaba de elegir; las demás nacen sin agendar.
 
+## Una póliza combo es UNA visita, no dos (31-ago-2026, v19.0.1.5.0)
+
+Una póliza de fumigación **+** mantenimiento de áreas verdes generaba **dos visitas por
+periodo**, en dos proyectos distintos y a la misma hora: dos tarjetas para el técnico, dos
+hojas, dos firmas, dos PDF y dos avisos de WhatsApp para el cliente. La venta puntual ya
+consolidaba desde el 13-ago (`visar_fsm`); la póliza no, porque
+`_visar_generate_period_visit` es otro camino — `visar_subscription` saca las líneas de
+póliza de `_timesheet_service_generation` a propósito, para no crear la visita al confirmar
+sino al **pagar** cada periodo.
+
+**No era un problema de canal.** Parecía "por la web sale mal y por WhatsApp bien" porque
+ninguna orden del agente había sido póliza todavía; el agente sí puede venderlas
+(`visar_agent_tools` pasa `poliza_plan_id`) y le pasaba exactamente lo mismo.
+
+Ahora ambos caminos agrupan por **proyecto efectivo** con el mismo primitivo,
+`project.project._visar_effective_projects`, y con la misma configuración de siempre
+(`visar_fsm_combined_project_id` en cada proyecto de servicio). Sigue sin haber nombres ni
+ids de proyecto en el código.
+
+| pieza | qué hace |
+|---|---|
+| `sale.order._visar_visit_groups()` | agrupa las líneas que generan visita por proyecto efectivo y decide cuántas visitas toca crear a cada grupo |
+| `project.task.visar_source_line_ids` | todas las líneas que cubre la visita. Manda sobre el m2o `visar_source_line_id`, que queda como **representante** |
+| `sale.order._visar_visit_service_label()` | título de la visita consolidada: *"Visita póliza 2026-08-30 — Fumigación + Mantenimiento de áreas verdes (1/6)"* |
+| migración `19.0.1.5.0` | rellena el m2m de las visitas ya existentes desde el m2o |
+
+Detalles que no son obvios:
+
+- **La hoja de trabajo sale sola.** La visita nace en el proyecto anfitrión y Odoo copia de
+  ahí `worksheet_template_id` (la plantilla del combo, ver `25-field-app.md`).
+- **Guardia:** si las dos líneas piden **distinto** nº de visitas por factura (12 podas y 6
+  fumigaciones al año), no se consolidan. Media consolidación dejaría al cliente sin las
+  visitas de la diferencia.
+- **La garantía no se consolida**: se repite el servicio que falló, no los dos. Va al
+  proyecto de la primera línea; si reincidió el otro, se cambia a mano.
+- **Siniestralidad:** una póliza combo cuenta ahora **la mitad** de servicios ejecutados y su
+  tasa de garantía sube en consecuencia. Es lo correcto —la métrica cuenta visitas y la
+  visita es una— pero las pólizas anteriores no se recalcularon: no son comparables.
+- **Lo ya creado no se fusiona.** S00246 conserva sus 12 tareas; a partir de la siguiente
+  factura pagada generaría 6. Mezclar hojas ya capturadas no tiene respuesta limpia.
+
 ## Pendiente / para revisar
 
 ### Bug B — S00087 y S00088 tienen dos facturas de 2 meses cada uno

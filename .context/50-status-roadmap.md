@@ -2,8 +2,8 @@
 
 > Última actualización: **31-ago-2026** — versiones releídas de los `__manifest__.py`, no de la
 > memoria. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.10.0**,
-> **visar_fsm 19.0.1.1.0**, **visar_appointment 19.0.2.8.0**, **visar_field_app 19.0.1.26.0**,
-> **visar_subscription 19.0.1.4.0**, **visar_crm 19.0.1.3.0**,
+> **visar_fsm 19.0.1.2.0**, **visar_appointment 19.0.2.8.0**, **visar_field_app 19.0.1.26.0**,
+> **visar_subscription 19.0.1.5.0**, **visar_crm 19.0.1.3.0**,
 > **visar_whatsapp_agent 19.0.1.8.0** (en producción: **1.6.0**).
 > Entrada anterior: 29-ago-2026, reconciliada contra `git log` tras 8 días sin tocarse. Sus
 > versiones ya iban una menor en tres módulos, que es el aviso de siempre: **estas cifras
@@ -11,6 +11,19 @@
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Hecho — 31-ago-2026
+
+- [x] **La póliza combo ya es UNA visita** (`visar_fsm` 19.0.1.2.0, `visar_subscription`
+      19.0.1.5.0). Era la "fase 2" que quedó abierta el 13-ago en `40-decisions.md`: la venta
+      puntual consolidaba y la póliza no, así que un cliente con fumigación + áreas verdes
+      recibía **dos visitas a la misma hora** cada periodo (17 pólizas así en la BD; S00246 con
+      12 tareas donde iban 6). Se veía como "por la web falla y por WhatsApp no" — es
+      casualidad: ninguna orden del agente había sido póliza, y la consolidación nunca dependió
+      del canal. La regla vive ahora en `project.project._visar_effective_projects`, compartida
+      por los dos caminos. Detalle en `35-polizas.md` y `40-decisions.md`.
+      **Pendiente de desplegar en `visar-db`** (probado en `visar-test`: 39 tests verdes,
+      migración de relleno sobre 147 visitas reales).
 
 ## Hecho — desde el 20-ago, y que este archivo no registraba
 
