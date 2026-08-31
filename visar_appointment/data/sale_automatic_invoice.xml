@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Facturación automática al completarse el pago (REQ-3921).
+
+        Sin este parámetro, un pedido pagado desde el sitio se confirma pero se
+        queda en "por facturar": el dinero está cobrado y no hay factura. Se
+        detectó con S00242 y S00250, ambos con la transacción en `done`.
+
+        Importa más de lo que parece, porque de la factura cuelga el resto de la
+        cadena. El core hace, en este orden:
+
+            pago `done` → confirmar pedido → CREAR FACTURA → contabilizarla
+                        → conciliar el cobro → `_invoice_paid_hook`
+
+        y es ese último gancho el que genera las visitas de póliza
+        (`visar_subscription`). Con la facturación automática apagada la cadena
+        se corta en el tercer paso, así que **las pólizas contratadas por web no
+        generaban ninguna visita**.
+
+        Va como dato del módulo y no como configuración suelta a propósito: es
+        parte del comportamiento que este despliegue necesita, y así sobrevive a
+        una reinstalación o a reconstruir el servidor. Con `noupdate="1"` se
+        siembra una sola vez y cualquier cambio posterior hecho a mano se
+        respeta.
+    -->
+    <data noupdate="1">
+        <record id="visar_sale_automatic_invoice" model="ir.config_parameter">
+            <field name="key">sale.automatic_invoice</field>
+            <field name="value">True</field>
+        </record>
+    </data>
+</odoo>

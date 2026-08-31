@@ -5,3 +5,4 @@ from . import test_slot_hold
 from . import test_wizard_flow
 from . import test_travel_feasibility
 from . import test_reschedule_capacity
+from . import test_pago_factura

@@ -41,4 +41,53 @@
         </xpath>
     </template>
 
+    <!-- ==================================================================
+         "Presencial" en vez de "En línea"
+
+         Todos los servicios de Visar son a domicilio: el técnico va a casa del
+         cliente. Nunca hay videollamada.
+
+         El texto no sale de ninguna configuración nuestra — los 4 tipos de cita
+         tienen `location`, `location_id` y `event_videocall_source` vacíos. Es el
+         valor por defecto del core: cuando no hay `location_id`, la plantilla cae
+         a un ícono de cámara y la palabra "Online". Como el negocio nunca es en
+         línea, ese default está mal en el 100% de los casos.
+
+         Se corrige por herencia de plantilla y no llenando el campo `location` de
+         cada tipo de cita, para que aplique también a los tipos que se creen
+         después (criterio de aceptación del REQ-3923).
+         ================================================================== -->
+
+    <!-- Panel "Detalles de la reservación" del checkout: lo que ve el cliente
+         antes de confirmar. -->
+    <template id="visar_meeting_details_presencial"
+              inherit_id="appointment.appointment_meeting_details">
+        <xpath expr="//i[hasclass('fa-video-camera')]/.." position="replace">
+            <div class="d-flex py-1 px-0 bg-transparent o-cc1-text border-0" t-else="">
+                <i class="fa fa-home fa-fw me-2 mt-1 text-muted"/>
+                <span class="o_not_editable">Presencial</span>
+            </div>
+        </xpath>
+    </template>
+
+    <!-- Página de confirmación, fila "Dónde". Aquí el core ya respeta
+         `event.location` si viene con texto; solo se corrige el último recurso. -->
+    <template id="visar_appointment_validated_presencial"
+              inherit_id="appointment.appointment_validated">
+        <xpath expr="//t[@t-elif='based_on_users']" position="replace">
+            <t t-elif="based_on_users"><span>Presencial</span></t>
+        </xpath>
+    </template>
+
+    <!-- Tarjetas del listado de tipos de cita en el sitio. -->
+    <template id="visar_appointment_card_presencial"
+              inherit_id="website_appointment.appointment_card_body">
+        <xpath expr="//i[hasclass('fa-video-camera')]/.." position="replace">
+            <t t-else="">
+                <i class="fa fa-home lh-base" role="presentation"/>
+                <span class="o_not_editable">Presencial</span>
+            </t>
+        </xpath>
+    </template>
+
 </odoo>
