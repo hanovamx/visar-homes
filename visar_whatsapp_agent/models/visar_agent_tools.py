@@ -255,6 +255,87 @@ class VisarAgentTools(models.AbstractModel):
         }
 
     # ------------------------------------------------------------------
+    # 2b. Estimacion de m2 de construccion
+    # ------------------------------------------------------------------
+
+    @api.model
+    def agent_estimate_m2(self, payload):
+        """Proxies de la casa -> m2 de construccion, con la cuenta del wizard.
+
+        `payload` = {"rec": int, "ban": int, "niv": int, "gar": int,
+                     "predio": float}
+
+        Reutiliza visar.estimator.factor._visar_estimate_interior_m2(), la
+        misma que usa el wizard web, para que la web y WhatsApp no den numeros
+        distintos por la misma casa.
+
+        El modelo NO debe hacer esta cuenta a mano. La formula lleva un factor
+        por tamano de predio (0.72 a 1.70) y dos topes de coherencia contra el
+        predio; transcrita en prosa se pierden, y sin el predio la estimacion
+        no alcanza nunca el tramo de valoracion (harian falta ~24 recamaras).
+
+        `predio` es opcional pero cambia mucho el resultado: conviene pedirlo.
+        """
+        payload = payload or {}
+
+        def _num(key, default=0):
+            try:
+                return max(int(float(payload.get(key) or default)), 0)
+            except (TypeError, ValueError):
+                return default
+
+        rec = _num('rec')
+        ban = _num('ban')
+        niv = max(_num('niv', 1), 1)
+        gar = _num('gar')
+        try:
+            predio = max(float(payload.get('predio') or 0.0), 0.0)
+        except (TypeError, ValueError):
+            predio = 0.0
+
+        if rec <= 0:
+            return {
+                'm2': None, 'is_valuation': False, 'tier_label': None,
+                'predio_usado': False,
+                'message': "Falta el numero de recamaras para poder estimar.",
+            }
+
+        m2 = self.env['visar.estimator.factor']._visar_estimate_interior_m2(
+            rec, ban, niv, gar, predio)
+
+        # Tramo de fumigacion interior para ese m2: es lo que decide si la
+        # casa se cotiza o se va a valoracion tecnica.
+        dimension = self.env['visar.service.dimension'].search(
+            [('active', '=', True), ('measure_type', '=', 'interior')], limit=1)
+        tier = self.env['visar.service.tier'].browse()
+        if dimension:
+            template = self.env['product.template'].\
+                _visar_get_service_template_for_dimension(dimension)
+            if template:
+                tier = template._visar_tier_for_dimension_m2(dimension, m2)
+
+        is_valuation = bool(tier and tier.is_valuation)
+        if is_valuation:
+            message = (
+                "Alrededor de %d m2 de construccion. Con esa superficie hace "
+                "falta una visita de valoracion tecnica; no hay precio de "
+                "lista." % m2
+            )
+        else:
+            message = (
+                "Alrededor de %d m2 de construccion. Confirmalo con el cliente "
+                "antes de cotizar." % m2
+            )
+
+        return {
+            'm2': m2,
+            'is_valuation': is_valuation,
+            'tier_label': (self._agent_tier_label(tier) if tier else None),
+            'predio_usado': predio > 0,
+            'message': message,
+        }
+
+    # ------------------------------------------------------------------
     # 3. Cotizacion (reutiliza el motor del wizard)
     # ------------------------------------------------------------------
 
@@ -297,7 +378,15 @@ class VisarAgentTools(models.AbstractModel):
                     ),
                 }
             if not dimension:
-                return [], {'message': "No existe el servicio '%s'." % code}
+                # Decirle al modelo cuales SI existen: sin esto no puede
+                # corregirse solo y repite el codigo malo hasta agotar las
+                # iteraciones. Ver hallazgo FUM_INT del 31-ago-2026.
+                validos = self.env['visar.service.dimension'].search(
+                    [('active', '=', True)]).mapped('code')
+                return [], {'message': (
+                    "No existe el servicio '%s'. Los codigos validos son: %s."
+                    % (code, ", ".join(sorted(validos)) or "ninguno")
+                )}
             if m2 <= 0:
                 return [], {
                     'message': "Faltan los metros cuadrados de %s."
@@ -834,7 +923,7 @@ class VisarAgentTools(models.AbstractModel):
 
         `payload` = {
           "phone":        "5218112345678",
-          "service_code": "FUM_INT",     # DIMENSION; Odoo resuelve el grupo
+          "service_code": "fumigacion_interior",  # DIMENSION; Odoo resuelve el grupo
           "quote":        {"cp","m2","total","currency"} | None,   # enriquecimiento
           "source":       "whatsapp"     # opcional
         }
@@ -917,7 +1006,7 @@ class VisarAgentTools(models.AbstractModel):
 
         `payload` = {
           "phone":        "5218112345678",
-          "service_code": "FUM_INT" | None,   # puede no saberse todavia
+          "service_code": "fumigacion_interior" | None,  # puede no saberse aun
           "context":      {...},              # foto para redactar el recontacto
           "source":       "whatsapp"          # opcional
         }
@@ -1524,7 +1613,7 @@ class VisarAgentTools(models.AbstractModel):
           "reason":  "no_slot_fits",          # de HANDOFF_REASONS
           "summary": "texto libre corto",     # opcional, lo que dijo el cliente
           "context": {"servicio": "...", "cp": "64000", ...},  # opcional
-          "service_code": "FUM_INT"           # opcional, para agrupar por grupo
+          "service_code": "fumigacion_interior"  # opcional, para agrupar por grupo
         }
 
         Devuelve {"lead_id", "created", "activity_scheduled", "skipped_reason"}.

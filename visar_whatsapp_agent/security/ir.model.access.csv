@@ -8,6 +8,7 @@ access_agent_whatsapp_config_manager,agent.whatsapp.config.manager,model_visar_w
 access_agent_service_group,agent.service.group.readonly,visar_base.model_visar_service_group,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_service_dimension,agent.service.dimension.readonly,visar_base.model_visar_service_dimension,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_service_tier,agent.service.tier.readonly,visar_base.model_visar_service_tier,group_whatsapp_agent_readonly,1,0,0,0
+access_agent_estimator_factor,agent.estimator.factor.readonly,visar_base.model_visar_estimator_factor,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_zone,agent.zone.readonly,visar_base.model_visar_zone,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_zone_cp,agent.zone.cp.readonly,visar_base.model_visar_zone_cp,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_product_template,agent.product.template.readonly,product.model_product_template,group_whatsapp_agent_readonly,1,0,0,0
