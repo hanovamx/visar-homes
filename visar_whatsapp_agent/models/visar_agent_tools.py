@@ -175,8 +175,72 @@ class VisarAgentTools(models.AbstractModel):
             'groups': groups_payload,
             'zones': zones_payload,
             'combos': combos_payload,
+            'polizas': self._agent_poliza_plans(),
             'notes': notes,
         }
+
+    @api.model
+    def _agent_poliza_plans(self):
+        """Planes de poliza cotizables, para que el modelo copie el `plan_id`.
+
+        Sin esto el modelo no tiene de donde sacar el id y lo unico que le
+        queda es derivar el precio a mano, que es justo lo que el prompt le
+        prohibe. Misma leccion que los codigos de dimension: el identificador
+        se copia del catalogo, nunca se deduce.
+
+        Solo se listan los planes que ESTAN PRECIADOS -con al menos un item de
+        tarifa-. Un plan sin tarifa cotizaria al precio de contado sin avisar,
+        y el cliente oiria "con poliza sale igual", que es falso.
+        """
+        if 'sale.subscription.plan' not in self.env:
+            return []
+        plans = self.env['sale.subscription.plan'].sudo().search([])
+        if not plans:
+            return []
+        con_tarifa = set(self.env['product.pricelist.item'].sudo().search(
+            [('plan_id', 'in', plans.ids)]).mapped('plan_id').ids)
+        return [
+            {
+                'plan_id': plan.id,
+                'name': plan.name,
+                'periodo_valor': plan.billing_period_value,
+                'periodo_unidad': plan.billing_period_unit,
+                'visitas_incluidas': plan.visar_included_visits,
+                'periodos_primer_cobro': plan.visar_first_invoice_periods,
+            }
+            for plan in plans if plan.id in con_tarifa
+        ]
+
+    @api.model
+    def _agent_resolve_plan(self, plan_id):
+        """`plan_id` -> plan de poliza. Devuelve (plan, error).
+
+        Un id que no existe se responde con la lista de los que si, por la
+        misma razon que los codigos de dimension: sin saber cuales son validos
+        el modelo repite el malo hasta agotar las iteraciones.
+        """
+        if not plan_id:
+            return None, None
+        if 'sale.subscription.plan' not in self.env:
+            return None, {'message': "Las polizas no estan disponibles."}
+        try:
+            plan_id = int(plan_id)
+        except (TypeError, ValueError):
+            plan_id = 0
+        # `if Plan` NO sirve aqui: un recordset vacio es falsy y el modelo del
+        # registro se pide vacio siempre, asi que la comprobacion tumbaba todos
+        # los planes -incluido el 3, que la propia respuesta listaba como
+        # valido-. Se comprueba el modelo arriba y aqui solo el browse.
+        plan = self.env['sale.subscription.plan'].sudo().browse(plan_id).exists()
+        if plan:
+            return plan, None
+        validos = self._agent_poliza_plans()
+        return None, {'message': (
+            "No existe el plan de poliza %s. Los planes validos son: %s."
+            % (plan_id, ", ".join(
+                "%s (plan_id %s)" % (p['name'], p['plan_id']) for p in validos)
+               or "ninguno")
+        )}
 
     # ------------------------------------------------------------------
     # 1b. Configuracion de runtime (prompt editable + knobs del LLM)
@@ -425,7 +489,11 @@ class VisarAgentTools(models.AbstractModel):
 
         `payload` = {"service_code": str, "cp": str, "m2": float}
                     o {"cp": str, "items": [{"service_code": str, "m2": float}, ...],
-                       "include_roedores": bool}
+                       "include_roedores": bool, "plan_id": int}
+
+        Con `plan_id` (de los `polizas` del catalogo) cotiza como POLIZA en vez
+        de contado: `total` pasa a ser lo recurrente por periodo y `poliza`
+        trae el primer cobro, que lleva los periodos adelantados.
 
         Un solo servicio de fumigacion interior + exterior se cotiza como UNA
         variante combinada (no la suma de dos). Varios servicios distintos
@@ -453,6 +521,7 @@ class VisarAgentTools(models.AbstractModel):
             'lines': [],
             'total': None,
             'combos_disponibles': [],
+            'poliza': None,
         }
 
         payload = payload or {}
@@ -474,8 +543,19 @@ class VisarAgentTools(models.AbstractModel):
             return {**base, **error}
 
         include_roedores = bool(payload.get('include_roedores'))
+
+        # Con `plan` el motor cotiza contra la tarifa (zona x plan): el mismo
+        # basket, la misma regla de combo, otro precio de lista. Es un
+        # parametro y no una tool aparte a proposito: el descuento de poliza y
+        # el de combo se componen en UNA linea de `_visar_quote_booking`
+        # (`unit_price = list_unit_price * (1 - discount/100)`), y duplicar ese
+        # camino es garantizar que un dia dejen de coincidir.
+        plan, plan_error = self._agent_resolve_plan(payload.get('plan_id'))
+        if plan_error:
+            return {**base, **plan_error}
+
         quote = self.env['appointment.type']._visar_quote_booking(
-            items, zone, include_roedores=include_roedores)
+            items, zone, include_roedores=include_roedores, plan=plan or None)
 
         if not quote:
             return {**base, 'message': "No se pudo calcular el precio con esos datos."}
@@ -509,6 +589,20 @@ class VisarAgentTools(models.AbstractModel):
                 "Alguno de los servicios requiere visita de valoracion tecnica "
                 "para poder cotizar."
             )
+        elif plan:
+            # Con poliza el total NO es lo que se paga hoy: es lo recurrente
+            # por periodo. Decirlo aqui, y no solo en el esquema de la tool,
+            # porque este texto es lo ultimo que el modelo lee antes de
+            # redactar.
+            message = (
+                "Poliza '%s' en %s: %s %.2f por periodo (lo recurrente). "
+                "Primer cobro %s %.2f, que cubre %d periodo(s) por adelantado."
+                % (plan.name, zone.name, currency_name,
+                   quote['recurring_total'], currency_name,
+                   quote['upfront_total'], quote['periods']))
+            if quote['addons_total']:
+                message += (" Incluye %s %.2f de cargo unico que no se repite."
+                            % (currency_name, quote['addons_total']))
         else:
             message = "Total estimado en %s: %s %.2f." % (
                 zone.name, currency_name, quote['total'])
@@ -548,6 +642,14 @@ class VisarAgentTools(models.AbstractModel):
             'lines': lines,
             'total': quote['total'],
             'combos_disponibles': combos,
+            'poliza': {
+                'plan_id': plan.id,
+                'plan_name': plan.name,
+                'recurrente_por_periodo': quote['recurring_total'],
+                'periodos_primer_cobro': quote['periods'],
+                'primer_cobro': quote['upfront_total'],
+                'cargo_unico': quote['addons_total'],
+            } if plan else None,
             'message': message,
         }
 
