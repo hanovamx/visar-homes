@@ -158,6 +158,16 @@ _VISAR_PERIOD_LABELS = {
     'year': ("al año", "cada %s años"),
 }
 
+# CUANTOS periodos, no cada cuanto: "3 meses" para el primer cobro adelantado.
+# `_VISAR_PERIOD_LABELS` no sirve para esto -dice periodicidad, no cantidad- y
+# escribir "cubre cada 3 meses" en la pantalla de pago no significa nada.
+_VISAR_PERIOD_NOUNS = {
+    'day': ("día", "días"),
+    'week': ("semana", "semanas"),
+    'month': ("mes", "meses"),
+    'year': ("año", "años"),
+}
+
 
 class AppointmentType(models.Model):
     _inherit = 'appointment.type'
@@ -755,6 +765,14 @@ class AppointmentType(models.Model):
         return singular if value <= 1 else plural % value
 
     @api.model
+    def _visar_wizard_periods_label(self, plan, periods):
+        """"3 meses": cuantos periodos cubre el primer cobro adelantado."""
+        singular, plural = _VISAR_PERIOD_NOUNS.get(
+            plan.billing_period_unit, ("periodo", "periodos"))
+        n = max(1, int(periods or 1)) * max(1, int(plan.billing_period_value or 1))
+        return '%s %s' % (n, singular if n == 1 else plural)
+
+    @api.model
     def _visar_wizard_poliza_description(self, offer):
         """Que dice de un plan la linea de debajo del nombre.
 
@@ -770,6 +788,17 @@ class AppointmentType(models.Model):
             currency = self.env.company.currency_id
         partes = ['%s %s' % (format_amount(self.env, offer['period_total'], currency),
                              offer.get('period_label') or '')]
+        # El primer cobro va ADELANTADO en los planes que cobran varios
+        # periodos de entrada (3 en la mensual). Sin decirlo aqui, el cliente
+        # elige "570 al mes" y se encuentra 1,710 en la liga de pago.
+        periodos = offer.get('periods') or 1
+        if periodos > 1:
+            partes.append(_('primer cobro %(importe)s, cubre %(cuanto)s') % {
+                'importe': format_amount(
+                    self.env, offer['upfront_service_total'], currency),
+                'cuanto': self._visar_wizard_periods_label(
+                    offer['plan'], periodos),
+            })
         if offer.get('saving'):
             partes.append(_('ahorras %s') % format_amount(
                 self.env, offer['saving'], currency))
@@ -791,7 +820,16 @@ class AppointmentType(models.Model):
             return None
         if self._visar_wizard_requires_valuation(booking.get('selections') or {}):
             return None
+        # El id puede NO venir: por WhatsApp el booking viaja por el runtime,
+        # que lo rearma con una lista fija de claves y esta no esta en ella
+        # (`FlowState.from_state`). Exigirlo dejaba la poliza inalcanzable
+        # desde el chat -el paso se ofrecia, pero la respuesta se descartaba
+        # por "plan no ofrecido" y el resumen ensenaba el precio de contado-.
+        # Es un dato DERIVABLE, y el mismo `_visar_wizard_answer_address` lo
+        # saca de aqui, asi que se deriva en vez de exigirlo.
         master = self.browse(booking.get('master_appointment_type_id')).exists()
+        if not master:
+            master = self._visar_get_master_appointment_type()
         if not master:
             return None
         # Sin lista (zona × plan) no hay precio de póliza que ofrecer.
@@ -898,7 +936,7 @@ class AppointmentType(models.Model):
                           for label in self._visar_metros_labels(items) if label]
 
         zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
-        total = currency = None
+        total = currency = poliza = None
         if items and zone:
             plan = self.env['sale.subscription.plan'].sudo().browse(
                 int(selections.get('poliza_plan_id') or 0)).exists()
@@ -920,7 +958,19 @@ class AppointmentType(models.Model):
                     or self.env.company.currency_id).name
                 if plan and quote.get('recurring_total'):
                     lines.append(_('Póliza: %(plan)s') % {'plan': plan.name})
-        return {'lines': lines, 'total': total, 'currency': currency}
+                    # Un total a secas miente por omision en una poliza: son
+                    # DOS cifras -lo que se cobra hoy y lo que se repite- y el
+                    # cliente necesita las dos antes de pagar.
+                    poliza = {
+                        'plan_name': plan.name,
+                        'periods': quote['periods'],
+                        'recurring_total': quote['recurring_total'],
+                        'period_label': self._visar_wizard_plan_period_label(plan),
+                        'periods_label': self._visar_wizard_periods_label(
+                            plan, quote['periods']),
+                    }
+        return {'lines': lines, 'total': total, 'currency': currency,
+                'poliza': poliza}
 
     # ------------------------------------------------------------------
     # Dirección
