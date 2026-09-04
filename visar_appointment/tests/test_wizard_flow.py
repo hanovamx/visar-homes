@@ -406,29 +406,34 @@ class TestWizardFlow(TransactionCase):
         """Qué decirle al cliente en cada paso es negocio, y lo escribe Odoo.
 
         El runtime tenía UNA línea para todos los pasos de multi-selección
-        ("Puedes elegir varias") y no servía para ninguno: en servicios hay que
-        decir *varios servicios*; en plagas preventivas conviene una sola,
-        porque "Protección general" ya cubre las tres; y en cobertura lo que
-        hace falta no es una instrucción sino una recomendación — que "ambos"
-        no cuesta más si el patio es chico.
+        ("Puedes elegir varias") y no servía para ninguno: en plagas preventivas
+        conviene una sola, porque "Protección general" ya cubre las tres; y en
+        cobertura lo que hace falta no es una instrucción sino una recomendación
+        — que "ambos" no cuesta más si el patio es chico.
+
+        Y se dicen HABLANDO. Estas opciones solo las usa el chat (el wizard web
+        tiene sus propias plantillas), así que "selecciona" y *da click en
+        "{done}"* describían un widget que dejó de existir: primero las listas
+        de WhatsApp (ago-2026) y después los números (sep-2026).
         """
         booking = self._booking_fum(motivo='preventivo')
         pista = lambda step: self.AptType._visar_wizard_step_options(
             booking, step).get('hint') or ''
 
-        self.assertIn('varios servicios', pista('services'))
-        self.assertIn('más adecuada', pista('plagas'))
+        self.assertIn('Puedes decirme varios', pista('services'))
+        self.assertIn('lo que quieres evitar', pista('plagas'))
         self.assertIn('no hay costo adicional', pista('cobertura'))
         self.assertIn('no los del terreno', pista('interior'))
 
         # En correctivo el cliente reporta lo que TIENE, y puede ser más de una.
         correctivo = self.AptType._visar_wizard_step_options(
             self._booking_fum(motivo='correctivo'), 'plagas')
-        self.assertIn('varias opciones', correctivo.get('hint') or '')
+        self.assertIn('Puedes decirme varias', correctivo.get('hint') or '')
 
-        # El nombre del botón que cierra una multi-selección lo pone el canal:
-        # aquí solo va el hueco, o serían dos sitios que renombrar.
-        self.assertIn('{done}', pista('plagas'))
+        # Ninguna pista manda pulsar nada: no hay nada que pulsar.
+        for step in ('services', 'plagas', 'cobertura', 'interior'):
+            self.assertNotIn('click', pista(step))
+            self.assertNotIn('{done}', pista(step))
 
     def test_el_paso_de_interior_dice_que_se_esta_midiendo(self):
         """"¿De qué tamaño es el área?" no dice si cuenta el terreno.
@@ -685,20 +690,42 @@ class TestWizardFlow(TransactionCase):
         self.assertEqual(
             self.AptType._visar_wizard_plan_period_label(anual), "al año")
 
-    def test_la_descripcion_del_plan_dice_cuanto_y_cada_cuanto(self):
-        """Con cuatro planes que hoy se llaman igual (I-15), esta linea es lo
-        unico que los distingue en el chat."""
+    def test_la_descripcion_del_plan_empieza_por_el_AHORRO(self):
+        """Lo primero que se lee es por que conviene, no cuanto cuesta.
+
+        Y en porcentaje: "ahorras $150" no se puede juzgar sin saber sobre que,
+        y obliga al cliente a dividir de cabeza en mitad de la conversacion.
+        """
         plan = self.env['sale.subscription.plan'].create({
             'name': "Prueba mensual", 'billing_period_unit': 'month',
             'billing_period_value': 1})
         texto = self.AptType._visar_wizard_poliza_description({
-            'period_total': 450.0, 'saving': 150.0,
+            'period_total': 450.0, 'saving': 150.0, 'saving_percent': 25.0,
             'currency_id': self.env.company.currency_id.id,
             'period_label': self.AptType._visar_wizard_plan_period_label(plan),
         })
+        self.assertTrue(texto.startswith("Ahorro del 25%"), texto)
         self.assertIn("450", texto)
         self.assertIn("al mes", texto)
-        self.assertIn("150", texto, "y cuanto se ahorra frente a pagarlo suelto")
+
+    def test_sin_porcentaje_el_ahorro_se_dice_en_pesos(self):
+        """Degradar, nunca callar: un plan sin base con la que comparar sigue
+        pudiendo decir lo que ahorra."""
+        texto = self.AptType._visar_wizard_poliza_description({
+            'period_total': 450.0, 'saving': 150.0,
+            'currency_id': self.env.company.currency_id.id,
+            'period_label': "al mes",
+        })
+        self.assertIn("150", texto)
+
+    def test_el_plan_solo_lleva_su_periodicidad_si_hace_falta(self):
+        """Cuatro filas con la misma etiqueta (I-15) no se pueden elegir; cuatro
+        con la periodicidad pegada cuando ya se distinguen, sobran."""
+        etiqueta = self.AptType._visar_wizard_poliza_label
+        repetido = {'name': "Póliza", 'period_label': "cada 3 meses"}
+        self.assertEqual(etiqueta(repetido, ["Póliza", "Póliza"]),
+                         "Póliza (cada 3 meses)")
+        self.assertEqual(etiqueta(repetido, ["Póliza", "Otra"]), "Póliza")
 
     def test_las_opciones_son_serializables(self):
         """Van por JSON-RPC: un recordset colado aquí revienta en el transporte.

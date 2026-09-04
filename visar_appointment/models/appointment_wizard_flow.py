@@ -773,35 +773,63 @@ class AppointmentType(models.Model):
         return '%s %s' % (n, singular if n == 1 else plural)
 
     @api.model
+    def _visar_wizard_poliza_label(self, offer, nombres):
+        """El nombre del plan, con su periodicidad SOLO si hace falta.
+
+        Los cuatro planes se llaman hoy igual en el catalogo (I-15), y en el chat
+        eso son cuatro opciones con la MISMA etiqueta: elegir obliga a leerse las
+        cuatro descripciones enteras. Anadirle la periodicidad a todos seria
+        ruido cuando los nombres ya se distinguen solos, asi que se anade solo
+        donde colisionan.
+        """
+        nombre = offer.get('name') or ''
+        if nombres.count(nombre) <= 1:
+            return nombre
+        periodo = offer.get('period_label') or ''
+        return '%s (%s)' % (nombre, periodo) if periodo else nombre
+
+    @api.model
     def _visar_wizard_poliza_description(self, offer):
         """Que dice de un plan la linea de debajo del nombre.
 
-        Antes decia `billing_period_display_sentence` — *"per month"*, en ingles y
-        sin aportar nada que el nombre no dijera ya. Aqui dice lo unico que el
-        cliente necesita para decidir: **cuanto y cada cuanto**, y cuanto se ahorra.
+        Tres datos y en este orden: **cuanto se ahorra**, cuanto y cada cuanto, y
+        -solo si el primer cobro va adelantado- que se paga hoy.
 
-        Con cuatro planes que hoy se llaman igual en el catalogo (I-15 del
-        backlog), esta linea es ademas lo unico que los distingue en el chat.
+        El ahorro va primero porque es lo unico de la linea que contesta la
+        pregunta que el cliente se esta haciendo, que no es "cuanto cuesta" sino
+        "por que me conviene". Y va en PORCENTAJE: un "ahorras $150" no se puede
+        juzgar sin saber sobre que, y obliga a dividir de cabeza en mitad de una
+        conversacion. Los pesos se quedan como respaldo para cuando no hay
+        porcentaje que calcular.
+
+        Antes las tres cifras iban con el mismo peso y en el orden en que se
+        calculan. Con cuatro planes en pantalla eso son doce numeros seguidos, y
+        era el paso que mas se atragantaba al probar la conversacion entera.
         """
         currency = self.env['res.currency'].browse(offer.get('currency_id'))
         if not currency:
             currency = self.env.company.currency_id
-        partes = ['%s %s' % (format_amount(self.env, offer['period_total'], currency),
-                             offer.get('period_label') or '')]
+        partes = []
+        porcentaje = offer.get('saving_percent') or 0.0
+        if round(porcentaje) >= 1:
+            partes.append(_('Ahorro del %s%%') % int(round(porcentaje)))
+        elif offer.get('saving'):
+            partes.append(_('ahorras %s') % format_amount(
+                self.env, offer['saving'], currency))
+        partes.append('%s %s' % (format_amount(self.env, offer['period_total'],
+                                               currency),
+                                 offer.get('period_label') or ''))
         # El primer cobro va ADELANTADO en los planes que cobran varios
         # periodos de entrada (3 en la mensual). Sin decirlo aqui, el cliente
         # elige "570 al mes" y se encuentra 1,710 en la liga de pago.
         periodos = offer.get('periods') or 1
         if periodos > 1:
-            partes.append(_('primer cobro %(importe)s, cubre %(cuanto)s') % {
+            partes.append(_('hoy pagas %(importe)s por %(cuanto)s') % {
                 'importe': format_amount(
                     self.env, offer['upfront_service_total'], currency),
                 'cuanto': self._visar_wizard_periods_label(
                     offer['plan'], periodos),
             })
-        if offer.get('saving'):
-            partes.append(_('ahorras %s') % format_amount(
-                self.env, offer['saving'], currency))
         return ' · '.join(p.strip() for p in partes if p.strip())
 
     @api.model
@@ -858,6 +886,7 @@ class AppointmentType(models.Model):
 
         base = master._visar_quote_booking(
             items, zone, include_roedores=include_roedores, extra_addons=extras)
+        contado = (base or {}).get('recurring_total', 0.0)
         offers = []
         for plan in plans:
             quote = master._visar_quote_booking(
@@ -885,8 +914,13 @@ class AppointmentType(models.Model):
                 'upfront_total': quote['upfront_total'],
                 # Ahorro frente a contratar el mismo servicio una sola vez: se compara
                 # solo la parte recurrente, que es la única que la póliza abarata.
-                'saving': max(0.0, (base or {}).get('recurring_total', 0.0)
-                              - quote['recurring_total']),
+                'saving': max(0.0, contado - quote['recurring_total']),
+                # Y en porcentaje, que es como se dice en el chat: los pesos no
+                # se pueden juzgar sin saber sobre qué. Se calcula aquí porque
+                # aquí está la base; la descripción solo lo redacta.
+                'saving_percent': (
+                    max(0.0, contado - quote['recurring_total']) / contado * 100.0
+                    if contado else 0.0),
                 'quote': quote,
             })
         return offers
@@ -1063,7 +1097,7 @@ class AppointmentType(models.Model):
         groups = Group.browse([i for i in ids if i in offered.ids]).exists()
         if not groups:
             return booking, self._visar_wizard_error(
-                'no_service', _('Selecciona al menos un servicio.'))
+                'no_service', _('Dime al menos un servicio.'))
         return self._visar_wizard_commit(booking, VISAR_STEP_SERVICES, {
             'group_ids': groups.ids,
             'dimension_ids': self._visar_wizard_auto_dimensions(groups, []),
@@ -1087,7 +1121,7 @@ class AppointmentType(models.Model):
                   if d in valid_ids]
         if not chosen:
             return booking, self._visar_wizard_error(
-                'no_dimension', _('Selecciona al menos una opción.'))
+                'no_dimension', _('Dime al menos una opción.'))
         # Conserva las dimensiones de OTROS grupos y fija las de este.
         current = set(selections.get('dimension_ids') or [])
         current.update(chosen)
@@ -1128,7 +1162,7 @@ class AppointmentType(models.Model):
 
         if not categories and not cut_reason:
             return booking, self._visar_wizard_error(
-                'no_plaga', _('Selecciona al menos una opción.'))
+                'no_plaga', _('Dime al menos una opción.'))
 
         updates = {
             'servicio_plaga': categories,
@@ -1179,7 +1213,7 @@ class AppointmentType(models.Model):
                 tier_id = 0
             if tier_id not in valid_ids:
                 return booking, self._visar_wizard_error(
-                    'no_tier', _('Selecciona un rango para cada servicio.'))
+                    'no_tier', _('Dime los metros cuadrados de cada servicio.'))
             updates[section['field_name']] = tier_id
         return self._visar_wizard_commit(booking, 'dimensiones', updates), None
 
@@ -1199,7 +1233,7 @@ class AppointmentType(models.Model):
                     tier_id = 0
                 if tier_id not in section['tiers'].ids:
                     return booking, self._visar_wizard_error(
-                        'no_tier', _('Selecciona un rango para cada servicio.'))
+                        'no_tier', _('Dime los metros cuadrados de cada servicio.'))
                 updates[section['field_name']] = tier_id
         elif mode == 'estima':
             def _num(key):
@@ -1246,7 +1280,7 @@ class AppointmentType(models.Model):
             band = Band.browse()
         if band not in bands:
             return booking, self._visar_wizard_error(
-                'bad_band', _('Selecciona el tamaño de tu jardín o exterior.'))
+                'bad_band', _('Dime cuántos metros cuadrados mide tu jardín o exterior.'))
 
         updates = {
             'exterior_band_id': band.id,
@@ -1495,7 +1529,13 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'group_ids',
                 'title': _('¿Qué servicio necesitas?'),
-                'hint': _('Puedes seleccionar varios servicios.'),
+                # "Selecciona" y "da click" son de cuando estos pasos se
+                # pintaban como listas de WhatsApp. Se contestan escribiendo
+                # desde ago-2026, y sin numeros desde sep-2026: la pista tiene
+                # que decirse como se dice hablando. Estas opciones NO las usa
+                # el wizard web -tiene sus propias plantillas-, asi que aqui no
+                # hay dos canales que contentar.
+                'hint': _('Puedes decirme varios.'),
                 'options': [{
                     'value': group.id,
                     'label': group._visar_wizard_label(),
@@ -1556,9 +1596,9 @@ class AppointmentType(models.Model):
                 # varias cosas. En preventivo elige contra qué protegerse, y
                 # "Protección general" ya cubre las tres: pedirle que marque
                 # varias es empujarlo a la respuesta larga de la corta.
-                'hint': (_('Puedes seleccionar varias opciones.') if correctivo
-                         else _('Selecciona la opción más adecuada y da click '
-                                'en "{done}".')),
+                'hint': (_('Puedes decirme varias.') if correctivo
+                         else _('Dime la que más se parezca a lo que quieres '
+                                'evitar.')),
                 'options': options,
             }
 
@@ -1605,7 +1645,7 @@ class AppointmentType(models.Model):
                 'step': step_key, 'kind': 'multi', 'answer_key': 'dimension_ids',
                 'title': (_('¿Qué necesitas de %s?') % group._visar_wizard_label()
                           if group else _('¿Qué necesitas?')),
-                'hint': _('Puedes seleccionar varios.'),
+                'hint': _('Puedes decirme varios.'),
                 'options': [{
                     'value': dim.id,
                     'label': dim._visar_wizard_label(),
@@ -1741,7 +1781,7 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
                 'title': _('¿Quieres agregar algo más?'),
-                'hint': _('Si no quieres agregar nada, elige "No, gracias".'),
+                'hint': _('Si no quieres agregar nada, dime que no y seguimos.'),
                 'options': [{
                     'value': offer['product_id'],
                     'label': offer.get('name') or '',
@@ -1762,9 +1802,11 @@ class AppointmentType(models.Model):
             }
 
         if step_key == VISAR_STEP_POLIZA:
+            ofertas = self._visar_wizard_poliza_offers(booking)
+            nombres = [o.get('name') or '' for o in ofertas]
             options = [{
                 'value': offer['plan_id'],
-                'label': offer['name'],
+                'label': self._visar_wizard_poliza_label(offer, nombres),
                 'description': self._visar_wizard_poliza_description(offer),
                 # Recurrente y "lo que se paga hoy" van SEPARADOS: meter los
                 # add-ons en el "al mes" infla un precio que no se va a cobrar
@@ -1772,7 +1814,7 @@ class AppointmentType(models.Model):
                 'period_total': offer['period_total'],
                 'upfront_total': offer['upfront_total'],
                 'saving': offer['saving'],
-            } for offer in self._visar_wizard_poliza_offers(booking)]
+            } for offer in ofertas]
             # Sin esta opcion el paso no tenia salida en el chat: el web deja
             # seguir sin elegir, pero en WhatsApp un menu de un solo sentido es
             # una pregunta sin respuesta valida. El cliente se quedaba atrapado
@@ -1785,6 +1827,13 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'plan_id',
                 'title': _('¿Te interesa contratarlo como póliza?'),
+                # Qué ES una póliza, en una línea. Sin esto, cada opción tenía
+                # que explicarse a sí misma y la pregunta llegaba como un muro
+                # de cifras: el cliente leía cuatro precios sin saber todavía
+                # qué se le está ofreciendo.
+                'hint': _('Con póliza el técnico regresa cada periodo sin que '
+                          'tengas que agendarlo, y el servicio te sale más '
+                          'barato.'),
                 'options': options,
             }
 
