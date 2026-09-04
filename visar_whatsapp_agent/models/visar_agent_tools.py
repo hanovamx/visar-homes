@@ -21,6 +21,7 @@ from dateutil.relativedelta import relativedelta
 from markupsafe import Markup, escape
 
 from odoo import api, fields, models
+from odoo.addons.visar_appointment.models.visar_travel_feasibility import TIER_VACIO
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     VISAR_STEP_ADDRESS,
 )
@@ -1222,6 +1223,11 @@ class VisarAgentTools(models.AbstractModel):
     # Tope de dias que se ofrecen de golpe. WhatsApp corta las listas en 10 filas,
     # asi que pedir mas no cabria en un mensaje.
     MAX_AVAILABLE_DAYS = 10
+    # Cuantos de los dias mas PROXIMOS entran siempre en la lista, pase lo que
+    # pase con la preferencia de ruta. Ver `_agent_rank_days`: sin esta guarda, un
+    # dia agrupado dentro de tres semanas desplaza a un dia vacio manana, y al
+    # cliente con prisa se le empuja lejos sin decirle por que.
+    MAX_NEAR_DAYS_ALWAYS = 2
 
     @api.model
     def _agent_slot_bounds(self, slot, tz_info, apt_type):
@@ -1309,13 +1315,64 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_iter_days(self, months):
-        """Recorre el arbol nativo y entrega (fecha, slots) de los dias con hueco."""
+        """(fecha, slots, dia_crudo) de los dias con hueco del arbol nativo.
+
+        El tercer elemento es el diccionario del dia tal cual, y existe por una
+        sola razon: lleva `visar_travel_tier`, que es lo que ordena los dias por
+        preferencia de ruta (§5.7). Devolver el dia entero en vez de solo el tier
+        evita tener que tocar esta firma otra vez cuando el arbol gane otro dato.
+        """
         for month in months or []:
             for week in month.get('weeks', []):
                 for day in week:
                     if not isinstance(day, dict) or not day.get('slots'):
                         continue
-                    yield day.get('day'), day['slots']
+                    yield day.get('day'), day['slots'], day
+
+    @api.model
+    def _agent_rank_days(self, months):
+        """Los dias ofrecibles, por preferencia de ruta y ya recortados.
+
+        Devuelve `[{'date', 'slot_count'}]`, que es lo que las dos RPC de listado
+        publican. Dos reglas, y el orden entre ellas importa:
+
+        1. **Se prefiere el dia que ya tiene trabajo en la zona** (`TIER_CON_TRABAJO`)
+           antes que el dia vacio. Rellenar una ruta que ya existe cabe mas
+           servicios en el dia que abrir uno nuevo, que es el objetivo entero de
+           §5.7. Cronologico dentro de cada tier.
+
+        2. ⚠️ **Pero los `MAX_NEAR_DAYS_ALWAYS` dias factibles mas proximos entran
+           SIEMPRE**, sea cual sea su tier. Sin esta guarda, un dia agrupado dentro
+           de tres semanas le gana a un dia vacio manana, y al cliente con prisa se
+           le empuja lejos **en silencio** — no se le explica nada (decidido), asi
+           que no tendria forma de pedir algo antes.
+
+        **El recorte va AL FINAL, despues de ordenar.** Ordenar despues de cortar
+        seria reordenar los 10 primeros dias del calendario, es decir, no hacer
+        nada. Es el error facil de este metodo.
+
+        Sin `visar_travel_tier` -filtro apagado, sin destino, sin paradas- todos
+        los dias valen `TIER_VACIO` y esto degrada a lo de siempre: cronologico.
+        """
+        dias = []
+        for day, slots, crudo in self._agent_iter_days(months):
+            if not day:
+                continue
+            dias.append({
+                'date': fields.Date.to_string(day),
+                'slot_count': len(slots),
+                '_dia': day,
+                '_tier': crudo.get('visar_travel_tier') or TIER_VACIO,
+            })
+        dias.sort(key=lambda fila: fila['_dia'])
+        proximos = dias[:self.MAX_NEAR_DAYS_ALWAYS]
+        resto = dias[self.MAX_NEAR_DAYS_ALWAYS:]
+        elegidos = proximos + sorted(
+            resto, key=lambda fila: (fila['_tier'], fila['_dia']))
+        elegidos = elegidos[:self.MAX_AVAILABLE_DAYS]
+        elegidos.sort(key=lambda fila: (fila['_tier'], fila['_dia']))
+        return [{'date': fila['date'], 'slot_count': fila['slot_count']}
+                for fila in elegidos]
 
     @api.model
     def agent_available_days(self, payload):
@@ -1334,16 +1391,7 @@ class VisarAgentTools(models.AbstractModel):
             return {'days': [], 'min_hours': 0,
                     'message': "No hay cobertura o servicio para esa consulta."}
 
-        days = []
-        for day, slots in self._agent_iter_days(months):
-            if not day:
-                continue
-            days.append({
-                'date': fields.Date.to_string(day),
-                'slot_count': len(slots),
-            })
-            if len(days) >= self.MAX_AVAILABLE_DAYS:
-                break
+        days = self._agent_rank_days(months)
 
         return {
             'days': days,
@@ -1391,7 +1439,7 @@ class VisarAgentTools(models.AbstractModel):
                     'message': "No hay cobertura o servicio para esa consulta."}
 
         slots_payload = []
-        for day, slots in self._agent_iter_days(months):
+        for day, slots, _crudo in self._agent_iter_days(months):
             if day != wanted:
                 continue
             for slot in slots:
@@ -1570,14 +1618,7 @@ class VisarAgentTools(models.AbstractModel):
             return {'days': [], 'min_hours': 0, 'blocked': None,
                     'message': "No hay horarios disponibles por ahora."}
 
-        days = []
-        for day, slots in self._agent_iter_days(months):
-            if not day:
-                continue
-            days.append({'date': fields.Date.to_string(day),
-                         'slot_count': len(slots)})
-            if len(days) >= self.MAX_AVAILABLE_DAYS:
-                break
+        days = self._agent_rank_days(months)
         return {
             'days': days,
             'min_hours': max(apt_type.min_schedule_hours or 0,
@@ -1614,7 +1655,7 @@ class VisarAgentTools(models.AbstractModel):
         limite = fields.Datetime.add(fields.Datetime.now(),
                                      hours=event._visar_reschedule_min_hours())
         slots_payload = []
-        for day, slots in self._agent_iter_days(months):
+        for day, slots, _crudo in self._agent_iter_days(months):
             if day != target:
                 continue
             for slot in slots:

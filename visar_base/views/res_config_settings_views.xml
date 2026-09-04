@@ -33,6 +33,18 @@
                             <field name="visar_travel_minutes"/>
                             <span class="text-muted">minutos (0 desactiva el presupuesto)</span>
                         </setting>
+                        <setting string="Radio de agrupación del día"
+                                 help="Qué tan lejos pueden quedar entre sí los servicios de un mismo día. A diferencia del traslado, NO suma el hueco: si el técnico ya tiene trabajo ese día, el domicilio nuevo tiene que estar dentro de este radio de TODAS sus paradas. Un día sin trabajo acepta cualquier zona, y al reservarlo queda tomado por ella.">
+                            <field name="visar_travel_cluster_minutes"/>
+                            <span class="text-muted">minutos (vacío = traslado + 10)</span>
+                        </setting>
+                        <div class="text-muted mt-2 ms-1">
+                            Los dos números contestan preguntas distintas: el traslado,
+                            <em>¿le da tiempo de llegar?</em>; el radio,
+                            <em>¿vale la pena vender ese día?</em> Un servicio a las 9:00
+                            en San Nicolás y otro a las 12:00 en García caben de sobra en
+                            el presupuesto y aun así son una mañana en la carretera.
+                        </div>
                     </block>
                     <block title="Reagendar" name="visar_reagenda">
                         <setting string="Antelación mínima"

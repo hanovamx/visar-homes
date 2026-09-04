@@ -24,6 +24,30 @@ traslado de otra cita**. La consecuencia buscada es que la disponibilidad depend
 de **quién reservó antes** — el primero que llega se lo lleva — y al cliente no
 hay nada que explicarle, porque **nunca ve la opción que no cabe**.
 
+## Y encima, la zona del día (§5.7, 4-sep-2026)
+
+El presupuesto protege el traslado de la cita **vecina**; no protege el **día**.
+Con él y nada más, 9:00 en San Nicolás y 12:00 en García se ofrecen los dos —hay
+tres horas de hueco, el presupuesto da de sobra— y el técnico se pasa la mañana en
+la carretera. Visar quiere los servicios de un día cerca unos de otros para
+**caber más servicios al día**: es rentabilidad de la ruta, no puntualidad.
+
+Así que hay **dos** predicados, y se exigen **los dos**:
+
+| | qué pregunta | contra qué paradas | ¿suma el hueco? |
+|---|---|---|---|
+| `_visar_travel_slot_fits` | ¿le da tiempo a llegar? | las dos **contiguas** | sí |
+| `_visar_travel_day_clustered` | ¿deberíamos vender ese día? | **todas** las del día | **no** |
+
+⚠️ **Ninguno sustituye al otro, y es fácil pensar que sí.** Sin el presupuesto, dos
+citas a 25 min podrían ir pegadas a las 9:00 y las 9:30: dentro del radio del día e
+imposibles en la calle. Sin la agrupación, vuelve la mañana en la carretera.
+
+El radio se **deriva** (`visar.travel.minutes + 10` = 30). Un día sin paradas pasa
+siempre y, al reservarlo, **queda tomado por esa zona** — emergente, sin estado
+nuevo. Y la agrupación **no cuesta ni una llamada más**: `_visar_travel_durations`
+ya calculaba ida y vuelta contra todas las paradas.
+
 ## Los bordes del día no se restringen (decisión 9)
 
 Solo se valida el viaje **entre** paradas. Si el slot cae antes de todas, solo se
@@ -76,7 +100,21 @@ TRAVEL_MAX_CALLS_PARAM = 'visar.travel.matrix_max_calls'
 # quedarse con el centroide del CP.
 TRAVEL_GEOCODE_PARAM = 'visar.travel.geocode_address'
 
+# El radio de la ZONA DEL DIA (§5.7). Otra pregunta que el presupuesto de arriba:
+# aquel dice si al tecnico le da tiempo de llegar desde la parada de al lado;
+# este, si vale la pena vender ese dia. Sin poner, se DERIVA.
+TRAVEL_CLUSTER_PARAM = 'visar.travel.cluster_minutes'
+
 DEFAULT_TRAVEL_MINUTES = 20
+# Cuanto mas ancho es el radio del dia que el presupuesto entre paradas.
+# Confirmado con Visar el 4-sep-2026: 20 + 10 = 30. Se deriva en vez de guardarse
+# suelto porque los dos numeros miden lo mismo -minutos de coche- para fines
+# distintos, y guardarlos por separado es invitarlos a divergir.
+DEFAULT_CLUSTER_MARGIN = 10
+
+# Tiers de preferencia de dia (§5.7). El numero MENOR va antes.
+TIER_CON_TRABAJO = 1  # ya hay una parada dentro del radio: rellena una ruta
+TIER_VACIO = 2        # dia libre: lo abre para esa zona
 # El tope cuenta LLAMADAS, no elementos. Con `visar.travel.depart_at` apagado —el
 # default— un día son 1 llamada y 12 basta, que es lo que había antes de todo
 # esto. **Si algún día se enciende, hay que subirlo a 30**: con franjas, un día
@@ -109,6 +147,25 @@ class AppointmentType(models.Model):
             return max(int(raw), 0)
         except (TypeError, ValueError):
             return DEFAULT_TRAVEL_MINUTES
+
+    @api.model
+    def _visar_travel_cluster_minutes(self):
+        """Radio de la zona del dia, en minutos. DERIVADO si nadie lo puso.
+
+        `visar.travel.cluster_minutes` sin poner **no** significa cero: significa
+        *derivalo*. Un default horneado aqui se desengancharia de
+        `visar.travel.minutes`, y el dia que alguien suba el presupuesto a 25 el
+        radio del dia se quedaria en 30 sin que nadie se entere. Es la misma
+        regla que ya rige el reparto 20/40.
+        """
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            TRAVEL_CLUSTER_PARAM)
+        if raw not in (None, False, ''):
+            try:
+                return max(int(raw), 0)
+            except (TypeError, ValueError):
+                pass
+        return self._visar_travel_minutes() + DEFAULT_CLUSTER_MARGIN
 
     @api.model
     def _visar_travel_max_calls(self):
@@ -185,25 +242,56 @@ class AppointmentType(models.Model):
         """
         if not event:
             return None
+        partners = self._visar_travel_stop_partners(event)
+        # Primero, coordenadas de verdad: las tres fuentes en orden de fiabilidad.
+        for partner in partners:
+            if partner.partner_latitude or partner.partner_longitude:
+                return partner.partner_latitude, partner.partner_longitude
+        # 4. El CENTROIDE DEL CP, que es el respaldo que el destino ya tenía y
+        #    esta mitad no (§5.7). Sin él, una parada sin geocodificar no impone
+        #    nada y el día entero se lee como VACÍO — y un día vacío lo acepta
+        #    todo, así que la agrupación se apagaría sola justo en los días que
+        #    peor conocemos.
+        #
+        #    `geocode=False` a propósito: aquí se está pintando un calendario y
+        #    las paradas de un mes son muchas. Lo que no esté precalentado por el
+        #    cron no vale la latencia de una petición web.
+        Cp = self.env['visar.zone.cp'].sudo()
+        for partner in partners:
+            record = Cp._get_cp_record(partner.zip)
+            if not record:
+                continue
+            centroide = record._visar_centroid(geocode=False)
+            if centroide:
+                return centroide
+        return None
+
+    @api.model
+    def _visar_travel_stop_partners(self, event):
+        """Partners candidatos de una parada, del más fiable al menos.
+
+        Se separó de `_visar_travel_stop_coords` para poder recorrer la MISMA
+        lista dos veces: una buscando coordenadas y otra buscando CP. Repetir el
+        orden de prioridad en dos sitios es como acaban divergiendo.
+        """
+        partners = []
         # 1. La dirección de servicio del pedido: la crea
         #    `_visar_apply_delivery_address` y es LA dirección a la que se va.
         for line in (event.sale_order_line_ids or []):
             partner = line.order_id.partner_shipping_id
-            if partner and (partner.partner_latitude or partner.partner_longitude):
-                return partner.partner_latitude, partner.partner_longitude
+            if partner:
+                partners.append(partner)
         # 2. El partner de la tarea FSM, que es lo que `visar_field_app` ya
         #    geocodifica hoy (el 77.6% medido sale de ahí).
         for task in (event.visar_fsm_task_ids or []):
-            partner = task.partner_id
-            if partner and (partner.partner_latitude or partner.partner_longitude):
-                return partner.partner_latitude, partner.partner_longitude
-        # 3. Cualquier asistente con coordenadas, descartando empleados.
+            if task.partner_id:
+                partners.append(task.partner_id)
+        # 3. Cualquier asistente, descartando empleados.
         for partner in (event.partner_ids or []):
             if partner.employee_ids:
                 continue
-            if partner.partner_latitude or partner.partner_longitude:
-                return partner.partner_latitude, partner.partner_longitude
-        return None
+            partners.append(partner)
+        return partners
 
     @api.model
     def _visar_travel_window(self, months, tz_info):
@@ -321,6 +409,65 @@ class AppointmentType(models.Model):
         # Sin parada anterior no hay traslado que proteger; sin parada siguiente,
         # tampoco. Es la decisión 9, y con el modelo de presupuesto sale sola.
         return True
+
+    @api.model
+    def _visar_travel_day_clustered(self, stops, durations, cluster_minutes):
+        """¿Cabe el destino en la ZONA de ese día? (§5.7)
+
+        Es la otra mitad, y contesta otra pregunta que `_visar_travel_slot_fits`:
+
+        | | qué pregunta | contra qué paradas | ¿suma el hueco? |
+        |---|---|---|---|
+        | presupuesto | ¿le da tiempo a llegar? | las dos **contiguas** | sí |
+        | agrupación | ¿deberíamos vender ese día? | **todas** las del día | **no** |
+
+        Las dos se exigen a la vez y **ninguna sustituye a la otra**. Sin el
+        presupuesto, dos citas a 25 min podrían ir pegadas a las 9:00 y las 9:30
+        —dentro del radio, imposibles en la calle—. Sin la agrupación, 9:00 en
+        San Nicolás y 12:00 en García se ofrecen las dos porque hay tres horas de
+        hueco, y el técnico se pasa la mañana en la carretera.
+
+        **Un día sin paradas pasa siempre**, y al reservarlo queda tomado por esa
+        zona: a partir de ahí esta misma función confina el resto del día al radio
+        del primero. No hace falta estado nuevo — sale solo.
+
+        **No gasta ni una llamada.** `durations` ya trae ida y vuelta de todas las
+        paradas del día; el presupuesto se queda con dos y tira el resto. Si algún
+        día esto necesita pedir algo a Mapbox, está mal implementado.
+        """
+        if not stops:
+            return True
+        for index in range(len(stops)):
+            viaje = durations.get(index)
+            if not viaje:
+                # Parada sin duración conocida (sin coordenadas, tope de llamadas,
+                # Mapbox caído): no impone nada. Es §5.4, y aquí es donde más
+                # duele — ver el respaldo de CP en `_visar_travel_stop_coords`.
+                continue
+            conocidos = [minutos for minutos in viaje if minutos is not None]
+            if conocidos and max(conocidos) > cluster_minutes:
+                return False
+        return True
+
+    @api.model
+    def _visar_travel_day_tier(self, slots, stops_by_day):
+        """`TIER_CON_TRABAJO` si el día ya tiene una parada; si no, `TIER_VACIO`.
+
+        Se calcula sobre los slots que SOBREVIVIERON, así que "tiene parada"
+        implica "y está dentro del radio": los días con trabajo fuera del radio ya
+        no tienen slots que mirar. Ese es el orden que el §5.7 quiere —rellenar
+        una ruta que existe antes que abrir un día nuevo— y vive aquí, no en el
+        agente, porque es geometría.
+        """
+        for slot in slots:
+            dt_str = slot.get('datetime')
+            if not dt_str:
+                continue
+            local_day = fields.Datetime.from_string(dt_str).date()
+            for rid in self._visar_slot_resource_ids(slot):
+                if stops_by_day.get((rid, local_day)):
+                    return TIER_CON_TRABAJO
+        return TIER_VACIO
 
     @api.model
     def _visar_travel_stop_depart(self, stop):
@@ -494,6 +641,7 @@ class AppointmentType(models.Model):
 
         tz_info = pytz.timezone(timezone or master_type.appointment_tz or 'UTC')
         budget_minutes = self._visar_travel_minutes()
+        cluster_minutes = self._visar_travel_cluster_minutes()
         budget = {'calls': 0, 'max_calls': self._visar_travel_max_calls(),
                   'degraded': False, 'capped': False}
 
@@ -532,13 +680,21 @@ class AppointmentType(models.Model):
                     for slot in (day.get('slots') or []):
                         kept = self._visar_travel_keep_slot(
                             master_type, slot, tz_info, stops_by_day,
-                            durations_cache, destination, budget_minutes, budget,
-                            require)
+                            durations_cache, destination, budget_minutes,
+                            cluster_minutes, budget, require)
                         if kept is not None:
                             new_slots.append(kept)
                     day_copy['slots'] = new_slots
                     if new_slots:
                         month_has_avail = True
+                        # El orden de preferencia (§5.7). Va en el DÍA y no en el
+                        # slot porque lo que se ordena son días. Quien lo lea
+                        # -`agent_available_days` y el listado de reagendado- tiene
+                        # que tratar su ausencia como "sin preferencia": con el
+                        # filtro apagado, sin destino o sin paradas, esta clave no
+                        # llega a existir.
+                        day_copy['visar_travel_tier'] = self._visar_travel_day_tier(
+                            new_slots, stops_by_day)
                     new_week.append(day_copy)
                 new_weeks.append(new_week)
             filtered_months.append({
@@ -549,7 +705,7 @@ class AppointmentType(models.Model):
     @api.model
     def _visar_travel_keep_slot(self, master_type, slot, tz_info, stops_by_day,
                                 durations_cache, destination, budget_minutes,
-                                budget, require):
+                                cluster_minutes, budget, require):
         """El slot tal cual, una copia con menos técnicos, o None si no cabe."""
         dt_str = slot.get('datetime')
         if not dt_str:
@@ -572,10 +728,16 @@ class AppointmentType(models.Model):
             if cache_key not in durations_cache:
                 durations_cache[cache_key] = self._visar_travel_durations(
                     stops, destination, budget, tz_info)
-            if self._visar_travel_slot_fits(
-                    stops, start_utc, stop_utc, durations_cache[cache_key],
-                    budget_minutes):
-                factibles.append(rid)
+            durations = durations_cache[cache_key]
+            # LAS DOS, y en este orden por claridad, no por coste: las dos son
+            # aritmética sobre `durations`, que ya está calculado.
+            if not self._visar_travel_slot_fits(
+                    stops, start_utc, stop_utc, durations, budget_minutes):
+                continue
+            if not self._visar_travel_day_clustered(
+                    stops, durations, cluster_minutes):
+                continue
+            factibles.append(rid)
 
         if require == 'all':
             todos = self._visar_slot_resource_ids(slot)

@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+import logging
+
 from odoo import api, fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class VisarZoneCp(models.Model):
@@ -81,8 +85,22 @@ class VisarZoneCp(models.Model):
         """Devuelve la visar.zone del CP dado, o un recordset vacío."""
         return self._get_cp_record(cp).zone_id
 
-    def _visar_centroid(self):
+    def _visar_centroid(self, geocode=True):
         """(lat, lng) del centro del CP, geocodificando la primera vez.
+
+        `geocode=False` significa **"solo lo que ya está guardado"**: si el CP no
+        tiene centroide todavía, devuelve `None` en vez de salir a la red. No es
+        una optimización, es una regla de dónde puede costar latencia una
+        petición:
+
+        - el **destino** de una reserva es UNO por consulta, así que geocodificar
+          en caliente es un precio que se puede pagar;
+        - las **paradas** de un día son varias, y las de un mes son muchas. Pedir
+          el centroide de cada una al pintar horarios es exactamente el error que
+          el §5.3 del diseño 33 pasó tres revisiones evitando.
+
+        Quien necesite los centroides poblados que use `_visar_prewarm_centroids`
+        desde el cron, fuera del camino de la petición.
 
         Es el respaldo del §5.4 del diseño 33: **1 de cada 4 direcciones no está
         geocodificada** (77.6% de cobertura medida en servidor), y sin ninguna
@@ -106,6 +124,8 @@ class VisarZoneCp(models.Model):
         if self.municipality:
             partes.append(self.municipality)
         partes += ['Nuevo León', 'México']
+        if not geocode:
+            return None
         found = self.env['visar.mapbox.service']._visar_mapbox_geocode(
             ', '.join(partes))
         if not found:
@@ -113,3 +133,57 @@ class VisarZoneCp(models.Model):
         lat, lng, _kind = found
         self.sudo().write({'visar_centroid_lat': lat, 'visar_centroid_lng': lng})
         return lat, lng
+
+    @api.model
+    def _visar_prewarm_centroids(self, limit=None):
+        """Geocodifica CPs sin centroide, en lote y FUERA de la petición.
+
+        El respaldo de centroide lleva construido desde el 21-ago y nunca se ha
+        estrenado: al 4-sep-2026 la tabla tenía **1080 filas y 0 centroides**,
+        porque la geocodificación de la dirección exacta venía resolviendo y esa
+        rama no se llegaba a pisar. No estaba roto — estaba sin pisar.
+
+        Deja de dar igual con la agrupación por zona del día (§5.7): ahí las
+        **paradas** también necesitan punto, y una parada sin coordenadas no
+        restringe, así que un día ciego se lee como día vacío y lo acepta todo.
+        Un respaldo que solo funciona cuando alguien lo llama en caliente no
+        sirve para eso; tiene que estar ya poblado.
+
+        Devuelve cuántos se resolvieron. No levanta: un CP que no geocodifica se
+        queda sin centroide y se reintentará en la corrida siguiente.
+        """
+        limit = limit or self._visar_prewarm_batch()
+        pendientes = self.search(
+            ['|', ('visar_centroid_lat', '=', 0.0),
+                  ('visar_centroid_lat', '=', False)], limit=limit)
+        if not pendientes:
+            return 0
+        resueltos = 0
+        for record in pendientes:
+            try:
+                if record._visar_centroid(geocode=True):
+                    resueltos += 1
+            except Exception:  # noqa: BLE001 - un CP no puede tumbar la corrida
+                _logger.exception(
+                    "visar.zone.cp: no se pudo geocodificar el CP %s", record.name)
+        _logger.info(
+            "Precalentado de centroides: %s de %s resueltos; quedan %s sin centroide.",
+            resueltos, len(pendientes), self.search_count(
+                ['|', ('visar_centroid_lat', '=', 0.0),
+                      ('visar_centroid_lat', '=', False)]))
+        return resueltos
+
+    @api.model
+    def _visar_prewarm_batch(self):
+        """Cuántos CPs se geocodifican por corrida del cron.
+
+        Mapbox admite ~600 peticiones/min en geocoding, así que 200 no roza el
+        límite; el tope existe para que una corrida no se eternice ni se coma el
+        worker, no porque la API se queje.
+        """
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            'visar.travel.prewarm_batch', 200)
+        try:
+            return max(int(raw), 1)
+        except (TypeError, ValueError):
+            return 200

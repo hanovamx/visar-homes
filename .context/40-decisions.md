@@ -752,7 +752,7 @@ runtime cae a su `BASE_PROMPT` de respaldo.
 > saberlo no es razonarlo: es restaurar una copia en el estado anterior y llamar
 > al método.
 
-## [DECIDIDA — 4-sep-2026, NO IMPLEMENTADA] Un día es de una zona: agrupación por cercanía
+## [DECIDIDA E IMPLEMENTADA — 4-sep-2026] Un día es de una zona: agrupación por cercanía
 
 El presupuesto entre paradas protege el traslado de la cita **vecina**; no protege el **día**. Con
 él y nada más, 9:00 en San Nicolás y 12:00 en García se ofrecen los dos —hay tres horas de hueco—
@@ -799,6 +799,12 @@ autodestructivo — **un día con todas las paradas sin geocodificar se lee como
 vacío lo acepta todo**. Así que van primero: (1) un cuarto escalón de CP→centroide en
 `_visar_travel_stop_coords`, y (2) precalentar los centroides en lote para no geocodificar dentro
 del camino que pinta horarios.
+
+> ✅ **Implementada el mismo día.** `_visar_travel_day_clustered` (predicado),
+> `_visar_travel_day_tier` + `_agent_rank_days` (el orden, con la guarda de los 2 días
+> más próximos), el cuarto escalón de CP en `_visar_travel_stop_coords` y el
+> precalentado por cron. El umbral se deriva de verdad: hay una prueba que sube
+> `visar.travel.minutes` a 25 y exige que el radio pase a 35 sola.
 
 Ver §5.7 del doc 33.
 

@@ -603,7 +603,21 @@ Cuando nada cabe: 3 alternativas cercanas (ventana de 7 días) y, si el CP está
 estructuralmente lejos, los 3 días más cercanos sin servicios. Si el cliente
 rechaza todo → hand-off humano (ver §9, dependencia abierta).
 
-### 5.7 La agrupación por zona del día (decidido 4-sep-2026)
+### 5.7 La agrupación por zona del día (decidido e IMPLEMENTADO el 4-sep-2026)
+
+> ✅ **Construido el 4-sep-2026.** `_visar_travel_day_clustered` y
+> `_visar_travel_day_tier` en `visar_appointment/models/visar_travel_feasibility.py`,
+> `_agent_rank_days` en `visar_whatsapp_agent`, el respaldo de CP en
+> `_visar_travel_stop_coords`, y el precalentado en `visar.zone.cp` con su cron.
+> 16 pruebas nuevas en `TestTravelClustering` + 7 en `TestAgentDayRanking`; suites en
+> 176 (`visar_appointment`) y 151 (`visar_whatsapp_agent`), con los **2 fallos
+> preexistentes y ajenos** de `test_partner_dedupe` como único rojo.
+>
+> **Verificado en vivo** (3 CPs, `visar-test`): 64000 Monterrey →
+> `(25.6658, -100.3436)`, 66000 García → `(25.7652, -100.4165)`, 66600 Apodaca →
+> `(25.7686, -100.2799)`. Puntos **distintos y en la dirección correcta**, que es lo
+> que V0 pedía comprobar: un geocoder rindiéndose los habría puesto todos en el
+> centro de Monterrey.
 
 El §5.2 protege el traslado de la cita **vecina**. No protege **el día**: con el
 presupuesto y nada más, un servicio a las 9:00 en San Nicolás y otro a las 12:00

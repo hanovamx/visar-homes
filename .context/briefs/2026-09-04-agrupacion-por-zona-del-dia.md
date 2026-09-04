@@ -19,6 +19,46 @@ ser 0 con la consola en blanco**.
 
 ---
 
+## ✅ Ejecutado el 4-sep-2026 — qué quedó y qué NO se comprobó
+
+| | estado |
+|---|---|
+| 0. Respaldo de CP en las paradas + precalentado por cron | ✅ |
+| 1. Predicado `_visar_travel_day_clustered` + parámetro derivado | ✅ |
+| 2. Orden de días con la guarda de los 2 más próximos | ✅ |
+| 3. Documentación que quedaba mintiendo | ✅ |
+
+`visar_base` **19.0.1.10.0 → 19.0.1.11.0** (campo de ajustes + cron: **necesita `-u`**).
+`visar_appointment` y `visar_whatsapp_agent`, Python puro: **basta reiniciar**.
+
+**Pruebas:** `visar_appointment` 160 → **176**, `visar_whatsapp_agent` 142 → **151**.
+Único rojo: los **2 fallos preexistentes y ajenos** de `test_partner_dedupe`, los mismos
+que el encargo del 20-ago manda no investigar.
+
+**V0 en vivo** (`visar-test`, 3 CPs): 64000 Monterrey → `(25.6658, -100.3436)`,
+66000 García → `(25.7652, -100.4165)`, 66600 Apodaca → `(25.7686, -100.2799)`. Tres
+puntos **distintos y en la dirección correcta**; un geocoder rindiéndose los habría
+puesto todos en el centro. Y `geocode=False` sobre un CP sin centroide devuelve `None`
+sin tocar la red, que es la mitad que protege la latencia de la página.
+
+**V5 (coste)** se fijó como prueba, no como medición:
+`test_la_agrupacion_no_gasta_ni_una_llamada_mas` cuenta las llamadas a `_visar_mapbox_matrix`
+antes y después de agrupar y exige que sean **las mismas**.
+
+> ⚠️ **Lo que NO se ha comprobado, y hace falta antes de fiarse:**
+>
+> - **El precalentado completo.** Se geocodificaron **3** CPs de 1080, y sin `commit()`
+>   (regla de la casa: en shell no se escribe). El cron no ha corrido de verdad. Hasta
+>   que corra, las paradas siguen sin respaldo y la agrupación puede leer días llenos
+>   como vacíos.
+> - **V1/V2/V3 contra datos reales.** El predicado está probado en unitarias con
+>   duraciones inyectadas; **no** se ha visto podar un día real de `visar-db`.
+> - **V4 y V7 de punta a punta.** El orden está probado sobre un árbol armado a mano;
+>   no se ha visto una `agent_available_days` real ni el calendario web pintado.
+> - **Nada de esto está desplegado en producción.**
+
+---
+
 ## Qué hay que construir
 
 ### 0. Que las PARADAS dejen de quedarse ciegas — PRIMERO, y es un bloqueador

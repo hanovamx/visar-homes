@@ -19,20 +19,21 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
-## Diseñado, SIN construir — 4-sep-2026
+## Agrupación por zona del día — diseñada **y construida** el 4-sep-2026
 
-- [ ] **Agrupación por zona del día** — el presupuesto entre paradas protege el traslado de la
-      cita *vecina*, no el *día*: hoy 9:00 en San Nicolás y 12:00 en García se ofrecen los dos.
+- [x] **Agrupación por zona del día** — el presupuesto entre paradas protege el traslado de la
+      cita *vecina*, no el *día*: 9:00 en San Nicolás y 12:00 en García se ofrecían los dos.
       Visar quiere los servicios de un día cerca unos de otros para **caber más servicios al
       día**. Diseño en **§5.7 del doc 33**, decisión en `40-decisions.md`, encargo en
       [`briefs/2026-09-04-agrupacion-por-zona-del-dia.md`](./briefs/2026-09-04-agrupacion-por-zona-del-dia.md).
       Se **suma** al presupuesto, no lo sustituye. Umbral **derivado**:
       `visar.travel.minutes + 10` → 30 min. Coste previsto: **cero llamadas nuevas** a Mapbox.
-- [ ] ⛔ **Bloqueador del anterior: `visar.zone.cp` tiene 1080 filas y 0 centroides.** El
-      respaldo "centroide del CP" de `_visar_travel_destination` **no corre nunca**, y solo 48
-      partners tienen coordenadas. Para el presupuesto eso resta filtrado; para la agrupación es
-      autodestructivo — **un día con todas las paradas sin geocodificar se lee como día vacío, y
-      un día vacío lo acepta todo**. Poblarlos va primero, y es útil por su cuenta.
+- [x] ~~⛔ Bloqueador: los centroides de CP~~ — **resuelto, y no era donde parecía.** El
+      respaldo del **destino** ya existía y se auto-puebla; las 1080 filas sin centroide eran una
+      rama sin pisar, no un fallo. El agujero estaba en **`_visar_travel_stop_coords`**, que no
+      tenía respaldo ninguno: ahora cae al centroide del CP del partner, con `geocode=False` para
+      no salir a la red al pintar horarios, y un cron precalienta en lote (200 por corrida).
+      Verificado en vivo: Monterrey, García y Apodaca dan tres puntos distintos y bien puestos.
 - [x] **Corregido en el doc 33:** el §10.10(c) decía que la rama que gasta llamadas de Matrix no
       llega a correr porque el técnico no tiene dos paradas el mismo día. **Falso desde hace
       semanas** — recurso 1 con 10 paradas el 11-ago y 9 el 1-sep, y `visar_travel_cache` con 164

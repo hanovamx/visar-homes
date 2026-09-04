@@ -574,3 +574,207 @@ class TestTravelFeasibility(TransactionCase):
         self.assertEqual(
             self.AptType._visar_travel_minutes(), 20,
             "el traslado por defecto son 20 min (decisión 7)")
+
+
+@tagged('post_install', '-at_install')
+class TestTravelClustering(TransactionCase):
+    """La agrupación por zona del día (§5.7, 4-sep-2026).
+
+    Va en su propia clase y no en `TestTravelFeasibility` a propósito: son dos
+    predicados que contestan preguntas distintas, y mezclar sus pruebas es el
+    primer paso para que alguien acabe creyendo que uno sustituye al otro.
+
+    El error que estas pruebas existen para atrapar: **quitar el presupuesto**
+    porque "el radio del día ya lo cubre". No lo cubre — ver
+    `test_las_dos_reglas_se_exigen_a_la_vez`.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.AptType = cls.env['appointment.type'].sudo()
+        cls.tz = pytz.timezone(_TZ)
+        cls.ICP = cls.env['ir.config_parameter'].sudo()
+        cls.ICP.set_param('visar.travel.enabled', '1')
+
+    def setUp(self):
+        super().setUp()
+        # Cada prueba parte del default DERIVADO: 20 + 10 = 30.
+        self.ICP.set_param('visar.travel.minutes', '20')
+        self.ICP.set_param('visar.travel.cluster_minutes', '')
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _stops(self, *tramos):
+        base = datetime(2026, 9, 1)
+        salida = []
+        for hora_ini, hora_fin, coords in tramos:
+            start = self.tz.localize(
+                base.replace(hour=hora_ini)).astimezone(pytz.utc).replace(tzinfo=None)
+            stop = self.tz.localize(
+                base.replace(hour=hora_fin)).astimezone(pytz.utc).replace(tzinfo=None)
+            salida.append((start, stop, coords))
+        return salida
+
+    def _agrupa(self, stops, durations, radio=30):
+        return self.AptType._visar_travel_day_clustered(stops, durations, radio)
+
+    # ------------------------------------------------------------------
+    # El umbral se DERIVA
+    # ------------------------------------------------------------------
+
+    def test_el_radio_se_deriva_del_presupuesto(self):
+        """Sin parámetro puesto, el radio es traslado + 10. No es un 30 horneado."""
+        self.assertEqual(self.AptType._visar_travel_cluster_minutes(), 30)
+
+        self.ICP.set_param('visar.travel.minutes', '25')
+        self.assertEqual(
+            self.AptType._visar_travel_cluster_minutes(), 35,
+            "subir el presupuesto tiene que mover el radio solo; si esto da 30, "
+            "alguien horneó el número y los dos van a divergir")
+
+    def test_un_radio_explicito_gana_al_derivado(self):
+        """El parámetro existe para poder forzarlo."""
+        self.ICP.set_param('visar.travel.cluster_minutes', '45')
+        self.assertEqual(self.AptType._visar_travel_cluster_minutes(), 45)
+
+    def test_un_radio_invalido_cae_al_derivado_en_vez_de_reventar(self):
+        self.ICP.set_param('visar.travel.cluster_minutes', 'treinta')
+        self.assertEqual(self.AptType._visar_travel_cluster_minutes(), 30)
+
+    # ------------------------------------------------------------------
+    # El predicado
+    # ------------------------------------------------------------------
+
+    def test_un_dia_vacio_acepta_cualquier_zona(self):
+        """Y al reservarlo queda tomado por ella. Sin estado nuevo: sale solo."""
+        self.assertTrue(self._agrupa([], {}))
+
+    def test_dentro_del_radio_el_dia_sigue_abierto(self):
+        stops = self._stops((9, 10, _STOP_A))
+        self.assertTrue(self._agrupa(stops, {0: (25, 25)}))
+
+    def test_una_parada_fuera_del_radio_tumba_el_dia_entero(self):
+        """No importa el hueco: aquí no se suman huecos, ese es el punto."""
+        stops = self._stops((9, 10, _STOP_A))
+        self.assertFalse(self._agrupa(stops, {0: (35, 35)}))
+
+    def test_basta_UNA_parada_lejana_entre_varias_cercanas(self):
+        """Se exige contra TODAS las paradas, no contra la más cercana."""
+        stops = self._stops((9, 10, _STOP_A), (12, 13, _STOP_B), (16, 17, _STOP_A))
+        self.assertFalse(
+            self._agrupa(stops, {0: (10, 10), 1: (50, 50), 2: (10, 10)}),
+            "una parada a 50 min parte el día aunque las otras dos estén al lado")
+
+    def test_se_mira_la_direccion_mas_LARGA_de_las_dos(self):
+        """Ida y vuelta no son simétricas, y la buena es la peor de las dos."""
+        stops = self._stops((9, 10, _STOP_A))
+        self.assertFalse(self._agrupa(stops, {0: (10, 40)}))
+        self.assertFalse(self._agrupa(stops, {0: (40, 10)}))
+
+    def test_el_hueco_ya_NO_salva_un_dia_de_otra_zona(self):
+        """El cambio de política, en una prueba.
+
+        Este mismo caso —una hora de hueco por delante, trayecto de 40 min— es el
+        que `test_el_hueco_por_delante_se_suma_al_presupuesto` da por bueno, y
+        sigue siéndolo **para el presupuesto**. Lo que ya no pasa es la
+        agrupación: 40 > 30, y el día es de otra zona.
+        """
+        stops = self._stops((9, 10, _STOP_A))
+        self.assertFalse(self._agrupa(stops, {0: (40, 40)}))
+
+    # ------------------------------------------------------------------
+    # Degradar, nunca bloquear (§5.4)
+    # ------------------------------------------------------------------
+
+    def test_una_parada_sin_duracion_conocida_no_impone_radio(self):
+        """Sin dato no se inventa: la parada no restringe.
+
+        Es la rama que hace peligroso el respaldo de coordenadas — un día entero
+        sin puntos se lee como día vacío y lo acepta todo. Por eso
+        `_visar_travel_stop_coords` gana el escalón del centroide de CP.
+        """
+        stops = self._stops((9, 10, None))
+        self.assertTrue(self._agrupa(stops, {}))
+
+    def test_una_direccion_desconocida_no_tumba_la_otra(self):
+        stops = self._stops((9, 10, _STOP_A))
+        self.assertFalse(self._agrupa(stops, {0: (None, 40)}))
+        self.assertTrue(self._agrupa(stops, {0: (None, 25)}))
+
+    # ------------------------------------------------------------------
+    # Las dos reglas, juntas
+    # ------------------------------------------------------------------
+
+    def test_las_dos_reglas_se_exigen_a_la_vez(self):
+        """⛔ Si alguien quita el presupuesto "porque el radio ya lo cubre".
+
+        Dos paradas a 25 min: **dentro** del radio de 30, así que la agrupación
+        las da por buenas. Pero el slot está PEGADO a la anterior, y 25 > 20 de
+        presupuesto: en la calle no llega. El slot tiene que caer.
+        """
+        stops = self._stops((9, 10, _STOP_A))
+        start, stop = (
+            self.tz.localize(datetime(2026, 9, 1, 10)).astimezone(
+                pytz.utc).replace(tzinfo=None),
+            self.tz.localize(datetime(2026, 9, 1, 11)).astimezone(
+                pytz.utc).replace(tzinfo=None))
+        durations = {0: (25, 25)}
+
+        self.assertTrue(
+            self._agrupa(stops, durations),
+            "25 min están dentro del radio del día: la agrupación no lo tumba")
+        self.assertFalse(
+            self.AptType._visar_travel_slot_fits(stops, start, stop, durations, 20),
+            "…y aun así no cabe, porque se come el traslado de la cita de al lado")
+
+    # ------------------------------------------------------------------
+    # El tier, que es lo que ordena los días
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Coste: la agrupación NO puede pedirle nada nuevo a Mapbox
+    # ------------------------------------------------------------------
+
+    def test_la_agrupacion_no_gasta_ni_una_llamada_mas(self):
+        """⛔ El requisito de coste, no una aspiración.
+
+        `_visar_travel_durations` ya calculaba ida y vuelta contra **todas** las
+        paradas del día; el presupuesto se quedaba con dos y tiraba el resto. La
+        agrupación lee las que ya estaban ahí.
+
+        Si esta prueba se cae, la implementación está pidiendo la matriz otra vez
+        —seguramente por parada, o por slot— y el §5.3 lleva tres revisiones
+        evitando exactamente eso.
+        """
+        stops = self._stops((9, 10, _STOP_A), (12, 13, _STOP_B))
+        matriz = [[0, 600, 1800], [600, 0, 1200], [1800, 1200, 0]]
+
+        with patch('%s._visar_mapbox_matrix' % _SERVICE, return_value=matriz) as m:
+            durations = self.AptType._visar_travel_durations(
+                stops, _DEST, {'calls': 0, 'max_calls': 12}, self.tz)
+            llamadas_tras_calcular = m.call_count
+
+            # Las DOS reglas, sobre las mismas duraciones ya cobradas.
+            self.AptType._visar_travel_day_clustered(stops, durations, 30)
+            self.AptType._visar_travel_day_clustered(stops, durations, 30)
+
+            self.assertEqual(
+                m.call_count, llamadas_tras_calcular,
+                "la agrupación pidió algo a Mapbox: tiene que ser aritmética "
+                "sobre las duraciones que el presupuesto ya pagó")
+
+    def test_un_dia_con_parada_es_tier_de_trabajo(self):
+        from odoo.addons.visar_appointment.models.visar_travel_feasibility import (
+            TIER_CON_TRABAJO, TIER_VACIO,
+        )
+        slots = [{'datetime': '2026-09-01 15:00:00', 'available_resource_ids': [7]}]
+        stops_by_day = {(7, datetime(2026, 9, 1).date()): self._stops((9, 10, _STOP_A))}
+
+        self.assertEqual(
+            self.AptType._visar_travel_day_tier(slots, stops_by_day),
+            TIER_CON_TRABAJO)
+        self.assertEqual(
+            self.AptType._visar_travel_day_tier(slots, {}), TIER_VACIO)

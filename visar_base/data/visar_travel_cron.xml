@@ -16,5 +16,26 @@
             <field name="interval_type">days</field>
             <field name="active" eval="True"/>
         </record>
+
+        <record id="visar_zone_cp_prewarm_cron" model="ir.cron">
+            <field name="name">Visar: precalentar centroides de CP</field>
+            <field name="model_id" ref="model_visar_zone_cp"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_prewarm_centroids()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <!-- Cada hora hasta vaciar la cola: 1080 CPs a 200 por corrida son
+                 seis pasadas. Cuando no quede ninguno sin centroide la corrida
+                 sale en un `search` vacío y no cuesta nada, así que no hace falta
+                 apagarlo a mano — pero tampoco molesta hacerlo.
+
+                 POR QUÉ UN CRON Y NO BAJO DEMANDA: el centroide es el respaldo de
+                 las PARADAS al agrupar por zona del día (§5.7), y las paradas de
+                 un mes son muchas. Geocodificar mientras un cliente espera la
+                 lista de días es el error que el §5.3 lleva tres revisiones
+                 evitando. Aquí la latencia no le cuesta a nadie. -->
+            <field name="interval_number">1</field>
+            <field name="interval_type">hours</field>
+            <field name="active" eval="True"/>
+        </record>
     </data>
 </odoo>
