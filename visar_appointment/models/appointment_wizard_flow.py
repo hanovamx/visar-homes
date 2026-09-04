@@ -1547,11 +1547,32 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'motivo',
                 'title': _('¿Es preventivo o correctivo?'),
+                # `keywords` es el vocabulario del CLIENTE, y aquí importa más
+                # que en ningún otro paso: nadie llega diciendo "correctivo",
+                # llega diciendo que tiene alacranes en la cocina. Eso YA es la
+                # respuesta, y volver a preguntarla suena a no haber escuchado
+                # —lo que salió del recorrido del 3-sep—. Con esto, el agente
+                # puede darla por contestada al entregar la conversación
+                # (`agent._autopiloto`), y quien lo escriba a mano en el paso
+                # también acierta.
                 'options': [
                     {'value': 'preventivo', 'label': _('Preventivo'),
-                     'description': _('Quiero evitar que aparezcan')},
+                     'description': _('Quiero evitar que aparezcan'),
+                     'keywords': ['prevenir', 'preventiva', 'evitar',
+                                  'que no aparezcan', 'que no entren',
+                                  'que no lleguen', 'por si acaso',
+                                  'no tengo plaga', 'no he visto',
+                                  'antes de que', 'mantenimiento']},
                     {'value': 'correctivo', 'label': _('Correctivo'),
-                     'description': _('Ya tengo el problema')},
+                     'description': _('Ya tengo el problema'),
+                     # Ojo al ampliar: el puntaje cuenta keywords, así que dos
+                     # raíces anidadas de la misma opción suman dos puntos por
+                     # un solo dato. "tengo" ya cubre "ya tengo".
+                     'keywords': ['correctiva', 'tengo', 'tenemos', 'hay',
+                                  'salieron', 'aparecieron', 'he visto',
+                                  'hemos visto', 'se metieron', 'invadido',
+                                  'infestacion', 'estan saliendo',
+                                  'me estan', 'nos estan']},
                 ],
             }
 
