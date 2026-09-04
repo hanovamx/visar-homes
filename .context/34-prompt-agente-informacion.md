@@ -37,6 +37,22 @@ lo pisaba desde la UI. Este archivo es la copia de referencia: **lo que debería
 haber en la base**. Si los dos difieren, manda la base — pero eso es una señal de
 que alguien editó sin dejar rastro, no un estado normal.
 
+> ⚠️ **Y pasó** (3-sep-2026). La base tenía **28 206** caracteres y la copia
+> **20 538**, y no era formato: eran **reglas distintas**. `estimate_m2` contra
+> una fórmula escrita a mano, el umbral de valoración en 1000 m² contra 500, la
+> oferta de póliza entera, trece preguntas frecuentes. Cualquiera que hubiera
+> planeado leyendo esta copia habría planeado sobre un prompt que no existía.
+>
+> Se re-sincronizó desde la base (`curl -s localhost:8000/debug/prompt`) y
+> **el fichero entró al repo**, que es lo que faltaba: estaba sin versionar, y
+> por eso pudo separarse sin que nadie lo viera en ningún diff.
+>
+> Desde ahora, cambiar el prompt es `deploy/prompt-sin-numeros.py` (en
+> `visar_fastapi/deploy/`): lee el cuerpo de un fichero versionado y lo escribe
+> en el registro **vigente** por `(sequence, id)`, que es el criterio con el que
+> el runtime lo lee. Pegar a mano en la UI sigue funcionando, y sigue siendo la
+> forma de volver a divergir.
+
 **Cómo aplicarlo:** copiar el bloque de abajo (sin las comillas del cerco) y
 pegarlo en el campo *Prompt del sistema* del registro activo. El catálogo de
 servicios se añade solo después de este texto; no hace falta listarlo.
@@ -54,7 +70,38 @@ esta versión ni tiene por qué serlo.
 
 ---
 
-## Qué cambió en esta versión (20-ago-2026)
+## Qué cambió en esta versión (3-sep-2026)
+
+Del segundo recorrido completo de la conversación, con el agente ya cerrando
+citas. Tres tics y dos reglas de precio:
+
+- **Fuera la raya larga** (— y –). Es lo primero que le hace pensar a un cliente
+  que no le escribe una persona. Es una regla que se contradice sola con una
+  facilidad ridícula —basta con que un ejemplo del propio prompt use una—, así
+  que hay prueba que la fija sobre el respaldo (`tests/test_prompts.py`), y el
+  despliegue verifica el prompt **servido**, no el escrito.
+- **Fuera *"con confianza"***. No lo dice nadie en un chat. Estaba en un
+  **ejemplo** del propio prompt, que es la peor forma de meter un tic: enseña la
+  frase mientras el texto de al lado pide naturalidad.
+- **No repreguntar lo ya dicho.** Quien llega diciendo que tiene alacranes ya
+  contestó que es correctivo. El punto (d) de "datos antes de cotizar" decía
+  *"pregúntalo SIEMPRE, en todos los casos"*, y era exactamente lo que hacía que
+  sonara a no haber leído.
+- **El exterior se pregunta SIEMPRE** (punto (e), nuevo). Es un dato de precio:
+  suponer interior cotiza de menos y deja al cliente con el patio sin tratar. Y
+  se le dice lo que necesita para contestar bien: de 1 a 50 m² el exterior no
+  cuesta más.
+- **Con póliza en la mesa, las dos cifras van juntas siempre.** Volver a
+  contestar solo con el precio de contado deja al cliente con media comparación
+  y le obliga a pedir la otra mitad.
+
+Las memorias de `info` y `reception` recogen lo mismo en corto, y la de `info`
+añade el argumento `ya_dicho` de `start_booking` — lo que no se le pase ahí, el
+cuestionario se lo vuelve a preguntar al cliente.
+
+---
+
+## Qué cambió en la versión anterior (20-ago-2026)
 
 El agendado por WhatsApp ya funciona de principio a fin, y el prompt seguía
 diciendo lo contrario. En el primer uso real el cliente pidió cotización,

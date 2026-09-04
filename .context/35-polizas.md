@@ -249,3 +249,43 @@ Los tests cubren, entre otros, los dos fallos que costarían dinero en silencio:
 `test_09` (el anticipo sobrevive a `_recompute_prices`) y `test_12` (un pago completo
 no se clasifica como parcial — si el anticipo saliera de las líneas facturables, no se
 crearía factura, no habría visitas y el dinero quedaría sin aplicar, sin ningún error).
+
+---
+
+## Cómo se ofrece en el chat (3-sep-2026)
+
+El paso de póliza del cuestionario era, en palabras del recorrido, *"demasiada
+información junta y mal presentada"*. Y lo era por una razón concreta: los
+cuatro planes **se llaman igual** en el catálogo (I-15), así que lo único que
+los distinguía era una línea que encadenaba tres cifras —precio del periodo,
+primer cobro, ahorro en pesos— en el orden en que se calculan. Cuatro filas
+iguales y doce números.
+
+Ahora cada plan dice, en este orden:
+
+```
+• *Póliza mensual*: Ahorro del 22% · $570.00 al mes · hoy pagas $1,710.00 por 3 meses
+```
+
+1. **El ahorro, en porcentaje.** Va primero porque es lo único de la línea que
+   contesta la pregunta que el cliente se está haciendo, que no es "cuánto
+   cuesta" sino "por qué me conviene". En porcentaje y no solo en pesos: un
+   *"ahorras $150"* no se puede juzgar sin saber sobre qué, y obliga a dividir
+   de cabeza en mitad de una conversación. Los pesos quedan de respaldo para
+   cuando no hay base con la que comparar (`saving_percent` ausente).
+2. **Cuánto y cada cuánto.**
+3. **Lo que se paga hoy**, solo si el primer cobro va adelantado. Sin esto el
+   cliente elige "570 al mes" y se encuentra 1 710 en la liga de pago.
+
+Y el paso lleva **pista**: qué *es* una póliza, en una línea. Sin ella cada
+opción tenía que explicarse a sí misma y la pregunta llegaba como un muro de
+cifras antes de decir qué se estaba ofreciendo.
+
+Los planes que **colisionan de nombre** llevan su periodicidad entre paréntesis
+—y solo esos—: ponérsela a todos es ruido cuando los nombres ya se distinguen.
+Es un parche mientras I-15 siga abierto; el arreglo de verdad es renombrarlos en
+el catálogo.
+
+> El **precio** no cambia con nada de esto: sigue saliendo de
+> `_visar_quote_booking` con `plan`. Lo único que se tocó es qué se dice y en
+> qué orden.

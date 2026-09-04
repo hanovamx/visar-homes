@@ -1,8 +1,10 @@
 # Estado y roadmap
 
-> Última actualización: **31-ago-2026** — versiones releídas de los `__manifest__.py`, no de la
+> Última actualización: **3-sep-2026** (entrada nueva arriba; la cabecera de
+> versiones se releyó el 31-ago salvo `visar_appointment`, que sube hoy).
+> Anterior: **31-ago-2026** — versiones releídas de los `__manifest__.py`, no de la
 > memoria. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.10.0**,
-> **visar_fsm 19.0.1.2.0**, **visar_appointment 19.0.2.8.0**, **visar_field_app 19.0.1.26.0**,
+> **visar_fsm 19.0.1.2.0**, **visar_appointment 19.0.2.10.0**, **visar_field_app 19.0.1.26.0**,
 > **visar_subscription 19.0.1.5.0**, **visar_crm 19.0.1.3.0**,
 > **visar_whatsapp_agent 19.0.1.8.0** (en producción: **1.6.0**).
 > Entrada anterior: 29-ago-2026, reconciliada contra `git log` tras 8 días sin tocarse. Sus
@@ -11,6 +13,32 @@
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Hecho — 3-sep-2026 (commiteado, **sin desplegar**)
+
+- [x] **La oferta de póliza empieza por el ahorro** (`visar_appointment`
+      **19.0.2.10.0**). Los cuatro planes se llaman igual (I-15), así que lo
+      único que los distinguía era una línea de tres cifras encadenadas: cuatro
+      filas iguales y doce números. Ahora: *"Ahorro del 22% · $570.00 al mes ·
+      hoy pagas $1,710.00 por 3 meses"*, y el paso lleva pista de qué **es** una
+      póliza. Detalle en `35-polizas.md`.
+- [x] **Las pistas del chat dejan de mandar pulsar cosas.** *"Selecciona"* y
+      *da click en "{done}"* describían un widget que dejó de existir con las
+      listas de WhatsApp. Estas opciones solo las usa el chat —el wizard web
+      tiene sus propias plantillas—, así que no había dos canales que contentar.
+- [x] **"Tengo alacranes" ya contesta que es correctivo.** `keywords` en el paso
+      del motivo. Nadie llega diciendo "correctivo": llega diciendo lo que tiene,
+      y volver a preguntárselo es la queja más repetida del chat. Con esto el
+      runtime puede darlo por contestado al entregar la conversación.
+- [x] **El prompt base volvió al repo.** `prompt-agente-informacion.txt` estaba
+      **sin versionar** y había divergido 8 000 caracteres de la base: reglas
+      distintas, no formato. Ver el aviso en `34-prompt-agente-informacion.md`.
+
+> **Falta desplegar**: `sudo bash /opt/visar_fastapi/deploy/deploy-sin-numeros.sh`
+> (módulo + prompts en `visar-db` + reinicio del runtime). Probado en
+> `visar-test`: 254 tests de los dos módulos, con los **2 fallos previos** de
+> `TestBookingDedupe` que ya venían de antes (comprobado con y sin estos
+> cambios). Los prompts ya están aplicados en `visar-test`.
 
 ## Hecho — 31-ago-2026
 
