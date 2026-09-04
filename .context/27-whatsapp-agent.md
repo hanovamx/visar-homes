@@ -40,11 +40,11 @@ configuración**. Corre en el **mismo servidor** que Odoo. Ver `40-decisions.md`
 > **v19.0.1.8.0 (ago-2026) — reagendar una cita ya pagada desde el chat.**
 > `agent_reschedule_days` / `_slots` / `_confirm`. Las dos reglas (antelación mínima y cambios
 > por cita) se configuran en **Ajustes → Visar → Reagendar**, no aquí, porque son política de
-> agenda. **Implementado, sin desplegar.** Ver `visar_fastapi/.context/87-reagendar-citas.md`.
+> agenda. **En producción desde el 4-sep-2026.** Ver `visar_fastapi/.context/87-reagendar-citas.md`.
 
 > **v19.0.1.7.0 (ago-2026) — recontacto de leads fríos.** `visar.followup.config`, cron en
 > `crm.lead`, buzón `visar.wa.lead.message`, `agent_track_interest` / `agent_drop_followup`.
-> **Implementado, sin desplegar.** Ver `visar_fastapi/.context/86-recontacto-de-leads.md`.
+> **En producción desde el 4-sep-2026.** Ver `visar_fastapi/.context/86-recontacto-de-leads.md`.
 
 > **v19.0.1.5.0 (27-ago-2026) — el prompt base se inyecta siempre, y cada ruta
 > tiene su memoria.** `visar.agent.prompt` gana un campo `ruta`: el registro sin

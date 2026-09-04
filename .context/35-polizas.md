@@ -9,6 +9,12 @@ Una póliza se paga **dos meses por adelantado**. El precio de la póliza es men
 el de una compra única, y ese pago inicial doble es lo que evita el abuso (contratar
 póliza, recibir el servicio barato y cancelar).
 
+> **La póliza es lo ÚNICO cancelable** (confirmado con Visar el 4-sep-2026). Una **cita**
+> no se cancela: se **reagenda** — el servicio ya está pagado, y por eso
+> `min_cancellation_hours = 720` con horizonte de 30 días deja la cancelación fuera de
+> alcance **a propósito** (no es un error de captura; ver §5.3.1 del doc 33). La póliza sí
+> se puede cancelar, y **tampoco hay reembolso**: lo cobrado por adelantado no vuelve.
+
 Se configura por plan en `sale.subscription.plan.visar_first_invoice_periods`:
 
 | plan | periodo | periodos adelantados | efecto |
