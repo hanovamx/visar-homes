@@ -19,7 +19,22 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
-## Agrupación por zona del día — diseñada **y construida** el 4-sep-2026
+## Agrupación por zona del día — construida **y EN PRODUCCIÓN** el 4-sep-2026
+
+> **Desplegada a las 23:06** con `visar_fastapi/deploy/deploy-agrupacion-zona-dia.sh`:
+> backup (16 MB), `-u visar_base` **19.0.1.10.0 → 19.0.1.11.0**, reinicio, y primera
+> corrida del precalentado (**200 de 1080** centroides; el cron horario hace el resto).
+> Odoo responde 200, el runtime no se tocó, y no hay ni un ERROR en el log.
+>
+> **Primer efecto medido sobre la agenda real**, con destino en el Centro de Monterrey:
+> el **7-sep pierde sus 7 horarios** y el **8-sep queda marcado `tier=1`** (preferido).
+> Y el porqué es exactamente el caso que motivó la regla: el 7-sep ya tiene **tres
+> paradas repartidas entre el norte (25.7047, -100.3449) y el sureste
+> (25.5744, -100.2484)** —unos 19 km— así que ese día ya está partido y deja de
+> absorber trabajo de una tercera zona. Lo agendó una persona desde el backend, que es
+> el camino que **no** pasa por el filtro.
+>
+> ⚠️ **Marcha atrás inmediata y sin reiniciar:** `visar.travel.cluster_minutes = 999`.
 
 - [x] **Agrupación por zona del día** — el presupuesto entre paradas protege el traslado de la
       cita *vecina*, no el *día*: 9:00 en San Nicolás y 12:00 en García se ofrecían los dos.
