@@ -45,17 +45,56 @@ sin tocar la red, que es la mitad que protege la latencia de la página.
 `test_la_agrupacion_no_gasta_ni_una_llamada_mas` cuenta las llamadas a `_visar_mapbox_matrix`
 antes y después de agrupar y exige que sean **las mismas**.
 
-> ⚠️ **Lo que NO se ha comprobado, y hace falta antes de fiarse:**
+### V1–V5 sobre `visar-test`, con datos fabricados (4-sep-2026)
+
+`visar-test` no tenía **ni una** parada futura, así que el escenario se fabricó en la
+transacción del shell (**sin `commit()`**, regla de la casa): dos paradas para Pedro
+Martínez un lunes a 09:00–10:00 y 11:00–12:00, en el Centro. Una con partner
+geocodificado y **la otra con un partner que solo tiene CP**, para ejercitar el escalón 4.
+
+| | resultado |
+|---|---|
+| Escalón 4 (partner solo con CP `64000`) | → `(25.665763, -100.343564)`, el centroide. **Funciona.** |
+| Destino **CERCA** (~1 km) | el día se ofrece: **8 slots, `tier=1`** |
+| Destino **LEJOS** (otro extremo del área) | **día podado entero**; 23 días ofrecidos en vez de 24 |
+| Llamadas a Matrix, mes completo | **1** (tope: 12) |
+
+**Y el porqué, en crudo, para el slot de las 14:00 — que es la prueba de que la política
+cambió de verdad:**
+
+```
+CERCA  duraciones={0: (6, 8), 1: (14, 13)}    presupuesto=True   agrupación=True
+LEJOS  duraciones={0: (58, 60), 1: (50, 52)}  presupuesto=True   agrupación=False
+```
+
+Con dos horas de hueco por delante, el **presupuesto da por bueno** un trayecto de 58
+min — y así era hasta hoy. La agrupación lo tumba. **El hueco ya no salva un día de otra
+zona**, que es exactamente lo que se pidió.
+
+**V4, el orden, sobre un árbol real** (un día con trabajo dos semanas por delante, contra
+días vacíos más cercanos):
+
+```
+ 1. 2026-09-21  (9 slots)   <-- día CON trabajo en su zona
+ 2. 2026-09-07  (10 slots)  <-- guarda: el más próximo, intacto
+ 3. 2026-09-08  (10 slots)  <-- guarda: el segundo
+ ...
+```
+
+El día agrupado sube al **puesto 1 de 10** y los dos más próximos **siguen ahí**. Las dos
+mitades de §5.7, cada una haciendo su trabajo.
+
+> ⚠️ **Lo que sigue SIN comprobar:**
 >
-> - **El precalentado completo.** Se geocodificaron **3** CPs de 1080, y sin `commit()`
->   (regla de la casa: en shell no se escribe). El cron no ha corrido de verdad. Hasta
->   que corra, las paradas siguen sin respaldo y la agrupación puede leer días llenos
->   como vacíos.
-> - **V1/V2/V3 contra datos reales.** El predicado está probado en unitarias con
->   duraciones inyectadas; **no** se ha visto podar un día real de `visar-db`.
-> - **V4 y V7 de punta a punta.** El orden está probado sobre un árbol armado a mano;
->   no se ha visto una `agent_available_days` real ni el calendario web pintado.
-> - **Nada de esto está desplegado en producción.**
+> - **El precalentado completo.** Se geocodificaron **4** CPs de 1080, y sin `commit()`.
+>   El cron **no ha corrido de verdad ni una vez**. Hasta que corra, las paradas de un
+>   partner sin coordenadas siguen sin respaldo en la práctica.
+> - **V7, el calendario web.** Se sabe por código que el web pasa por el mismo filtro
+>   (`controllers/appointment.py`), pero **no se ha pintado la página ni se ha mirado**.
+>   No se afirma nada sobre lo que se ve ahí.
+> - **Datos reales de producción.** El escenario es fabricado: `visar-test` no tiene
+>   paradas futuras. Contra la agenda real de `visar-db` no se ha corrido nada.
+> - **Nada está desplegado.** `visar_base` necesita `-u`; los otros dos, reinicio.
 
 ---
 
