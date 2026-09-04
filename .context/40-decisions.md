@@ -609,6 +609,11 @@ nada que explicarle, porque **nunca ve la opción que no cabe**.
 > se ofrece igual — una falla de geocodificación no puede costar una reserva. El interruptor
 > `visar.travel.enabled` nace **encendido**; `visar.travel.depart_at`, apagado.
 
+> **Complementada — 4-sep-2026.** El presupuesto sigue en pie tal cual, pero deja de ser la única
+> regla: se le suma la **agrupación por zona del día** (última decisión de este doc, §5.7 del doc
+> 33), que mira **todas** las paradas del día y **no** suma huecos. Esta entrada contesta *¿le da
+> tiempo a llegar?*; aquélla, *¿deberíamos vender ese día?*
+
 ## [DECIDIDA — 19-ago-2026] Los bordes del día no se restringen por viaje
 
 Solo se valida el viaje **entre** paradas. La primera parada del día no le quita el traslado a
@@ -746,3 +751,87 @@ runtime cae a su `BASE_PROMPT` de respaldo.
 > una transacción de Odoo significa **savepoint**, no `try/except`. Y la forma de
 > saberlo no es razonarlo: es restaurar una copia en el estado anterior y llamar
 > al método.
+
+## [DECIDIDA E IMPLEMENTADA — 4-sep-2026] Un día es de una zona: agrupación por cercanía
+
+El presupuesto entre paradas protege el traslado de la cita **vecina**; no protege el **día**. Con
+él y nada más, 9:00 en San Nicolás y 12:00 en García se ofrecen los dos —hay tres horas de hueco—
+y el técnico se pasa la mañana en la carretera. Visar quiere lo contrario: los servicios de un día
+relativamente cerca, para **caber más servicios en el mismo día**. Es rentabilidad de la ruta, no
+puntualidad.
+
+**Regla:** si el técnico ya tiene paradas ese día, el destino nuevo tiene que estar a
+`≤ visar.travel.cluster_minutes` de **todas** ellas — sin sumar huecos. Si no tiene ninguna, pasa,
+y al reservarlo **el día queda tomado por esa zona** (emergente: no hace falta estado nuevo).
+
+**El umbral se deriva:** `default = visar.travel.minutes + 10` → **30 min**. El parámetro existe
+para forzarlo, pero guardar el número suelto es invitarlo a divergir del presupuesto base.
+
+**No sustituye al presupuesto, se suma.** Sin él, dos citas a 25 min podrían ir pegadas a las 9:00
+y las 9:30. La agrupación no mira huecos; el presupuesto sí. Se exigen las dos.
+
+**Coste: cero llamadas nuevas.** `_visar_travel_durations` ya calcula ida y vuelta contra todas las
+paradas del día; el predicado de hoy tira todo menos dos.
+
+**Y ordena, no solo poda:** se prefieren los días que ya tienen trabajo en la zona, luego los
+vacíos. El orden va **antes** del corte de `MAX_AVAILABLE_DAYS`, con una guarda: **los 2 días
+factibles más próximos entran siempre**, o al cliente con prisa se le empuja tres semanas en
+silencio. El web solo poda — un calendario mensual no tiene orden que expresar.
+
+> ⚠️ **Es un cambio de política de operación, no un ajuste del filtro.** Medido el 4-sep-2026 sobre
+> las 102 líneas de reserva de 2026: la dispersión intra-día mediana de Visar es **8.3 km**, el p75
+> **16.7 km** y el máximo **30.8 km**. **El 43% de los días multi-parada superan 15 km** — esta
+> regla prohíbe cerca de la mitad de los días que Visar arma hoy. Cuando empiecen a desaparecer
+> días de la lista, la primera reacción va a ser "se rompió el filtro".
+
+**Al cliente no se le dice nada** (decidido): el día no aparece y ya. Misma línea que el
+presupuesto — *nunca ve la opción que no cabe*.
+
+**Requisito previo, y no es donde parecía.** El **destino** ya tiene respaldo: si la dirección no
+geocodifica, `_visar_travel_destination` cae al **centroide del CP**, y `_visar_centroid()` lo
+geocodifica y lo guarda solo, una vez por CP. Que haya **1080 filas y 0 centroides** (4-sep) no es
+un fallo: es que esa rama no se ha pisado, porque la dirección exacta viene resolviendo (22 claves
+`addr:` en caché, todas con punto).
+
+El agujero está en el otro lado: **`_visar_travel_stop_coords` no tiene ese respaldo**, y solo 48
+partners tienen coordenadas. Para el presupuesto eso resta filtrado; para la agrupación es
+autodestructivo — **un día con todas las paradas sin geocodificar se lee como día vacío, y un día
+vacío lo acepta todo**. Así que van primero: (1) un cuarto escalón de CP→centroide en
+`_visar_travel_stop_coords`, y (2) precalentar los centroides en lote para no geocodificar dentro
+del camino que pinta horarios.
+
+> ✅ **Implementada el mismo día.** `_visar_travel_day_clustered` (predicado),
+> `_visar_travel_day_tier` + `_agent_rank_days` (el orden, con la guarda de los 2 días
+> más próximos), el cuarto escalón de CP en `_visar_travel_stop_coords` y el
+> precalentado por cron. El umbral se deriva de verdad: hay una prueba que sube
+> `visar.travel.minutes` a 25 y exige que el radio pase a 35 sola.
+
+Ver §5.7 del doc 33.
+
+## [CONFIRMADA CON VISAR — 4-sep-2026] No se cancela: se reagenda. La póliza es la excepción
+
+Una **cita** no se puede cancelar, y es intencional: el servicio se **paga por adelantado**, y la
+salida cuando el cliente no puede es **moverla**, no deshacerla. Por eso el chat ofrece reagendar
+y no ofrece cancelar, y por eso `min_cancellation_hours = 720` con `max_schedule_days = 30` deja
+la cancelación fuera de alcance.
+
+> ⚠️ **Ese 720 NO es un error de captura.** El doc 33 lo venía marcando desde el 17-ago como
+> *"casi seguro un error, revisar con Visar"* y lo listaba en §13 como abierto. Se preguntó el
+> 4-sep: **es la política**. Corregido en §5.3.1 y §13. Nadie tiene que "arreglarlo".
+
+**La única excepción es la póliza**, que **sí** se puede cancelar — y **tampoco hay reembolso**.
+Lo cobrado por adelantado (dos periodos en el plan mensual) no vuelve; es justo lo que sostiene
+que la póliza salga más barata que la compra única sin invitar al abuso. Ver `35-polizas.md`.
+
+## [DECIDIDA — 4-sep-2026] Los dos clientes de Mapbox se quedan separados
+
+`visar_field_app` (geocodificación de partners + ETA del técnico en ruta) y `visar_base`
+(`visar.mapbox.service`: geocodificación + `directions-matrix` para la factibilidad al ofrecer
+horarios) llaman a Mapbox por su cuenta, con cachés distintas. Hay además dos llamadas de
+Directions más en `visar_field_app` (`driving-traffic` en `project_task.py`, `driving` en
+`controllers/main.py`).
+
+**Se deja así por ahora.** Nacieron para cosas distintas y las dos funcionan; unificarlas sería
+un refactor sin síntoma que lo pida. Lo que sí conviene tener presente: **comparten token**
+(`web_map.token_map_box`) y por tanto **comparten cupo** de peticiones — si algún día una agota
+el límite, la otra se entera. Quien lo toque, que traiga un motivo mejor que la simetría.

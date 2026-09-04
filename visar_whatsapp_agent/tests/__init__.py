@@ -8,3 +8,4 @@ from . import test_wa_booking_outbox
 from . import test_agent_prompt_routes
 from . import test_followup
 from . import test_agent_reschedule
+from . import test_agent_day_ranking

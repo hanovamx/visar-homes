@@ -62,11 +62,11 @@ Detalle en [`10-requirements.md`](./10-requirements.md).
   >   **presupuesto entre paradas**, no un radio, y sus minutos son configurables
   >   (`visar.travel.minutes`, por defecto 20).
 
-- **Reagendar por WhatsApp:** implementado, **sin desplegar**. El cliente mueve una cita ya
+- **Reagendar por WhatsApp:** **en producción desde el 4-sep-2026**. El cliente mueve una cita ya
   pagada desde el chat, con 24 h de antelación en las dos puntas y 2 cambios por cita
   (`visar.reschedule.*`). Cancelar **no existe** a propósito: el servicio está cobrado y no hay
   flujo de reembolso. Ver `visar_fastapi/.context/87-reagendar-citas.md`.
-- **Recontacto de leads fríos:** implementado, **sin desplegar**. Ver
+- **Recontacto de leads fríos:** **en producción desde el 4-sep-2026**. Ver
   `visar_fastapi/.context/86-recontacto-de-leads.md`.
 - **Ajustes → Visar** (`res.config.settings` en `visar_base`): apartado, traslado entre
   servicios y las dos reglas de reagendado dejaron de ser parámetros del sistema sin pantalla.
@@ -80,7 +80,7 @@ Detalle en [`10-requirements.md`](./10-requirements.md).
 - **D-05:** implementado — wizard configurable, multi-técnico, SO multi-línea, entrada `/appointment`.
 - **D-04:** implementado junto con D-05 — pricelist por zona, combo, valoración dedupe.
 - **D-06:** implementado en `visar_base` — tabla add-ons, inyección obligatoria en checkout.
-- **D-07:** parcial en `visar_fsm` (**v19.0.1.0.1**) — tareas agrupadas por proyecto, add-ons como materiales, técnico/fecha desde cita, **orden de venta completa en tarea FSM** (`visar_sale_order_id`); pendiente worksheet, reportes dual, WhatsApp.
+- **D-07:** parcial en `visar_fsm` (**v19.0.1.2.0**) — tareas agrupadas por proyecto, add-ons como materiales, técnico/fecha desde cita, **orden de venta completa en tarea FSM** (`visar_sale_order_id`); pendiente worksheet, reportes dual, WhatsApp.
 - **Calificación wizard:** implementado — paso plaga/roedores/tipo plaga + producto roedores + estaciones obligatorias.
 - **Respuestas nativas:** híbrido implementado — zona, m² (rangos) y calificación en Questions & Answers.
 - **E2E web:** en curso; validar wizard completo con calificación, add-ons y generación FSM.
@@ -157,4 +157,4 @@ módulos custom viven en **`/opt/custom`** (no en una ruta `visar-homes/`).
     todavía los anuncia como abiertos. Es el documento vivo del proyecto y el más largo: si vas
     a tocar agendado, empieza por aquí — y lee el diario antes que la cabecera.
 12. `visar_fastapi/.context/87-reagendar-citas.md` — **mover una cita ya pagada desde el chat**
-    (y por qué cancelar no existe). Implementado, sin desplegar.
+    (y por qué cancelar no existe). En producción desde el 4-sep-2026.

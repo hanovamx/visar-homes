@@ -382,7 +382,7 @@ Todo lo de §5.3 se diseñó a ciegas. Lo que hay de verdad:
 
 | Dato | Realidad | Efecto en el diseño |
 |---|---|---|
-| Token de Mapbox (`web_map.token_map_box`) | **Existe** y no está vacío (101 chars). `base_geolocalize.geo_provider = 1` | La nota I-07 del backlog ("falta un token real") está **obsoleta**. Ya no bloquea. *No se hizo llamada en vivo: la validez del token sigue sin comprobarse.* |
+| Token de Mapbox (`web_map.token_map_box`) | **Existe** y no está vacío (101 chars). `base_geolocalize.geo_provider = 1` | La nota I-07 del backlog ("falta un token real") está **obsoleta**. Ya no bloquea. ~~*No se hizo llamada en vivo.*~~ **Comprobado el 21-ago-2026: el token sirve.** |
 | Direcciones geocodificadas | **77.6%** de las tareas abiertas con partner (97/125); 68.8% de los partners de esas tareas; solo 20.8% del padrón general | Viable, pero **1 de cada 4** tareas necesita geocodificar bajo demanda |
 | Técnicos (`appointment.resource`) | **2 registros, 1 usable.** *Pedro Martínez* (zonas A/B/C, 4 servicios, empleado ligado); *Jose Gonzalez* sin zonas, sin servicios y sin empleado → `_visar_eligible_resources` **nunca** lo devuelve | Ver §5.3.2 |
 | Duración y ventana | `appointment_duration = 1.0 h`; slots **L-V 08:00–18:00**, **Sáb 09:00–12:00** | Confirma el supuesto de ≤1 h (decisión 7) |
@@ -394,8 +394,12 @@ Dos parámetros del tipo de cita que hay que tener presentes:
   pregunte por WhatsApp *"¿pueden venir hoy?"* no tiene respuesta posible por esta
   vía; el flujo debe decirlo de frente y ofrecer lo más cercano válido.
 - **`min_cancellation_hours = 720`** (30 días) con `max_schedule_days = 30`: hace
-  la cancelación **imposible en la práctica**. Casi seguro es un error de captura;
-  conviene revisarlo con Visar (no es parte de este diseño, pero se cruza).
+  la cancelación **imposible en la práctica**. ~~Casi seguro es un error de captura.~~
+  → **CONFIRMADO CON VISAR (4-sep-2026): es intencional, no una errata.** El servicio se
+  paga por adelantado y **no se cancela: se reagenda**. La única excepción son las
+  **pólizas**, que sí se pueden cancelar — y **tampoco hay reembolso**. Que el número
+  haga la cancelación inalcanzable es el efecto buscado, así que **no hay que
+  "arreglarlo"**.
 
 ### 5.3.2 Un solo técnico — qué significa
 
@@ -520,6 +524,12 @@ centroide del código postal: aunque la dirección exacta no resuelva, el centro
 da una aproximación **mucho** mejor que rendirse a zona pura, y ya está calculado
 para cuando llegue el paso de fecha.
 
+> ⚠️ **Diseñado, no construido (comprobado el 4-sep-2026).** `visar.zone.cp` tiene
+> **1080 filas y 0 centroides**, así que este escalón de `_visar_travel_destination`
+> **no se ejecuta nunca**: hoy, si la dirección no geocodifica, se devuelve `None` y no
+> se filtra. Es tolerable para el presupuesto entre paradas y **no** lo es para la
+> agrupación del §5.7, donde poblarlos es requisito previo.
+
 ### 5.5 Dónde se enchufa (y por qué el web gana igual)
 
 Como un predicado más dentro de `_visar_filter_slots_multi_service`, que ya recorre
@@ -592,6 +602,198 @@ Las dos formas, como se acordó:
 Cuando nada cabe: 3 alternativas cercanas (ventana de 7 días) y, si el CP está
 estructuralmente lejos, los 3 días más cercanos sin servicios. Si el cliente
 rechaza todo → hand-off humano (ver §9, dependencia abierta).
+
+### 5.7 La agrupación por zona del día (decidido e IMPLEMENTADO el 4-sep-2026)
+
+> ✅ **Construido el 4-sep-2026.** `_visar_travel_day_clustered` y
+> `_visar_travel_day_tier` en `visar_appointment/models/visar_travel_feasibility.py`,
+> `_agent_rank_days` en `visar_whatsapp_agent`, el respaldo de CP en
+> `_visar_travel_stop_coords`, y el precalentado en `visar.zone.cp` con su cron.
+> 16 pruebas nuevas en `TestTravelClustering` + 7 en `TestAgentDayRanking`; suites en
+> 176 (`visar_appointment`) y 151 (`visar_whatsapp_agent`), con los **2 fallos
+> preexistentes y ajenos** de `test_partner_dedupe` como único rojo.
+>
+> **Verificado en vivo** (3 CPs, `visar-test`): 64000 Monterrey →
+> `(25.6658, -100.3436)`, 66000 García → `(25.7652, -100.4165)`, 66600 Apodaca →
+> `(25.7686, -100.2799)`. Puntos **distintos y en la dirección correcta**, que es lo
+> que V0 pedía comprobar: un geocoder rindiéndose los habría puesto todos en el
+> centro de Monterrey.
+
+El §5.2 protege el traslado de la cita **vecina**. No protege **el día**: con el
+presupuesto y nada más, un servicio a las 9:00 en San Nicolás y otro a las 12:00
+en García son perfectamente ofrecibles —hay tres horas de hueco, el presupuesto da
+de sobra— y el técnico se pasa la mañana en la carretera. El presupuesto contesta
+*¿le da tiempo a llegar?*; no contesta *¿deberíamos vender ese día?*
+
+Visar quiere lo segundo: que los servicios de un día caigan relativamente cerca
+unos de otros, para **caber más servicios en el mismo día**. Es una regla de
+rentabilidad de la ruta, no de puntualidad.
+
+#### Son dos reglas, y la nueva NO sustituye a la vieja
+
+| | qué pregunta | contra qué paradas | ¿suma el hueco? |
+|---|---|---|---|
+| Presupuesto (§5.2, existe) | ¿le da tiempo a llegar? | las dos **contiguas** | sí |
+| Agrupación (§5.7, nueva) | ¿deberíamos vender ese día? | **todas** las del día | **no** |
+
+Quitar el presupuesto y dejar solo la agrupación abre el caso contrario: dos citas
+a 25 min una de otra —dentro del radio del día— pegadas a las 9:00 y las 9:30. La
+agrupación no mira huecos; el presupuesto sí. **Las dos condiciones se exigen a la
+vez**, y un slot sobrevive solo si pasa las dos.
+
+#### El umbral se deriva, no se guarda dos veces
+
+```
+visar.travel.cluster_minutes   default = visar.travel.minutes + 10   →   30
+```
+
+El parámetro existe para poder forzarlo, pero su valor por defecto **se calcula**
+del presupuesto base: subir `visar.travel.minutes` a 25 mueve el radio del día a 35
+sin que nadie tenga que acordarse. Es la misma regla que ya rige el reparto 20/40
+—*guardar los dos números es invitarlos a divergir*— y aquí importa más, porque los
+dos números miden lo mismo (minutos de coche) para fines distintos.
+
+`DEFAULT_CLUSTER_MARGIN = 10`, confirmado con Visar el 4-sep-2026.
+
+#### El predicado
+
+Para un slot candidato en el día `D` del técnico `R`:
+
+- `R` **sin paradas** en `D` → pasa. Y al reservarlo, **el día queda tomado por esa
+  zona**: a partir de ahí la propia regla confina el resto del día al radio del
+  primero. No hace falta estado nuevo, ni marcar el día, ni un campo "zona del
+  día" — sale solo.
+- `R` **con paradas** → para **cada** parada con duración conocida se exige
+  `max(hacia, desde) ≤ cluster_minutes`.
+- Parada **sin coordenadas** → no impone nada (§5.4, sin cambios).
+
+**No cuesta ni una llamada más a Mapbox.** `_visar_travel_durations` ya calcula ida
+y vuelta contra **todas** las paradas del día; el predicado de hoy se queda con dos
+y tira el resto. El corto-circuito de días sin paradas sigue igual, así que el caso
+más frecuente sigue sin gastar nada.
+
+#### Qué dicen los datos de Visar (medido en servidor el 4-sep-2026)
+
+Dispersión geográfica real de las paradas de un mismo día — las 102 líneas de
+reserva de 2026, con las coordenadas resueltas por el propio
+`_visar_travel_stop_coords`, distancia en línea recta:
+
+| | dispersión máxima intra-día |
+|---|---|
+| mediana | **8.3 km** |
+| p75 | 16.7 km |
+| máximo | 30.8 km (26-ago, 5 paradas) |
+
+**El 43% de los días multi-parada de Visar superan 15 km de dispersión**, y el 71%
+superan 5. Dicho de frente: esta regla **prohíbe cerca de la mitad de los días que
+Visar arma hoy**. No es un ajuste fino del filtro, es un **cambio de política de
+operación** — y conviene tenerlo escrito, porque cuando empiecen a desaparecer días
+de la lista la primera reacción va a ser "se rompió el filtro".
+
+Segundo dato, que acota la urgencia: en los próximos 30 días hay **3 días-técnico
+con alguna parada**. Con un solo técnico usable el cuello de botella hoy es la
+**demanda**, no la ruta. La agrupación paga cuando suba el volumen; hoy sobre todo
+quita días ofrecibles. De ahí que el umbral nazca **flojo** (30 min) y configurable,
+en vez de pegado al presupuesto.
+
+#### El orden de los días: preferir, no solo podar
+
+Visar no solo quiere prohibir el día disperso: quiere **empujar** hacia los días que
+ya tienen trabajo en esa zona, y si no hay ninguno, hacia un día vacío que quede
+tomado por ella. Eso no es un filtro, es un **orden**, y hoy no hay ni una línea que
+ordene días.
+
+`_visar_filter_slots_travel` marca cada día que sobrevive con su tier; la geometría
+se queda en el módulo de factibilidad y la capa del agente solo ordena:
+
+| tier | día | por qué antes |
+|---|---|---|
+| 1 | ya tiene parada dentro del radio | rellena una ruta que ya existe |
+| 2 | vacío | abre un día nuevo para esa zona |
+| — | tiene paradas fuera del radio | ya lo quitó el predicado |
+
+Cronológico dentro de cada tier. Lo consumen **dos** sitios —`agent_available_days`
+y el listado de reagendado—, y en los dos **el orden tiene que aplicarse ANTES del
+corte** de `MAX_AVAILABLE_DAYS = 10`: ordenar después es reordenar los 10 primeros
+días del calendario y nada más.
+
+> ⚠️ **Un efecto que hay que mirar de frente:** ordenar por tier puro hace que un
+> día agrupado dentro de tres semanas le gane a un día vacío mañana. Al cliente con
+> prisa se le empuja lejos **en silencio** —no se le explica nada, decidido abajo—
+> así que no tiene forma de pedir algo antes.
+>
+> **Guarda: los 2 días factibles más próximos entran SIEMPRE en la lista**, sea cual
+> sea su tier; el resto se llena por preferencia. Conserva el sesgo de ruta sin
+> llegar a esconder la disponibilidad cercana.
+
+**El web se queda solo con la poda.** Pinta un mes de calendario y ahí no hay orden
+que expresar. Los dos canales podan igual; solo WhatsApp dirige.
+
+#### Al cliente no se le dice nada (decidido)
+
+No hay mensaje, ni aviso, ni "esa zona solo los martes". El día simplemente no
+aparece. Es la misma línea del §5.2 —*nunca ve la opción que no cabe*— y por la
+misma razón: explicar la regla invita a discutirla, y a "¿y si voy yo el jueves?"
+no hay respuesta que dar.
+
+#### Lo que sigue sin cambiar, a propósito
+
+- **No se re-valida al apartar ni al cobrar** (fallo T3f). Con la agrupación el
+  riesgo cambia de forma: dos clientes de lados opuestos pueden recibir el mismo día
+  vacío y pagar los dos. El resultado ya no es "el técnico llega tarde" sino "el día
+  se parte en dos". Sigue siendo preferible a rechazar un horario ya pagado.
+- **El agendado manual no pasa por aquí.** Quien agenda desde el backend de Odoo se
+  salta el filtro entero y parte el día — y entonces la regla **cierra el resto del
+  día para las dos zonas**. Es la consecuencia menos obvia de todo esto, y la única
+  que puede sorprender a alguien de Visar mirando su propio calendario.
+
+#### El bloqueador: las PARADAS se quedan ciegas, no el destino
+
+Hay que separar dos lados que es fácil confundir, y confundirlos manda el arreglo al
+sitio equivocado:
+
+| | de dónde saca las coordenadas | ¿tiene respaldo? |
+|---|---|---|
+| **Destino** (la dirección nueva) | `_visar_travel_destination` | **sí** — dirección geocodificada → **centroide del CP** → `None` |
+| **Paradas** (las citas ya agendadas) | `_visar_travel_stop_coords` | **no** — pedido → tarea FSM → asistente, y si ninguno tiene `partner_latitude`, `None` |
+
+El respaldo de centroide **existe y funciona solo**:
+`visar.zone.cp._visar_centroid()` geocodifica el CP la primera vez que se lo piden y
+**se guarda el punto en el propio registro** — una llamada a Mapbox por CP en toda la
+vida del sistema. No hay que construirlo.
+
+Que la tabla tenga **1080 filas y 0 centroides** (4-sep-2026) **no significa que esté
+roto**: significa que esa rama **no se ha llegado a pisar**, porque la
+geocodificación de la dirección exacta viene resolviendo — hay **22** claves `addr:`
+en `visar.travel.cache`, todas con punto. El respaldo está sano y sin estrenar.
+
+**El agujero de verdad está en las paradas.** `_visar_travel_stop_coords` **no tiene
+respaldo de CP**, y solo **48 partners** del padrón tienen coordenadas. Para el
+presupuesto entre paradas eso resta filtrado y ya. **Para la agrupación es
+autodestructivo:** un día cuyas paradas están todas sin geocodificar se lee como
+**día vacío**, y un día vacío lo acepta todo — la regla se apagaría sola justo en los
+días que peor conocemos.
+
+**Requisito previo, entonces, son dos cosas y ninguna es "poblar una tabla":**
+
+1. **Darle a `_visar_travel_stop_coords` un cuarto escalón**: el CP del partner de la
+   parada → `_visar_centroid()`. Es el mismo respaldo que el destino ya tiene, en el
+   lado que no lo tiene.
+2. **Precalentar los centroides en lote**, para que ese cuarto escalón no meta una
+   llamada de geocodificación **dentro** del camino que pinta horarios. El mecanismo
+   ya existe; lo que falta es llamarlo fuera de la petición.
+
+El campo `municipality` (51 municipios) queda como respaldo grueso de "misma zona"
+para cuando no haya geometría de ninguna clase.
+
+> **Honestidad sobre el tamaño del agujero.** Los "48 partners con coordenadas" asustan
+> más de lo que duelen: las paradas resuelven por el **pedido** y la **tarea FSM** antes
+> que por el padrón, y medido el 4-sep, **21 de 22** días multi-parada de 2026 tenían al
+> menos dos paradas con punto (1 no se podía evaluar). Hoy el filtro **ve** los días. El
+> cuarto escalón no es para arreglar un fallo actual: es para que la regla no se vuelva
+> silenciosamente permisiva el día que entre un cliente sin CP reconocible o un técnico
+> nuevo con clientes fuera del padrón geocodificado — y para que, cuando eso pase, se
+> note como "no hay dato" y no como "el día está libre".
 
 ## 6. Hold de slot (10 minutos)
 
@@ -1494,6 +1696,15 @@ Lo que **no** se ha ejercitado en producción es la llamada de Matrix: hoy el
 único técnico no tiene dos paradas el mismo día, así que la rama que gasta
 llamadas no llega a correr (`test_un_dia_sin_paradas_no_gasta_ni_una_llamada`).
 
+> ⚠️ **Caducado — corregido el 4-sep-2026.** El párrafo de arriba dejó de ser cierto
+> a los pocos días de escribirse y se quedó ahí. El recurso 1 tuvo **10 paradas el
+> 11-ago** y **9 el 1-sep**, y `visar_travel_cache` tenía **164 filas** con
+> escrituras hasta el **3-sep**. La rama que gasta llamadas **sí corre en
+> producción**, y lleva semanas haciéndolo. El pico de 10 paradas + el destino son
+> 11 coordenadas: dentro del tope de 25 del perfil `driving`, pero **por encima de
+> las 10 de `driving-traffic`** — es exactamente la razón por la que se eligió
+> `driving`, y ahora es un dato observado, no una previsión.
+
 ---
 
 ## 10.11 Tercera tanda: el final muerto de Información, y lo que se lee (20-ago-2026)
@@ -1804,8 +2015,12 @@ nombre desaparecía **en producción** mientras las pruebas pasaban.
 ## 13. Abierto
 
 - ~~Validar que el pedido se arma sin sesión web~~ → **cerrado**, funciona (§7).
-- ~~¿Hay token de Mapbox?~~ → **existe** (§5.3.1). Falta comprobar que el token
-  **sirve**: nadie ha hecho una llamada en vivo a Mapbox todavía.
+- ~~¿Hay token de Mapbox?~~ → **existe** (§5.3.1) ~~y falta comprobar que sirva~~ →
+  **CERRADO el 21-ago-2026**: sirve. Lo cerró la V0 del encargo (§10.10c) y el punto 1 de
+  I-07 en `90-improvements-later.md`. *Esta línea siguió diciendo "nadie ha hecho una
+  llamada en vivo" hasta el 4-sep, contradiciendo a las otras tres.* A 4-sep hay **164
+  filas** en `visar.travel.cache` con escrituras hasta el 3-sep: el filtro lleva semanas
+  llamando a Mapbox en producción.
 - **Stripe** (§7.3): planeado, aún no. Hoy el pago es simulado y no comprueba nada.
   **No bloquea** el desarrollo (Demo dispara toda la cadena), pero el flujo debe
   nacer con los estados de pago rechazado/pendiente contemplados.
@@ -1823,8 +2038,10 @@ nombre desaparecía **en producción** mientras las pruebas pasaban.
   partner "Visar Home" y sin geocodificar (0,0)**, y ningún empleado tiene
   `work_location_id`. Geocodificar ese partner y asignar la ubicación a los
   empleados costaría menos que añadir un campo nuevo.
-- `min_cancellation_hours = 720` con horizonte de 30 días: revisar con Visar
-  (§5.3.1). No es de este diseño, pero hace la cancelación imposible.
+- ~~`min_cancellation_hours = 720` con horizonte de 30 días: revisar con Visar.~~ →
+  **CERRADO el 4-sep-2026: es intencional.** No se cancela, se reagenda; el pago por
+  adelantado es justo lo que eso sostiene. Las **pólizas** sí se cancelan, sin reembolso
+  (§5.3.1).
 - Presupuesto/tope de llamadas a Mapbox y qué hacer al agotarlo (¿degradar a
   zona?).
 
@@ -1832,16 +2049,26 @@ nombre desaparecía **en producción** mientras las pruebas pasaban.
 
 Salidas de la verificación en servidor que **contradicen** lo que dicen otros docs:
 
-- **La base se llama `visar-db`. `visar_prod` NO EXISTE** (no aparece en `psql -l`;
+- **La base de este servidor se llama `visar-db`; `visar_prod` no existe AQUÍ** (no aparece en `psql -l`;
   `/etc/odoo/odoo.conf` trae `db_name = visar-db`). Existen `visar-db`, `visar-db-2`,
   `visar-db-pres`, `visar-db-rehearsal` y `visar-test`. Varios docs
   (`81-handoff-prod-server.md`, `25-field-app.md`, `27-whatsapp-agent.md`,
   `30-...-routing-implementation.md`, y el `50-status-roadmap.md` del runtime, que
-  además indica `ODOO_DB=visar_prod` en el `.env`) usan el nombre equivocado.
+  además indica `ODOO_DB=visar_prod` en el `.env`) usan ese nombre.
+
+  > ⚠️ **Matizado el 4-sep-2026: esta entrada acusaba de más.** Según el autor del
+  > proyecto, `visar_prod` viene de la **etapa de desarrollo local**, anterior a este
+  > servidor. Las notas históricas del tipo *"verificado contra `visar_prod`, 17-jul"* son
+  > **registros de esa etapa**, no erratas — reescribirlas sería falsear el historial.
+  > Lo que sí hay que corregir es todo lo **ejecutable**: un comando o un `.env` que diga
+  > `visar_prod` **en este servidor** falla, porque aquí la base es `visar-db`.
 - **Los módulos viven en `/opt/custom`**, no en una ruta `visar-homes/` del server.
 - **I-07 del backlog está obsoleto** en su punto 1: el token de Mapbox sí existe.
-  ⚠️ Pero **sigue sin comprobarse que SIRVA**: nadie ha hecho una llamada en vivo a Mapbox
-  todavía. Es la primera tarea antes de encender la factibilidad de ruta.
+  ~~⚠️ Pero sigue sin comprobarse que SIRVA.~~ → **Comprobado el 21-ago-2026** con una
+  llamada real; I-07 punto 1 quedó cerrado ese día. *Este párrafo se quedó pidiendo una
+  verificación ya hecha durante dos semanas, y decía que era "la primera tarea antes de
+  encender la factibilidad de ruta" cuando la factibilidad llevaba encendida desde el
+  21-ago.* Corregido el 4-sep-2026.
 - **I-11 del backlog no se arregla como propone** — ver la nota añadida ahí: el
   enlace `calendar_booking_ids` cae en **una sola** línea (la última agregada), así
   que filtrar por ese campo no protege la línea descontada.

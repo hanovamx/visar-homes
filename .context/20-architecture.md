@@ -295,8 +295,20 @@ Cada uno tiene su documento; aquí solo lo justo para saber qué es y dónde enc
 
 | Módulo | Qué añade | Documento |
 |---|---|---|
-| `visar_subscription` (19.0.1.4.0) | **Pólizas.** Cobro adelantado como línea real del pedido, listas (zona × plan), visitas incluidas por plan independientes del cobro. | [`35-polizas.md`](./35-polizas.md) |
-| `visar_field_app` (19.0.1.26.0) | **App de campo.** PIN, worksheet, fotos solo por cámara, firma, reporte PDF al cliente, avisos por WhatsApp. **Aquí vive Mapbox**: geocodificación (`_visar_geo_localize_mapbox`) y ETA de traslado (`_visar_enroute_eta_minutes`, Directions `driving-traffic` con fijo de respaldo). | [`25-field-app.md`](./25-field-app.md) |
+| `visar_subscription` (19.0.1.5.0) | **Pólizas.** Cobro adelantado como línea real del pedido, listas (zona × plan), visitas incluidas por plan independientes del cobro. | [`35-polizas.md`](./35-polizas.md) |
+| `visar_field_app` (19.0.1.26.0) | **App de campo.** PIN, worksheet, fotos solo por cámara, firma, reporte PDF al cliente, avisos por WhatsApp. **Aquí vive UNO de los dos Mapbox**: geocodificación (`_visar_geo_localize_mapbox`) y ETA de traslado (`_visar_enroute_eta_minutes`, Directions `driving-traffic` con fijo de respaldo). El otro es `visar.mapbox.service` en `visar_base` — ver el aviso bajo la tabla. | [`25-field-app.md`](./25-field-app.md) |
+
+> ⚠️ **Mapbox se llama desde DOS sitios, y el 4-sep-2026 se decidió dejarlo así.**
+> `visar_field_app/models/res_partner.py` (geocoding v5) y `visar_base/models/visar_travel.py`
+> (`visar.mapbox.service`: geocoding v5 + directions-matrix) son clientes **independientes**,
+> con cachés distintas; además hay Directions en `visar_field_app/models/project_task.py`
+> (`driving-traffic`) y en `visar_field_app/controllers/main.py` (`driving`).
+>
+> No es un descuido que haya que unificar de urgencia: nacieron para cosas distintas —el ETA del
+> técnico en ruta contra la factibilidad al ofrecer horarios— y **los dos funcionan**. Se deja
+> como está *por ahora*; si alguien va a tocarlo, que sea con un motivo mejor que la simetría, y
+> sabiendo que comparten el mismo token (`web_map.token_map_box`) y el mismo cupo de peticiones.
+
 | `visar_crm` (19.0.1.3.0) | **Pipeline de leads** del agente: `agent_track_lead` crea el lead en *Nuevo*; avance de etapa, *won* y cron de caducidad. Es donde aterriza el hand-off humano. | [`31-`](./31-whatsapp-crm-lead-mapping.md) / [`32-`](./32-whatsapp-crm-lead-implementation.md) |
 | `visar_whatsapp_agent` (19.0.1.8.0) | **Superficie RPC del agente**: **17** métodos, **siete** de ellos escriben. Cuestionario por RPC, días y horarios, apartado, reserva, liga de pago, **reagendado**, recontacto de leads, hand-off y buzón de avisos. | [`27-`](./27-whatsapp-agent.md) / [`33-`](./33-whatsapp-agendado-design.md) / [`87-`](../../../visar_fastapi/.context/87-reagendar-citas.md) |
 
@@ -335,7 +347,7 @@ WhatsApp (agendado, en producción desde 19/20-ago-2026)
    rama de valoración: `valuation` se acusa y sigue a dirección (I-17 CERRADO)
    los horarios ya pasan por el filtro de traslado (visar_travel_feasibility)
 
-WhatsApp (reagendar — implementado, SIN DESPLEGAR)
+WhatsApp (reagendar — EN PRODUCCION desde el 4-sep-2026)
    my_services → el cliente dice "mueve la 2"
         → días (agent_reschedule_days) → horarios (agent_reschedule_slots)
         → agent_reschedule_confirm ──► calendar.event + booking.line + project.task

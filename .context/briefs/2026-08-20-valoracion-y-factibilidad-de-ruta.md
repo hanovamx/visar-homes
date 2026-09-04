@@ -171,6 +171,14 @@ Sobre la copia, fabrica una parada lejana para el técnico en un día y comprueb
 - el slot con **una hora de hueco** por delante **sobrevive**, aunque el trayecto
   sea el mismo. ← *esto es la decisión 14; si desaparecen los dos, alguien lo
   implementó como un radio.*
+
+  > ⚠️ **Acotado el 4-sep-2026.** Esta comprobación sigue siendo válida **para el
+  > presupuesto**, y su prueba (`test_el_hueco_por_delante_se_suma_al_presupuesto`)
+  > sigue verde. Pero desde la agrupación por zona del día (§5.7) ya **no** describe
+  > lo que ve el cliente: con un destino fuera del radio del día, ese slot con hueco
+  > **también desaparece**, y esta vez es correcto. Para repetir V6 tal cual, usa un
+  > destino **dentro** del radio — si no, estarás midiendo la agrupación creyendo que
+  > mides el presupuesto.
 - el **primer** slot del día sobrevive aunque el trayecto sea largo (decisión 9).
 
 ### V7 — Coste

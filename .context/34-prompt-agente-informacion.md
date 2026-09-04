@@ -18,7 +18,7 @@ para que un consultor pueda afinarlos sin tocar código ni reiniciar nada.
 
 | `ruta` | Qué es | Cuándo se inyecta | Tamaño |
 |---|---|---|---|
-| vacía | **el prompt BASE** | desde el primer mensaje, en **todas** las rutas | ~20 000 caracteres |
+| vacía | **el prompt BASE** | desde el primer mensaje, en **todas** las rutas | **31 976** caracteres (4-sep-2026; esta celda decía ~20 000) |
 | `reception` `info` `schedule` `existing` `other` | **la memoria de esa ruta** | solo mientras la conversación esté ahí, **después** del base y del catálogo | ~700–1 600 caracteres |
 
 Vigente = el primero por `sequence, id` **dentro de su ruta**, entre los no

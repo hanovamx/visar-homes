@@ -8,6 +8,10 @@
 > **`/opt/custom`**. Donde este doc (y `25-field-app.md`, `27-whatsapp-agent.md`,
 > `30-whatsapp-agent-routing-implementation.md`, y el `50-status-roadmap.md` del
 > runtime con su `ODOO_DB=visar_prod`) diga `visar_prod`, léase `visar-db`.
+> **Matiz (4-sep-2026):** `visar_prod` no es una errata inventada — era la base de
+> **desarrollo local** anterior a este servidor. Las notas históricas que la citan están
+> bien; lo que no puede quedar así es cualquier cosa **ejecutable** (comandos, `.env`),
+> porque aquí esa base no existe.
 
 > **productive Odoo 19 Enterprise** instance (`visar_prod`). You do the deploy and
 > the post-deploy configuration/verification. This doc is self-contained; you do
@@ -154,7 +158,7 @@ git pull origin main
   If the module in prod is already at the latest version (no migration to run) but the
   templates / stage need re-seeding, run the seeders manually:
   ```bash
-  <odoo-bin> shell -c <odoo.conf> -d visar_prod
+  <odoo-bin> shell -c <odoo.conf> -d visar-db   # este servidor: visar-db, NO visar_prod
   >>> from odoo.addons.visar_field_app.hooks import seed_worksheet_templates, seed_signature_stage
   >>> seed_worksheet_templates(env); seed_signature_stage(env)
   >>> env.cr.commit()

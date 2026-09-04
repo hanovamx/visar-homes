@@ -21,6 +21,12 @@ from odoo.exceptions import ValidationError
 MIN_HOLD_MINUTES = 1
 MAX_HOLD_MINUTES = 120
 MAX_TRAVEL_MINUTES = 120
+# Cuánto MÁS ancho es el radio del día que el presupuesto entre paradas. El
+# umbral de agrupación NO se guarda suelto: se deriva de `visar.travel.minutes`
+# más este margen, porque los dos números miden lo mismo (minutos de coche) para
+# fines distintos y guardarlos por separado es invitarlos a divergir. Confirmado
+# con Visar el 4-sep-2026: 20 + 10 = 30.
+DEFAULT_CLUSTER_MARGIN = 10
 
 
 class ResConfigSettings(models.TransientModel):
@@ -69,6 +75,33 @@ class ResConfigSettings(models.TransientModel):
              "hueco que haya antes del horario. Los horarios a los que no le da "
              "tiempo de llegar simplemente no se le ofrecen al cliente.")
 
+    # El radio del DIA, que es otra pregunta que el presupuesto de arriba. Aquél
+    # dice si al técnico le da tiempo de llegar desde la parada de al lado; éste,
+    # si vale la pena vender ese día — un servicio a las 9:00 en San Nicolás y
+    # otro a las 12:00 en García caben de sobra en el presupuesto y aun así son
+    # una mañana entera en la carretera. Ver §5.7 del diseño 33.
+    visar_travel_cluster_minutes = fields.Integer(
+        string="Radio de agrupación del día",
+        config_parameter='visar.travel.cluster_minutes',
+        default=lambda self: self._visar_default_cluster_minutes(),
+        help="Qué tan lejos pueden quedar entre sí los servicios de un mismo "
+             "día. A diferencia del traslado entre servicios, este NO suma el "
+             "hueco: si el técnico ya tiene trabajo ese día, el domicilio nuevo "
+             "tiene que estar dentro de este radio de TODAS sus paradas. Un día "
+             "sin trabajo acepta cualquier zona, y al reservarlo queda tomado "
+             "por ella. Vacío = se deriva del traslado entre servicios + 10.")
+
+    @api.model
+    def _visar_default_cluster_minutes(self):
+        """El default DERIVADO del presupuesto entre paradas.
+
+        No es `default=30` a secas a propósito: horneado ahí, el 30 se
+        desengancha de `visar.travel.minutes` y el día que alguien suba el
+        presupuesto a 25 el radio del día se queda en 30 sin que nadie se entere.
+        """
+        return self.env['appointment.type'].sudo()._visar_travel_minutes() \
+            + DEFAULT_CLUSTER_MARGIN
+
     # Las DOS puntas: para poder mover una cita tienen que faltar al menos estas
     # horas, y el horario nuevo tiene que estar igual de lejos. Un cambio de
     # última hora desordena la ruta del técnico se pida desde donde se pida.
@@ -95,7 +128,8 @@ class ResConfigSettings(models.TransientModel):
     # Validación
     # ------------------------------------------------------------------
 
-    @api.constrains('visar_slot_hold_minutes', 'visar_travel_minutes')
+    @api.constrains('visar_slot_hold_minutes', 'visar_travel_minutes',
+                    'visar_travel_cluster_minutes')
     def _check_visar_agendado(self):
         """Rechaza los valores que romperían el agendado en silencio.
 
@@ -119,6 +153,18 @@ class ResConfigSettings(models.TransientModel):
                     "presupuesto mayor que el bloque de servicio deja al "
                     "calendario sin horarios que ofrecer."
                     % MAX_TRAVEL_MINUTES)
+            radio = record.visar_travel_cluster_minutes
+            if radio is not None and radio and not (0 <= radio <= MAX_TRAVEL_MINUTES):
+                raise ValidationError(
+                    "El radio de agrupación tiene que estar entre 0 y %s "
+                    "minutos." % MAX_TRAVEL_MINUTES)
+            if radio and traslado and radio < traslado:
+                raise ValidationError(
+                    "El radio de agrupación del día (%s min) no puede ser menor "
+                    "que el traslado entre servicios (%s min). El radio no suma "
+                    "huecos, así que por debajo del presupuesto rechazaría "
+                    "horarios que el técnico sí alcanza, y el presupuesto "
+                    "dejaría de decidir nada." % (radio, traslado))
 
     @api.constrains('visar_reschedule_min_hours', 'visar_reschedule_max_times')
     def _check_visar_reagenda(self):

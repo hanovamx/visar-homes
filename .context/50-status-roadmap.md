@@ -1,12 +1,17 @@
 # Estado y roadmap
 
-> Última actualización: **3-sep-2026** (entrada nueva arriba; la cabecera de
+> Última actualización: **4-sep-2026** (diseño de la agrupación por zona del día;
+> **no se tocó código**). Releído del manifiesto ese día: **visar_whatsapp_agent
+> 19.0.1.10.0**, no 1.8.0 como decía la línea de abajo — el aviso de siempre,
+> cumpliéndose otra vez.
+> Anterior: **3-sep-2026** (entrada nueva arriba; la cabecera de
 > versiones se releyó el 31-ago salvo `visar_appointment`, que sube hoy).
 > Anterior: **31-ago-2026** — versiones releídas de los `__manifest__.py`, no de la
 > memoria. Versiones **en el árbol de trabajo**: **visar_base 19.0.1.10.0**,
 > **visar_fsm 19.0.1.2.0**, **visar_appointment 19.0.2.10.0**, **visar_field_app 19.0.1.26.0**,
 > **visar_subscription 19.0.1.5.0**, **visar_crm 19.0.1.3.0**,
-> **visar_whatsapp_agent 19.0.1.8.0** (en producción: **1.6.0**).
+> **visar_whatsapp_agent 19.0.1.8.0** (en producción: **1.6.0**). *Las dos cifras estaban mal
+> el 4-sep: el manifiesto va por **19.0.1.10.0** y producción también.*
 > Entrada anterior: 29-ago-2026, reconciliada contra `git log` tras 8 días sin tocarse. Sus
 > versiones ya iban una menor en tres módulos, que es el aviso de siempre: **estas cifras
 > caducan en días — reléelas del manifiesto antes de usarlas para nada.**
@@ -14,7 +19,43 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
-## Hecho — 3-sep-2026 (commiteado, **sin desplegar**)
+## Agrupación por zona del día — diseñada **y construida** el 4-sep-2026
+
+- [x] **Agrupación por zona del día** — el presupuesto entre paradas protege el traslado de la
+      cita *vecina*, no el *día*: 9:00 en San Nicolás y 12:00 en García se ofrecían los dos.
+      Visar quiere los servicios de un día cerca unos de otros para **caber más servicios al
+      día**. Diseño en **§5.7 del doc 33**, decisión en `40-decisions.md`, encargo en
+      [`briefs/2026-09-04-agrupacion-por-zona-del-dia.md`](./briefs/2026-09-04-agrupacion-por-zona-del-dia.md).
+      Se **suma** al presupuesto, no lo sustituye. Umbral **derivado**:
+      `visar.travel.minutes + 10` → 30 min. Coste previsto: **cero llamadas nuevas** a Mapbox.
+- [x] ~~⛔ Bloqueador: los centroides de CP~~ — **resuelto, y no era donde parecía.** El
+      respaldo del **destino** ya existía y se auto-puebla; las 1080 filas sin centroide eran una
+      rama sin pisar, no un fallo. El agujero estaba en **`_visar_travel_stop_coords`**, que no
+      tenía respaldo ninguno: ahora cae al centroide del CP del partner, con `geocode=False` para
+      no salir a la red al pintar horarios, y un cron precalienta en lote (200 por corrida).
+      Verificado en vivo: Monterrey, García y Apodaca dan tres puntos distintos y bien puestos.
+- [x] **Corregido en el doc 33:** el §10.10(c) decía que la rama que gasta llamadas de Matrix no
+      llega a correr porque el técnico no tiene dos paradas el mismo día. **Falso desde hace
+      semanas** — recurso 1 con 10 paradas el 11-ago y 9 el 1-sep, y `visar_travel_cache` con 164
+      filas escritas hasta el 3-sep. La factibilidad de traslado **sí** está llamando a Mapbox en
+      producción.
+
+> **Medido en servidor el 4-sep** sobre las 102 líneas de reserva de 2026: dispersión intra-día
+> mediana **8.3 km**, p75 **16.7 km**, máximo **30.8 km**; **el 43% de los días multi-parada
+> superan 15 km**. La regla nueva prohíbe cerca de la mitad de los días que Visar arma hoy — es
+> un **cambio de política de operación**, no un ajuste del filtro. Y en los próximos 30 días solo
+> hay **3 días-técnico con paradas**: con un técnico el cuello de botella sigue siendo la
+> demanda, así que el umbral nace flojo y configurable.
+
+## Hecho — 3-sep-2026 — **DESPLEGADO el 4-sep-2026**
+
+> *Este encabezado decía "commiteado, **sin desplegar**" y dejó de ser cierto el 4-sep.
+> Comprobado ese día: los **siete** módulos `visar_*` tienen en `ir_module_module` la misma
+> `latest_version` que su `__manifest__.py`, el servidor de `visar-db` rearrancó a las **18:37**
+> y el runtime a las **18:52** — después de todos los commits de código del día. El despliegue
+> lo hizo `aba303e` del runtime (*"script del recorrido del 3-sep: módulo, prompts y runtime, en
+> orden"*).*
+
 
 - [x] **La oferta de póliza empieza por el ahorro** (`visar_appointment`
       **19.0.2.10.0**). Los cuatro planes se llaman igual (I-15), así que lo
@@ -80,20 +121,24 @@
       llegaban a la pantalla de pago sin que el cliente eligiera nada. Quedan los de prompt
       (1.1, 2.1, 2.2, 2.3, 5.1) y el 6.3 de arriba.
 
-### En el árbol de trabajo, sin desplegar
+### ~~En el árbol de trabajo, sin desplegar~~ — **desplegado el 4-sep-2026**
 
-*Actualizado el 31-ago-2026. La sección se llamaba "sin commitear ni desplegar": del lado
-runtime **ya está todo commiteado** (`58897f1` recontacto, `aa65144` reagendar), así que lo que
-falta es el despliegue. El repo de Odoo no es un repo git en este checkout, así que aquí
-"commiteado" no es una propiedad observable.*
+*Actualizado el 31-ago-2026; **cerrado el 4-sep-2026**, cuando las dos entradas de abajo
+llegaron a producción (ver el encabezado del 3-sep).*
 
-- [ ] **Reagendar una cita ya pagada** (`19.0.1.8.0` + `visar_appointment 19.0.2.8.0` +
+> ⚠️ **Dos afirmaciones de esta sección eran falsas y se corrigen aquí:**
+> 1. *"El repo de Odoo no es un repo git en este checkout"* — **sí lo es**: `/opt/custom` tiene
+>    `.git` y `git log` funciona. "Commiteado" **sí** es una propiedad observable de este lado,
+>    y de hecho es como se reconcilió este archivo.
+> 2. Las dos entradas seguían marcadas `[ ]` (sin desplegar) tres días después de estarlo.
+
+- [x] **Reagendar una cita ya pagada** (`19.0.1.8.0` + `visar_appointment 19.0.2.8.0` +
       `visar_base 19.0.1.10.0`): `agent_reschedule_days` / `_slots` / `_confirm`, el contexto
       `visar_ignore_event_id` para que una cita no compita consigo misma, y **Ajustes → Visar →
       Reagendar**. Cancelar **no existe** a propósito. Diseño en
       `visar_fastapi/.context/87-reagendar-citas.md`. Validado en `visar-test` (142 pruebas del
       módulo) y con **443** del runtime.
-- [ ] **Recontacto de leads fríos** (`19.0.1.7.0`): `visar.followup.config`, campos y cron en
+- [x] **Recontacto de leads fríos** (`19.0.1.7.0`): `visar.followup.config`, campos y cron en
       `crm.lead`, buzón `visar.wa.lead.message`, y `agent_track_interest` /
       `agent_drop_followup`. Diseño en `visar_fastapi/.context/86-recontacto-de-leads.md`.
       Validado en `visar-test` (127 pruebas del módulo).
@@ -102,7 +147,7 @@ falta es el despliegue. El repo de Odoo no es un repo git en este checkout, así
       **tres** bloques, no dos — *Configuración Visar*, **Agendado** (minutos de apartado
       `visar.slot_hold_minutes` y traslado entre servicios `visar.travel.minutes`) y
       **Reagendar** (`visar.reschedule.min_hours`, `visar.reschedule.max_times`), todos con
-      `@api.constrains` de cordura. Sigue **sin desplegar**, como el resto de esta sección.
+      `@api.constrains` de cordura. **Desplegada el 4-sep-2026**, como el resto de esta sección.
       *(Esta línea decía `visar_base 19.0.1.8.0`; el módulo va por 19.0.1.10.0.)*
 
 ## Hecho — Agendado completo por WhatsApp (19/20-ago-2026) — **EN PRODUCCIÓN**
