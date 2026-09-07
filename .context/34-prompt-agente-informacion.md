@@ -53,6 +53,23 @@ que alguien editó sin dejar rastro, no un estado normal.
 > el runtime lo lee. Pegar a mano en la UI sigue funcionando, y sigue siendo la
 > forma de volver a divergir.
 
+> ⚠️ **Y volvió a pasar** (7-sep-2026), en el sentido contrario y sin que nadie
+> hiciera nada mal. Alguien cambió **"póliza" por "suscripción"** en toda la
+> base desde la UI, que es exactamente para lo que está la UI: es copy de
+> negocio y lo decide el negocio. La copia del repo se quedó atrás.
+>
+> Lo que importa es lo que **no** se hizo: escribir la copia del repo encima
+> habría deshecho ese trabajo en silencio, y el script no tiene forma de
+> notarlo — lee un fichero y lo escribe, punto. Por eso la regla operativa es
+> **resincronizar los ficheros desde la base ANTES de editarlos**, cada vez, y
+> no solo cuando se sospecha. Está escrita en la cabecera de
+> `deploy/prompt-lenguaje-cp-estimacion.py`, que es donde se va a leer.
+>
+> El diff de la resincronización es además la única forma de ver qué editó el
+> negocio, que es información que vale la pena tener: ahí se vio que
+> `* suscripción mensual*` había quedado con un espacio de más y WhatsApp
+> pintaba el asterisco en vez de la negrita.
+
 **Cómo aplicarlo:** copiar el bloque de abajo (sin las comillas del cerco) y
 pegarlo en el campo *Prompt del sistema* del registro activo. El catálogo de
 servicios se añade solo después de este texto; no hace falta listarlo.
