@@ -380,20 +380,46 @@ class VisarAgentTools(models.AbstractModel):
                 tier = template._visar_tier_for_dimension_m2(dimension, m2)
 
         is_valuation = bool(tier and tier.is_valuation)
+
+        # Lo que ESTA cuenta uso, dicho en castellano. No es decoracion: la
+        # formula es determinista, pero quien la alimenta es el modelo, y la
+        # misma casa daba numeros distintos segun que campos rellenara. Con
+        # "3 recamaras, 2 banos, 3 niveles, 1 cajon" la cuenta da 156 m2; con
+        # los niveles y los cajones cambiados, 110; sin el predio se queda
+        # corta y con el sube a 187. El cliente no puede corregir lo que no ve,
+        # asi que el modelo tiene que ensenarselo (lo pide el prompt).
+        partes = []
+        for valor, singular, plural in ((rec, "recamara", "recamaras"),
+                                        (ban, "bano", "banos"),
+                                        (niv, "nivel", "niveles"),
+                                        (gar, "cajon de cochera",
+                                         "cajones de cochera")):
+            if valor:
+                partes.append("%d %s" % (valor, singular if valor == 1 else plural))
+        if predio:
+            partes.append("%d m2 de terreno" % predio)
+        usado = ", ".join(partes)
+        falta = ("" if predio else
+                 " Falta el TERRENO, que es el dato que mas mueve el numero: "
+                 "sin el la estimacion se queda corta. Pidelo.")
+
         if is_valuation:
             message = (
-                "Alrededor de %d m2 de construccion. Con esa superficie hace "
-                "falta una visita de valoracion tecnica; no hay precio de "
-                "lista." % m2
+                "Con %s da alrededor de %d m2 de construccion. Con esa "
+                "superficie hace falta una visita de valoracion tecnica; no hay "
+                "precio de lista. Dile al cliente CON QUE datos salio el "
+                "numero, para que pueda corregirlos.%s" % (usado, m2, falta)
             )
         else:
             message = (
-                "Alrededor de %d m2 de construccion. Confirmalo con el cliente "
-                "antes de cotizar." % m2
+                "Con %s da alrededor de %d m2 de construccion. Dile al cliente "
+                "CON QUE datos salio el numero -es una estimacion, no una "
+                "medicion- y confirmalo antes de cotizar.%s" % (usado, m2, falta)
             )
 
         return {
             'm2': m2,
+            'usado': usado,
             'is_valuation': is_valuation,
             'tier_label': (self._agent_tier_label(tier) if tier else None),
             'predio_usado': predio > 0,
@@ -1351,6 +1377,17 @@ class VisarAgentTools(models.AbstractModel):
         seria reordenar los 10 primeros dias del calendario, es decir, no hacer
         nada. Es el error facil de este metodo.
 
+        ⚠️ Y una tercera regla, que es la que cierra el metodo: **el tier ELIGE
+        los dias, no los ORDENA al publicarlos.** La lista sale siempre en orden
+        de calendario. Ordenarla por preferencia de ruta es lo que producia
+        *"Tengo lugar el viernes 11, lunes 14, miercoles 9, jueves 10..."*: al
+        cliente le llega un desorden que no significa nada -la preferencia es
+        nuestra, no suya- y de paso mentia la linea de "hay fechas hasta el X",
+        que lee el ULTIMO de la lista y con el tier delante ya no es el ultimo
+        del calendario. La preferencia se cobra entera en el recorte, que es
+        donde decide QUE dias se ofrecen; el orden en que se dicen no le anade
+        nada.
+
         Sin `visar_travel_tier` -filtro apagado, sin destino, sin paradas- todos
         los dias valen `TIER_VACIO` y esto degrada a lo de siempre: cronologico.
         """
@@ -1370,7 +1407,8 @@ class VisarAgentTools(models.AbstractModel):
         elegidos = proximos + sorted(
             resto, key=lambda fila: (fila['_tier'], fila['_dia']))
         elegidos = elegidos[:self.MAX_AVAILABLE_DAYS]
-        elegidos.sort(key=lambda fila: (fila['_tier'], fila['_dia']))
+        # Cronologico para publicar: el tier ya hizo su trabajo arriba.
+        elegidos.sort(key=lambda fila: fila['_dia'])
         return [{'date': fila['date'], 'slot_count': fila['slot_count']}
                 for fila in elegidos]
 

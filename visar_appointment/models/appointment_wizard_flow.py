@@ -108,6 +108,36 @@ _VISAR_VALUATION_REASONS = {
     'area_excede_limite': "un área de ese tamaño",
 }
 
+# El vocabulario del CLIENTE para decir DONDE. Vive aqui, y no dentro del paso
+# `cobertura` donde nacio, porque lo leen dos sitios que tienen que decir lo
+# mismo: el paso que pregunta dónde fumigamos, y los pasos que MIDEN.
+#
+# Los que miden lo usan para otra cosa: para saber a qué lugar se refiere una
+# medida suelta. El agente de WhatsApp llega al paso de los metros con varias
+# frases que el cliente ya dijo -"como 190 metros", "el patio son 27 metros"- y
+# sin este vocabulario las dos valen igual para los dos pasos: se contradicen,
+# el autopiloto se para y el cliente vuelve a contestar lo que ya había dicho.
+# Ver `lugares` / `mide_lugar` en `_visar_wizard_step_options`.
+#
+# Es copy de negocio: lo edita un consultor y no lleva `_()` a propósito, porque
+# son las palabras que escribe el cliente, no texto que se le muestre.
+_VISAR_LUGARES_KEYWORDS = {
+    'interior': ['adentro', 'dentro', 'por dentro', 'la casa', 'solo la casa',
+                 'construccion', 'construidos', 'construida'],
+    'exterior': ['afuera', 'fuera', 'por fuera', 'patio', 'jardin',
+                 'solo el patio', 'cochera', 'terraza'],
+    'ambos': ['ambo', 'amba', 'las dos', 'los dos', 'las 2', 'los 2',
+              'dos cosas', 'todo', 'completo', 'interior y exterior',
+              'exterior e interior', 'adentro y afuera', 'dentro y fuera',
+              'por dentro y por fuera', 'casa y patio', 'casa y jardin'],
+}
+
+# Lo que ve un paso que MIDE: solo interior y exterior son lugares que se miden
+# por separado, "ambos" no es un sitio al que se le tomen metros.
+_VISAR_LUGARES_QUE_MIDEN = {
+    clave: _VISAR_LUGARES_KEYWORDS[clave] for clave in ('interior', 'exterior')
+}
+
 # Claves de paso que el flujo puede devolver como "el siguiente".
 VISAR_STEP_SERVICES = 'services'
 VISAR_STEP_VALUATION = 'valuation'
@@ -1644,18 +1674,11 @@ class AppointmentType(models.Model):
                 # enteras, asi que "las dos" no se confunde con un "dos" suelto.
                 'options': [
                     {'value': 'interior', 'label': _('Interior'), 'description': '',
-                     'keywords': ['adentro', 'dentro', 'por dentro', 'la casa',
-                                  'solo la casa']},
+                     'keywords': list(_VISAR_LUGARES_KEYWORDS['interior'])},
                     {'value': 'exterior', 'label': _('Exterior'), 'description': '',
-                     'keywords': ['afuera', 'fuera', 'por fuera', 'patio',
-                                  'jardin', 'solo el patio']},
+                     'keywords': list(_VISAR_LUGARES_KEYWORDS['exterior'])},
                     {'value': 'ambos', 'label': _('Ambos'), 'description': '',
-                     'keywords': ['ambo', 'amba', 'las dos', 'los dos', 'las 2',
-                                  'los 2', 'dos cosas', 'todo', 'completo',
-                                  'interior y exterior', 'exterior e interior',
-                                  'adentro y afuera', 'dentro y fuera',
-                                  'por dentro y por fuera', 'casa y patio',
-                                  'casa y jardin']},
+                     'keywords': list(_VISAR_LUGARES_KEYWORDS['ambos'])},
                 ],
             }
 
@@ -1689,6 +1712,17 @@ class AppointmentType(models.Model):
                 'options': [],
             }
             if interior:
+                # QUÉ lugar mide este paso, y con qué palabras lo nombra el
+                # cliente. Solo lo usa quien llega con medidas ya dichas (el
+                # agente de WhatsApp): le deja saber que "el patio son 27
+                # metros" no contesta los metros de la CASA. Ver
+                # `_VISAR_LUGARES_KEYWORDS`.
+                payload['mide_lugar'] = 'interior'
+                payload['lugares'] = {
+                    clave: list(palabras)
+                    for clave, palabras in _VISAR_LUGARES_QUE_MIDEN.items()
+                }
+            if interior:
                 payload['hint'] = _('Son los metros construidos de tu casa, no '
                                     'los del terreno.')
                 # El paso interior admite dos caminos, y el segundo evita que el
@@ -1712,6 +1746,12 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'band_id',
                 'title': _('¿De qué tamaño es tu jardín o exterior?'),
+                # La otra mitad de `mide_lugar`: este paso mide el exterior, y
+                # "como 190 metros" (la casa) no lo contesta. Ver el paso
+                # `interior` y `_VISAR_LUGARES_KEYWORDS`.
+                'mide_lugar': 'exterior',
+                'lugares': {clave: list(palabras) for clave, palabras
+                            in _VISAR_LUGARES_QUE_MIDEN.items()},
                 # `m2_min`/`m2_max` viajan para que el paso se pueda contestar
                 # ESCRIBIENDO los metros. Sin ellos, la etiqueta ("101 – 150 m²")
                 # no da ni una palabra que clasificar y el unico camino era el

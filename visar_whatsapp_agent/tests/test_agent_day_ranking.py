@@ -62,14 +62,39 @@ class TestAgentDayRanking(TransactionCase):
             self._fechas(self.Tools._agent_rank_days(arbol)),
             ['2026-09-10', '2026-09-11', '2026-09-12'])
 
-    def test_el_dia_con_trabajo_en_la_zona_sube(self):
-        """Es la preferencia entera: rellenar ruta antes que abrir dia."""
+    def test_el_dia_con_trabajo_en_la_zona_entra(self):
+        """Es la preferencia entera: rellenar ruta antes que abrir dia.
+
+        Se comprueba que ENTRA, no que vaya primero. La preferencia decide QUE
+        dias se ofrecen; el orden en que se dicen es el del calendario (ver
+        `test_lo_que_se_publica_va_en_orden_de_calendario`).
+        """
         arbol = self._arbol((10, TIER_VACIO), (11, TIER_VACIO),
                             (12, TIER_VACIO), (25, TIER_CON_TRABAJO))
         fechas = self._fechas(self.Tools._agent_rank_days(arbol))
-        self.assertEqual(
-            fechas[0], '2026-09-25',
-            "el dia que ya tiene trabajo en la zona va primero")
+        self.assertIn(
+            '2026-09-25', fechas,
+            "el dia que ya tiene trabajo en la zona tiene que ofrecerse")
+
+    def test_lo_que_se_publica_va_en_orden_de_calendario(self):
+        """El tier ELIGE los dias; no los ordena al decirlos.
+
+        Ordenados por tier, al cliente le llegaba "el viernes 11, lunes 14,
+        miercoles 9, jueves 10...": un desorden que no significa nada para el,
+        porque la preferencia de ruta es nuestra. Y la linea de "hay fechas
+        hasta el X" lee el ULTIMO de la lista, que con el tier delante ya no
+        era el ultimo del calendario: informaba mal.
+        """
+        arbol = self._arbol((3, TIER_VACIO), (4, TIER_VACIO),
+                            (9, TIER_VACIO), (10, TIER_VACIO),
+                            (11, TIER_CON_TRABAJO), (14, TIER_CON_TRABAJO))
+        fechas = self._fechas(self.Tools._agent_rank_days(arbol))
+
+        self.assertEqual(fechas, sorted(fechas),
+                         "las fechas se publican en orden de calendario")
+        self.assertEqual(fechas[-1], max(fechas),
+                         "la ultima de la lista es la mas lejana: es la que se "
+                         "anuncia como 'hay fechas hasta el X'")
 
     def test_los_DOS_dias_mas_proximos_entran_siempre(self):
         """La guarda. Sin ella, al cliente con prisa se le empuja tres semanas.
