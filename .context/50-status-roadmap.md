@@ -1,9 +1,21 @@
 # Estado y roadmap
 
-> Última actualización: **7-sep-2026**. Correcciones del segundo test con
-> conversación real, **desplegadas en producción** esa noche:
-> **visar_appointment 19.0.2.11.0** y **visar_whatsapp_agent 19.0.1.11.0**,
+> Última actualización: **8-sep-2026**, con dos despliegues más ese día:
+> **visar_appointment 19.0.2.13.0** y **visar_whatsapp_agent 19.0.1.12.0**,
 > leídos de la BD después del `-u`, no del manifiesto.
+> Qué entra el 8-sep: **nombrar una plaga ya es correctivo** —y no saber cuál
+> es, también—, porque nadie previene las termitas que está viendo; la opción
+> *"No estoy seguro"* del paso de plagas gana vocabulario, que es la fila que
+> abre la valoración; **`_VISAR_GRUPO_KEYWORDS`**, para que "tengo termitas"
+> conteste *qué servicio necesitas* (nadie escribe "Fumigación"); y el mensaje
+> de `agent_resolve_zone` fuera de cobertura, redactado para el modelo, que le
+> ordena decírselo al cliente con su CP y dejar de preguntar.
+> El vocabulario de cliente que viaja en cada paso está documentado en
+> `visar_fastapi/.context/30-odoo-contract.md`; el diario, en §19–§22 de
+> `85-motor-de-flujos-agendado.md`.
+> Anterior: **7-sep-2026**. Correcciones del segundo test con
+> conversación real, **desplegadas en producción** esa noche:
+> **visar_appointment 19.0.2.11.0** y **visar_whatsapp_agent 19.0.1.11.0**.
 > Qué entra: `_VISAR_LUGARES_KEYWORDS` en un solo sitio y `mide_lugar` /
 > `lugares` en los pasos que miden (una medida es de un lugar, y por eso "el
 > patio son 27 metros" ya no tumba la cobertura ni contesta los metros de la
