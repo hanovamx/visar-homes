@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    La direccion del runtime, para el boton "Aplicar ahora".
+
+    `noupdate` porque es config del servidor: si alguien la cambia (otro puerto,
+    otra maquina), un `-u` del modulo no debe devolverla al valor de fabrica.
+-->
+<odoo noupdate="1">
+
+    <record id="param_visar_runtime_url" model="ir.config_parameter">
+        <field name="key">visar_whatsapp_agent.runtime_url</field>
+        <field name="value">http://127.0.0.1:8000</field>
+    </record>
+
+</odoo>

@@ -1,6 +1,14 @@
 # Estado y roadmap
 
-> Última actualización: **8-sep-2026**, con dos despliegues más ese día:
+> Última actualización: **8-sep-2026 (noche)** — **en el árbol de trabajo, SIN
+> desplegar**: el vocabulario del cliente se edita desde Odoo
+> (`visar.agent.vocabulario`, **visar_appointment 19.0.2.14.0**) y los prompts se
+> aplican al runtime con un botón (**visar_whatsapp_agent 19.0.1.13.0**). Ver
+> "Vocabulario editable y botón de aplicar" más abajo.
+> ⚠️ Hay código nuevo en `/opt/custom` que la BD todavía no conoce: **un
+> reinicio de odoo sin `-u` levanta ese código**. El `overlay` degrada solo si
+> el modelo no existe, así que no rompe nada, pero no aplica nada tampoco.
+> Anterior: **8-sep-2026**, con dos despliegues más ese día:
 > **visar_appointment 19.0.2.13.0** y **visar_whatsapp_agent 19.0.1.12.0**,
 > leídos de la BD después del `-u`, no del manifiesto.
 > Qué entra el 8-sep: **nombrar una plaga ya es correctivo** —y no saber cuál
@@ -43,6 +51,70 @@
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Vocabulario editable y botón de aplicar — 8-sep-2026 (noche), **sin desplegar**
+
+> **visar_appointment 19.0.2.14.0** · **visar_whatsapp_agent 19.0.1.13.0**.
+> 292 pruebas de los dos módulos en `visar-test`, con los **2 fallos previos**
+> de `TestBookingDedupe` (son de logging en `controllers/appointment.py`, nada
+> que ver). 16 pruebas nuevas.
+
+### Por qué
+
+Los comentarios del código ya decían lo que se quería: *"es copy de negocio: lo
+edita un consultor cuando el chat le enseñe una palabra que no está"*. No era
+verdad. `_VISAR_LUGARES_KEYWORDS`, `_VISAR_GRUPO_KEYWORDS` y los literales
+sueltos de `motivo`, `plagas` y `extras` eran constantes de Python, y cambiar
+una palabra costaba: editar, bump, `-u`, reiniciar odoo, reiniciar runtime.
+
+**Tres de los cuatro fallos del 8-sep fueron una palabra que faltaba**, y cada
+uno costó un despliegue. Esta es la clase de bug más frecuente del agente y la
+única que no necesitaba a un desarrollador.
+
+### Qué entra
+
+**`visar.agent.vocabulario`** (modelo en `visar_appointment`, pantalla en
+`visar_whatsapp_agent` → Agente WhatsApp → Vocabulario):
+
+    lo que el agente ve  =  las palabras del código  +  las de la pantalla
+
+- **Solo suma, nunca quita.** El código es el piso: es lo que afirman las
+  pruebas y lo que sobrevive a una base nueva. Quitar una palabra desde una
+  pantalla dejaría el repositorio verde y producción haciendo otra cosa.
+- **No se puede guardar una opción que no existe.** Una clave mal escrita se
+  guardaría sin protestar y no haría nada nunca — el peor final, porque parece
+  que funciona. Ahora falla al guardar y enseña las claves válidas del paso.
+- **No se repite.** El puntaje CUENTA keywords (`classify._scores`), así que
+  una pista duplicada vale dos puntos por un solo dato. La comparación es la del
+  runtime: sin acentos y en minúsculas.
+- **El campo "Lo que el agente reconoce"** enseña la fusión ya hecha. Un campo
+  que solo dijera "guardado" estaría verde sin estarlo.
+- **Los pasos que MIDEN heredan lo de `cobertura`.** Es la propiedad que costó
+  el bug del 7-sep: enseñarle "azotea" a Exterior tiene que llegar también a
+  quien sabe que *"la azotea son 30 metros"* no contesta los metros de la casa.
+- **Se aplica en el siguiente paso, sin reiniciar nada**: `agent_booking_step`
+  es una llamada RPC viva, no una caché.
+- **`poliza` estrena ranura vacía.** Su fila "No, gracias" nunca tuvo ni una
+  palabra; `extras` necesitó un despliegue para aprender "nel". Ahora se enseña
+  desde la pantalla.
+
+**Botón "Aplicar ahora"** (`visar.agent.runtime.mixin`, en las tres formas de
+prompt y en la config del LLM): fuerza `POST /debug/runtime/refresh` y
+`/debug/catalog/refresh` en vez de esperar los 15 minutos del TTL. Cuenta lo que
+pasó: si el runtime no responde, es un error con el motivo; si vence el tiempo,
+dice que *pudo* aplicarse, porque pudo. La dirección va en el
+`ir.config_parameter` `visar_whatsapp_agent.runtime_url`.
+
+> ⚠️ **Odoo se llama a sí mismo, en redondo**: el refresco hace que el runtime
+> pida la config a Odoo por RPC mientras este proceso atiende el clic. Con
+> `workers = 2` hay sitio, y por eso el tiempo de espera es corto.
+
+### Lo que falta
+
+- Desplegar: `-u visar_appointment,visar_whatsapp_agent` **y reiniciar odoo**.
+  El runtime no cambia — no se tocó una línea de `visar_fastapi`.
+- Las medidas por grupo (`group_*`) no tienen ranura: sus claves son ids de
+  dimensión, que cambian entre bases.
 
 ## Agrupación por zona del día — construida **y EN PRODUCCIÓN** el 4-sep-2026
 

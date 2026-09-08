@@ -24,6 +24,7 @@ PROVIDERS = [
 class VisarLlmConfig(models.Model):
     _name = 'visar.llm.config'
     _description = "Configuracion LLM del agente de WhatsApp"
+    _inherit = ['visar.agent.runtime.mixin']
     _order = 'sequence, id'
 
     name = fields.Char(string="Nombre", required=True, default="Configuracion LLM")

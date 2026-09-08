@@ -147,6 +147,9 @@ ROUTE_META = {
 class VisarAgentPrompt(models.Model):
     _name = 'visar.agent.prompt'
     _description = "Prompt del agente de WhatsApp"
+    # El runtime cachea esto 15 minutos: sin el boton de aplicar, editar un
+    # prompt y probarlo en el chat es un cuarto de hora de duda.
+    _inherit = ['visar.agent.runtime.mixin']
     _order = 'sequence, id'
 
     name = fields.Char(

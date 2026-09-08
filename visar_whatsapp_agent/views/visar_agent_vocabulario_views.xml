@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         visar.agent.vocabulario - las palabras del cliente
+
+         El modelo vive en `visar_appointment`, pegado a las constantes que
+         amplia; la pantalla vive aqui, que es donde va el consultor. Ver el
+         docstring de `visar_agent_vocabulario.py`.
+         ============================================================== -->
+
+    <record id="visar_agent_vocabulario_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.vocabulario.list</field>
+        <field name="model">visar.agent.vocabulario</field>
+        <field name="arch" type="xml">
+            <list string="Vocabulario del cliente" editable="bottom">
+                <field name="paso"/>
+                <field name="opcion"/>
+                <field name="palabras"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_vocabulario_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.vocabulario.search</field>
+        <field name="model">visar.agent.vocabulario</field>
+        <field name="arch" type="xml">
+            <search string="Vocabulario del cliente">
+                <field name="palabras"/>
+                <field name="opcion"/>
+                <filter name="archivadas" string="Archivadas"
+                        domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="por_paso" string="Paso"
+                        context="{'group_by': 'paso'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_vocabulario_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.vocabulario.form</field>
+        <field name="model">visar.agent.vocabulario</field>
+        <field name="arch" type="xml">
+            <form string="Vocabulario del cliente">
+                <sheet>
+                    <!-- Sin boton de "Aplicar ahora" A PROPOSITO: esto no pasa
+                         por ninguna cache. `agent_booking_step` es una llamada
+                         viva, asi que la palabra cuenta desde el paso
+                         siguiente. Poner el boton aqui sugeriria que hace
+                         falta, y no hacer nada es peor que no estar. -->
+                    <div class="alert alert-info" role="alert">
+                        <strong>Se aplica solo, en el siguiente paso.</strong>
+                        No hay que reiniciar ni refrescar nada. La pregunta que
+                        un cliente tenga <em>ya</em> en pantalla se termina con
+                        las palabras con las que se pinto; se nota a partir de
+                        la respuesta siguiente.
+                    </div>
+
+                    <group>
+                        <group>
+                            <field name="paso"/>
+                            <field name="opcion" placeholder="exterior"/>
+                            <field name="opciones_validas" readonly="1"
+                                   invisible="not paso"/>
+                        </group>
+                        <group>
+                            <field name="active"/>
+                        </group>
+                    </group>
+
+                    <group string="Palabras del cliente">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            Una por linea, <strong>tal y como la escribe el
+                            cliente</strong>. Valen las raices:
+                            <code>cucarach</code> cubre cucaracha y cucarachas.
+                            Se comparan sin acentos y sin distinguir mayusculas,
+                            y solo al principio de una palabra —asi que
+                            <code>rata</code> no coincide dentro de
+                            <em>barata</em>.
+                            <br/>
+                            Estas palabras <strong>se suman</strong> a las que
+                            ya trae el sistema; no se puede quitar una desde
+                            aqui.
+                        </div>
+                        <field name="palabras" nolabel="1" colspan="2"
+                               placeholder="azotea&#10;la azotea&#10;el techo"/>
+                    </group>
+
+                    <group string="Lo que el agente reconoce">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            Las del sistema mas las de arriba, ya sin repetidas.
+                            Es exactamente lo que se le manda al agente.
+                        </div>
+                        <field name="palabras_efectivas" nolabel="1" colspan="2"
+                               readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_vocabulario_action" model="ir.actions.act_window">
+        <field name="name">Vocabulario</field>
+        <field name="res_model">visar.agent.vocabulario</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Ensenale una palabra al agente
+            </p>
+            <p>
+                El cuestionario reconoce las palabras con las que la gente pide
+                de verdad cada cosa: nadie escribe <em>"Correctivo"</em>, escribe
+                que tiene alacranes. Aqui se anaden las que falten, sin tocar
+                codigo y sin desplegar.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_vocabulario"
+              name="Vocabulario"
+              parent="menu_agent_root"
+              action="visar_agent_vocabulario_action"
+              sequence="25"/>
+
+</odoo>

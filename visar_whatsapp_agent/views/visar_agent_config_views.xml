@@ -59,6 +59,15 @@
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
             <form string="Ruta del agente">
+                <header>
+                    <!-- El runtime cachea esto 15 minutos. Sin este boton, el
+                         camino para verlo aplicado era un `curl` desde una
+                         consola, que es tanto como decir que el prompt no se
+                         puede editar sin un desarrollador. -->
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            help="Refresca la config y el catalogo en el runtime, sin esperar los 15 minutos de la cache."/>
+                </header>
                 <sheet>
                     <div class="oe_title">
                         <label for="name"/>
@@ -175,6 +184,15 @@
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
             <form string="Prompt base">
+                <header>
+                    <!-- El runtime cachea esto 15 minutos. Sin este boton, el
+                         camino para verlo aplicado era un `curl` desde una
+                         consola, que es tanto como decir que el prompt no se
+                         puede editar sin un desarrollador. -->
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            help="Refresca la config y el catalogo en el runtime, sin esperar los 15 minutos de la cache."/>
+                </header>
                 <sheet>
                     <div class="oe_title">
                         <label for="name"/>
@@ -245,6 +263,15 @@
         <field name="model">visar.llm.config</field>
         <field name="arch" type="xml">
             <form string="Configuracion LLM">
+                <header>
+                    <!-- El runtime cachea esto 15 minutos. Sin este boton, el
+                         camino para verlo aplicado era un `curl` desde una
+                         consola, que es tanto como decir que el prompt no se
+                         puede editar sin un desarrollador. -->
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            help="Refresca la config y el catalogo en el runtime, sin esperar los 15 minutos de la cache."/>
+                </header>
                 <sheet>
                     <div class="oe_title">
                         <label for="name"/>

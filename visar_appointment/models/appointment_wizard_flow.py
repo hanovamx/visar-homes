@@ -35,6 +35,7 @@ Tres cosas que NO son evidentes:
   `selections` por su cuenta, esas reglas se pierden.
 """
 import re
+import unicodedata
 
 from odoo import _, api, models
 from odoo.tools import format_amount
@@ -167,6 +168,126 @@ _VISAR_GRUPO_KEYWORDS = {
 _VISAR_LUGARES_QUE_MIDEN = {
     clave: _VISAR_LUGARES_KEYWORDS[clave] for clave in ('interior', 'exterior')
 }
+
+
+# El vocabulario del CLIENTE para decir POR QUE llama. Nadie escribe
+# "Correctivo": escribe que tiene alacranes en la cocina, y eso YA es la
+# respuesta. Vivia incrustado en el paso `motivo`; sale aqui por lo mismo que
+# `_VISAR_LUGARES_KEYWORDS`, para que haya UNA lista por opcion y
+# `visar.agent.vocabulario` pueda ampliarla desde Odoo sin desplegar.
+#
+# Ojo al ampliar: el puntaje CUENTA keywords (`classify._scores`), asi que dos
+# raices anidadas de la misma opcion suman dos puntos por un solo dato. "tengo"
+# ya cubre "ya tengo".
+#
+# ⚠️ NOMBRAR UNA PLAGA YA ES CORRECTIVO. Nadie previene las termitas que acaba
+# de ver: si el cliente dice cual es, la tiene. Sin esto, *"creo que son
+# termitas"* no contestaba este paso —ningun verbo de posesion— y se le
+# preguntaba "¿preventivo o correctivo?" a quien acababa de decir que bicho
+# tiene. Peor en la rama de valoracion, donde la pregunta ademas no cambia nada.
+# Y NO SABER cual es tambien es correctivo, por lo mismo: quien no identifica el
+# bicho es porque lo esta viendo.
+#
+# No lleva 'plaga' a secas a proposito: chocaria con el 'no tengo plaga' de
+# preventivo y empataria, y un empate aqui es volver a preguntar.
+_VISAR_MOTIVO_KEYWORDS = {
+    'preventivo': ['prevenir', 'preventiva', 'evitar',
+                   'que no aparezcan', 'que no entren',
+                   'que no lleguen', 'por si acaso',
+                   'no tengo plaga', 'no he visto',
+                   'antes de que', 'mantenimiento'],
+    'correctivo': ['correctiva', 'tengo', 'tenemos', 'hay',
+                   'salieron', 'aparecieron', 'he visto',
+                   'hemos visto', 'se metieron', 'invadido',
+                   'infestacion', 'estan saliendo',
+                   'me estan', 'nos estan',
+                   # los bichos, con la raíz más corta que cubre
+                   # sus variantes y sin anidar (ver el aviso de
+                   # `classify`)
+                   'cucarach', 'cuca', 'alacran', 'hormig',
+                   'arana', 'araña', 'mosca', 'mosquit',
+                   'zancud', 'rata', 'raton', 'roedor',
+                   'termit', 'chinch', 'pulga', 'garrapat',
+                   'bicho', 'insecto',
+                   # y las formas de decir "no sé cuál es"
+                   'no se que', 'no se cual', 'no identifico',
+                   'no sabria decir', 'algo esta'],
+}
+
+# El vocabulario de las plagas. Solo `no_se` trae palabras: es la fila que abre
+# la visita de valoracion y nadie contesta "no estoy seguro" —dice "no se que
+# es" o "algo hay"—, asi que sin ellas la opcion solo se elegia escribiendo casi
+# su etiqueta y el cliente se quedaba repitiendo el paso.
+#
+# Las demas figuran vacias A PROPOSITO: la ranura tiene que existir para que un
+# consultor pueda llenarla desde Odoo el dia que el chat le ensene una palabra.
+_VISAR_PLAGAS_KEYWORDS = {
+    'rastreros': [],
+    'voladores': [],
+    'roedores': [],
+    'proteccion_general': [],
+    'termitas': [],
+    'chinches': [],
+    'no_se': ['no se', 'no lo se', 'no se que',
+              'no se cual', 'ni idea', 'no identifico',
+              'no sabria', 'no lo he visto bien',
+              'no distingo', 'algo hay', 'algo esta',
+              'no estoy segur'],
+}
+
+# La salida explicita de los dos pasos opcionales. En el chat un menu sin fila de
+# rechazo es una pregunta sin respuesta valida: quien no queria nada se quedaba
+# en bucle o compraba el add-on para poder avanzar.
+#
+# `poliza` cayo en la misma trampa que `extras` y todavia no tiene palabras: la
+# ranura esta vacia para que se le puedan poner sin tocar codigo.
+_VISAR_EXTRAS_KEYWORDS = {
+    'no_gracias': ['no gracias', 'ninguno', 'ninguna', 'nada',
+                   'asi esta bien', 'asi la dejo', 'nel'],
+}
+_VISAR_POLIZA_KEYWORDS = {
+    'no_gracias': [],
+}
+
+# El acuse del aviso de valoracion. Es un paso de UNA sola opcion, asi que el
+# autopiloto nunca lo contesta solo (ver `agent._autopiloto`); las palabras son
+# para quien escribe "va" o "adelante" a mano.
+_VISAR_VALUATION_KEYWORDS = {
+    'continuar': [],
+}
+
+# Las RANURAS de vocabulario: que opciones del cuestionario admiten palabras del
+# cliente, y que trae el codigo de fabrica en cada una.
+#
+# Es la tabla que `visar.agent.vocabulario` valida y amplia. Anadir una ranura
+# nueva son dos cosas: una entrada aqui, y usar `_visar_vocabulario` en el paso
+# que la publica. Si falta la segunda, las palabras se guardan y no se aplican
+# nunca —el peor final posible, porque parece que funciona.
+#
+# La clave de cada opcion es la que el paso usa para BUSCAR su vocabulario, que
+# no siempre es el `value` que publica: en `services` es el `code` del grupo (su
+# id cambia entre bases) y en `extras`/`poliza` es 'no_gracias' (su value es 0).
+_VISAR_VOCABULARIO_BASE = {
+    'services': _VISAR_GRUPO_KEYWORDS,
+    'motivo': _VISAR_MOTIVO_KEYWORDS,
+    'plagas': _VISAR_PLAGAS_KEYWORDS,
+    'cobertura': _VISAR_LUGARES_KEYWORDS,
+    'valuation': _VISAR_VALUATION_KEYWORDS,
+    'extras': _VISAR_EXTRAS_KEYWORDS,
+    'poliza': _VISAR_POLIZA_KEYWORDS,
+}
+
+def _visar_vocab_norm(palabra):
+    """Minusculas y sin acentos, como el `normalize.norm` del runtime.
+
+    Solo se usa para COMPARAR: lo que se publica es la palabra tal cual la
+    escribio quien la escribio. Hace falta porque el puntaje cuenta keywords
+    (`classify._scores`) y el runtime compara ya normalizado: "araña" y "arana"
+    son la misma pista, y colarla dos veces valdria dos puntos por un solo dato.
+    """
+    limpio = unicodedata.normalize('NFD', (palabra or '').strip().lower())
+    return ''.join(c for c in limpio if unicodedata.category(c) != 'Mn')
+
 
 # Claves de paso que el flujo puede devolver como "el siguiente".
 VISAR_STEP_SERVICES = 'services'
@@ -1580,10 +1701,105 @@ class AppointmentType(models.Model):
             selections, measure_type=measure_type)]
 
     @api.model
+    # ------------------------------------------------------------------
+    # Vocabulario del cliente: lo del codigo + lo que anadio un consultor
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _visar_vocabulario_pasos(self):
+        """Los pasos que admiten vocabulario, en el orden del cuestionario."""
+        return list(_VISAR_VOCABULARIO_BASE)
+
+    @api.model
+    def _visar_vocabulario_claves(self, paso):
+        """Las claves validas de un paso, para validar y para ensenarlas.
+
+        `services` es el unico dinamico: sus claves son los `code` de los grupos
+        de servicio, que viven en la base. Los demas los fija el codigo.
+        """
+        if paso == VISAR_STEP_SERVICES:
+            return [g.code for g in self._visar_wizard_groups() if g.code]
+        return list(_VISAR_VOCABULARIO_BASE.get(paso) or ())
+
+    @api.model
+    def _visar_vocabulario_lineas(self, texto):
+        """Una palabra o frase por linea. Sin vacias y sin repetidas."""
+        vistas, salida = set(), []
+        for linea in (texto or '').splitlines():
+            palabra = linea.strip()
+            limpia = _visar_vocab_norm(palabra)
+            if limpia and limpia not in vistas:
+                vistas.add(limpia)
+                salida.append(palabra)
+        return salida
+
+    @api.model
+    def _visar_vocabulario_overlay(self):
+        """{(paso, clave): [palabras]} que anadio un consultor en Odoo.
+
+        Una sola lectura por llamada a `_visar_wizard_step_options`, que es una
+        por mensaje del cliente. Los registros archivados no entran: `search`
+        filtra por `active` y esa es justo la forma de apagar una palabra que
+        resulto ser mala idea, sin borrarla.
+        """
+        overlay = {}
+        if 'visar.agent.vocabulario' not in self.env:
+            # Modulo nuevo en disco y viejo en la BD: es la ventana que se abre
+            # entre editar `/opt/custom` -que ES el addons path de produccion- y
+            # correr el `-u`. Cualquier reinicio de odoo cae aqui, y el
+            # cuestionario tiene que seguir con el vocabulario del codigo en vez
+            # de romperse en el primer paso. Degradar, nunca bloquear.
+            return overlay
+        Vocab = self.env['visar.agent.vocabulario'].sudo()
+        for fila in Vocab.search_read([], ['paso', 'opcion', 'palabras']):
+            palabras = self._visar_vocabulario_lineas(fila['palabras'])
+            if palabras:
+                clave = (fila['paso'], fila['opcion'])
+                overlay.setdefault(clave, []).extend(palabras)
+        return overlay
+
+    @api.model
+    def _visar_vocabulario(self, overlay, paso, clave):
+        """Las palabras del CLIENTE para esa opcion: codigo + Odoo, sin repetir.
+
+        **Solo suma, nunca quita.** El codigo es el piso: es lo que afirman las
+        pruebas y lo que sobrevive a una base nueva. Si una palabra del codigo
+        clasifica mal, eso es un arreglo de codigo con su prueba —quitarla desde
+        una pantalla dejaria el repositorio verde mientras produccion hace otra
+        cosa, que es exactamente el fallo que este modulo lleva dos meses
+        evitando.
+
+        La comparacion para no repetir es la del runtime (sin acentos, en
+        minusculas): repetir una pista no es inocuo, suma un punto de mas.
+        """
+        palabras = list((_VISAR_VOCABULARIO_BASE.get(paso) or {}).get(clave) or ())
+        vistas = {_visar_vocab_norm(palabra) for palabra in palabras}
+        for palabra in (overlay or {}).get((paso, clave), ()):
+            limpia = _visar_vocab_norm(palabra)
+            if limpia and limpia not in vistas:
+                vistas.add(limpia)
+                palabras.append(palabra)
+        return palabras
+
+    @api.model
+    def _visar_vocabulario_lugares(self, overlay):
+        """Los lugares que se MIDEN, con el vocabulario ya ampliado.
+
+        Sale de las mismas palabras que el paso `cobertura`, y eso importa: si
+        un consultor le ensena "azotea" a Exterior, los pasos que miden tienen
+        que saber igual que "la azotea son 30 metros" no contesta los metros de
+        la CASA. Ver `_VISAR_LUGARES_QUE_MIDEN`.
+        """
+        return {clave: self._visar_vocabulario(overlay, 'cobertura', clave)
+                for clave in _VISAR_LUGARES_QUE_MIDEN}
+
     def _visar_wizard_step_options(self, booking, step_key):
         """Opciones VÁLIDAS del paso dado, serializables."""
         booking = booking or {}
         selections = booking.get('selections') or {}
+        # El vocabulario del cliente que anadio un consultor, una sola vez para
+        # todo el paso. Ver `visar.agent.vocabulario`.
+        vocab = self._visar_vocabulario_overlay()
 
         if step_key == VISAR_STEP_SERVICES:
             return {
@@ -1602,8 +1818,8 @@ class AppointmentType(models.Model):
                     'description': group.wizard_help or '',
                     # Ver `_VISAR_GRUPO_KEYWORDS`: nadie pide "Fumigación",
                     # pide que le quiten las termitas.
-                    'keywords': list(
-                        _VISAR_GRUPO_KEYWORDS.get(group.code or '', ())),
+                    'keywords': self._visar_vocabulario(
+                        vocab, VISAR_STEP_SERVICES, group.code or ''),
                 } for group in self._visar_wizard_groups()],
             }
 
@@ -1622,46 +1838,12 @@ class AppointmentType(models.Model):
                 'options': [
                     {'value': 'preventivo', 'label': _('Preventivo'),
                      'description': _('Quiero evitar que aparezcan'),
-                     'keywords': ['prevenir', 'preventiva', 'evitar',
-                                  'que no aparezcan', 'que no entren',
-                                  'que no lleguen', 'por si acaso',
-                                  'no tengo plaga', 'no he visto',
-                                  'antes de que', 'mantenimiento']},
+                     'keywords': self._visar_vocabulario(
+                         vocab, 'motivo', 'preventivo')},
                     {'value': 'correctivo', 'label': _('Correctivo'),
                      'description': _('Ya tengo el problema'),
-                     # Ojo al ampliar: el puntaje cuenta keywords, así que dos
-                     # raíces anidadas de la misma opción suman dos puntos por
-                     # un solo dato. "tengo" ya cubre "ya tengo".
-                     # ⚠️ NOMBRAR UNA PLAGA YA ES CORRECTIVO. Nadie previene
-                     # las termitas que acaba de ver: si el cliente dice cuál
-                     # es, la tiene. Sin esto, *"creo que son termitas"* no
-                     # contestaba este paso —ningún verbo de posesión— y se le
-                     # preguntaba "¿preventivo o correctivo?" a quien acababa
-                     # de decir qué bicho tiene. Peor en la rama de valoración,
-                     # donde la pregunta además no cambia nada.
-                     #
-                     # No lleva 'plaga' a secas a propósito: chocaría con el
-                     # 'no tengo plaga' de preventivo y empataría, y un empate
-                     # aquí es volver a preguntar.
-                     #
-                     # Y NO SABER cuál es también es correctivo, por lo mismo:
-                     # quien no identifica el bicho es porque lo está viendo.
-                     'keywords': ['correctiva', 'tengo', 'tenemos', 'hay',
-                                  'salieron', 'aparecieron', 'he visto',
-                                  'hemos visto', 'se metieron', 'invadido',
-                                  'infestacion', 'estan saliendo',
-                                  'me estan', 'nos estan',
-                                  # los bichos, con la raíz más corta que cubre
-                                  # sus variantes y sin anidar (ver el aviso de
-                                  # `classify`)
-                                  'cucarach', 'cuca', 'alacran', 'hormig',
-                                  'arana', 'araña', 'mosca', 'mosquit',
-                                  'zancud', 'rata', 'raton', 'roedor',
-                                  'termit', 'chinch', 'pulga', 'garrapat',
-                                  'bicho', 'insecto',
-                                  # y las formas de decir "no sé cuál es"
-                                  'no se que', 'no se cual', 'no identifico',
-                                  'no sabria decir', 'algo esta']},
+                     'keywords': self._visar_vocabulario(
+                         vocab, 'motivo', 'correctivo')},
                 ],
             }
 
@@ -1669,44 +1851,47 @@ class AppointmentType(models.Model):
             # El juego de opciones DEPENDE del motivo: los cortes a valoración
             # (termitas, chinches, "no sé") solo existen en la rama correctiva.
             correctivo = selections.get('motivo') == 'correctivo'
+            # Todas las opciones publican `keywords`, aunque el código traiga
+            # la lista vacía: es la ranura por la que un consultor le enseña una
+            # palabra al paso sin desplegar. Ver `visar.agent.vocabulario`.
+            def palabras(clave):
+                return self._visar_vocabulario(vocab, 'plagas', clave)
+
             options = [
                 {'value': 'rastreros', 'label': _('Rastreros'),
-                 'description': _('Cucarachas, alacranes, hormigas, arañas')},
+                 'description': _('Cucarachas, alacranes, hormigas, arañas'),
+                 'keywords': palabras('rastreros')},
                 {'value': 'voladores', 'label': _('Voladores'),
-                 'description': _('Moscas, mosquitos o zancudos')},
+                 'description': _('Moscas, mosquitos o zancudos'),
+                 'keywords': palabras('voladores')},
                 {'value': 'roedores', 'label': _('Roedores'),
-                 'description': _('Ratas y ratones')},
+                 'description': _('Ratas y ratones'),
+                 'keywords': palabras('roedores')},
             ]
             if not correctivo:
                 options.append({
                     'value': 'proteccion_general',
                     'label': _('Protección general'),
                     'description': _('Las tres: rastreros, voladores y roedores'),
+                    'keywords': palabras('proteccion_general'),
                 })
             else:
                 options += [
                     {'value': 'termitas', 'label': _('Termitas'),
                      'description': _('Madera dañada, polvo fino, túneles de lodo'),
-                     'is_valuation': True},
+                     'is_valuation': True,
+                     'keywords': palabras('termitas')},
                     {'value': 'chinches', 'label': _('Chinches de cama'),
                      'description': _('Picaduras en hilera, manchas en sábanas'),
-                     'is_valuation': True},
+                     'is_valuation': True,
+                     'keywords': palabras('chinches')},
                     # Corta a proposito: la fila de WhatsApp son 24 caracteres
                     # y "No estoy seguro de qué es" llegaba como "No estoy
                     # seguro de qu…". Lo que hay que entender cabe en dos
-                    # palabras.
-                    # Sin `keywords` esta opción solo se elegía escribiendo
-                    # casi su etiqueta. Nadie contesta "no estoy seguro": dice
-                    # "no sé qué es" o "algo hay". Y es la fila que abre la
-                    # visita de valoración, así que no reconocerla deja al
-                    # cliente repitiendo el paso.
+                    # palabras. Sus palabras, en `_VISAR_PLAGAS_KEYWORDS`.
                     {'value': 'no_se', 'label': _('No estoy seguro'),
                      'description': '', 'is_valuation': True,
-                     'keywords': ['no se', 'no lo se', 'no se que',
-                                  'no se cual', 'ni idea', 'no identifico',
-                                  'no sabria', 'no lo he visto bien',
-                                  'no distingo', 'algo hay', 'algo esta',
-                                  'no estoy segur']},
+                     'keywords': palabras('no_se')},
                 ]
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'servicio_plaga',
@@ -1742,12 +1927,12 @@ class AppointmentType(models.Model):
                 # repreguntaba. Las frases de varias palabras se comparan
                 # enteras, asi que "las dos" no se confunde con un "dos" suelto.
                 'options': [
-                    {'value': 'interior', 'label': _('Interior'), 'description': '',
-                     'keywords': list(_VISAR_LUGARES_KEYWORDS['interior'])},
-                    {'value': 'exterior', 'label': _('Exterior'), 'description': '',
-                     'keywords': list(_VISAR_LUGARES_KEYWORDS['exterior'])},
-                    {'value': 'ambos', 'label': _('Ambos'), 'description': '',
-                     'keywords': list(_VISAR_LUGARES_KEYWORDS['ambos'])},
+                    {'value': clave, 'label': etiqueta, 'description': '',
+                     'keywords': self._visar_vocabulario(
+                         vocab, 'cobertura', clave)}
+                    for clave, etiqueta in (('interior', _('Interior')),
+                                            ('exterior', _('Exterior')),
+                                            ('ambos', _('Ambos')))
                 ],
             }
 
@@ -1787,10 +1972,7 @@ class AppointmentType(models.Model):
                 # metros" no contesta los metros de la CASA. Ver
                 # `_VISAR_LUGARES_KEYWORDS`.
                 payload['mide_lugar'] = 'interior'
-                payload['lugares'] = {
-                    clave: list(palabras)
-                    for clave, palabras in _VISAR_LUGARES_QUE_MIDEN.items()
-                }
+                payload['lugares'] = self._visar_vocabulario_lugares(vocab)
             if interior:
                 payload['hint'] = _('Son los metros construidos de tu casa, no '
                                     'los del terreno.')
@@ -1819,8 +2001,7 @@ class AppointmentType(models.Model):
                 # "como 190 metros" (la casa) no lo contesta. Ver el paso
                 # `interior` y `_VISAR_LUGARES_KEYWORDS`.
                 'mide_lugar': 'exterior',
-                'lugares': {clave: list(palabras) for clave, palabras
-                            in _VISAR_LUGARES_QUE_MIDEN.items()},
+                'lugares': self._visar_vocabulario_lugares(vocab),
                 # `m2_min`/`m2_max` viajan para que el paso se pueda contestar
                 # ESCRIBIENDO los metros. Sin ellos, la etiqueta ("101 – 150 m²")
                 # no da ni una palabra que clasificar y el unico camino era el
@@ -1879,6 +2060,8 @@ class AppointmentType(models.Model):
                     'value': 'continuar',
                     'label': _('Sí, agendar'),
                     'description': _('Elegir día y hora'),
+                    'keywords': self._visar_vocabulario(
+                        vocab, VISAR_STEP_VALUATION, 'continuar'),
                 }],
             }
 
@@ -1926,8 +2109,8 @@ class AppointmentType(models.Model):
                     'value': VISAR_EXTRAS_NONE,
                     'label': _('No, gracias'),
                     'description': _('Seguir sin agregar nada'),
-                    'keywords': ['no gracias', 'ninguno', 'ninguna', 'nada',
-                                 'asi esta bien', 'asi la dejo', 'nel'],
+                    'keywords': self._visar_vocabulario(
+                        vocab, VISAR_STEP_EXTRAS, 'no_gracias'),
                 }],
             }
 
@@ -1953,6 +2136,11 @@ class AppointmentType(models.Model):
                 'value': VISAR_POLIZA_NONE,
                 'label': _('No, gracias'),
                 'description': _('Contrato solo este servicio'),
+                # Vacío en el código, y esa es la gracia: `extras` necesitó un
+                # despliegue para aprender "nel" y esta fila puede aprenderlo
+                # desde Odoo. Ver `_VISAR_POLIZA_KEYWORDS`.
+                'keywords': self._visar_vocabulario(
+                    vocab, VISAR_STEP_POLIZA, 'no_gracias'),
             })
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'plan_id',
