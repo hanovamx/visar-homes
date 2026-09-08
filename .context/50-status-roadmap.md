@@ -1,6 +1,19 @@
 # Estado y roadmap
 
-> Última actualización: **4-sep-2026** (diseño de la agrupación por zona del día;
+> Última actualización: **7-sep-2026**. Correcciones del segundo test con
+> conversación real, **desplegadas en producción** esa noche:
+> **visar_appointment 19.0.2.11.0** y **visar_whatsapp_agent 19.0.1.11.0**,
+> leídos de la BD después del `-u`, no del manifiesto.
+> Qué entra: `_VISAR_LUGARES_KEYWORDS` en un solo sitio y `mide_lugar` /
+> `lugares` en los pasos que miden (una medida es de un lugar, y por eso "el
+> patio son 27 metros" ya no tumba la cobertura ni contesta los metros de la
+> casa); `_agent_rank_days` publica en orden de calendario —el tier elige los
+> días, no los ordena—; y `agent_estimate_m2` devuelve `usado`, con qué datos
+> salió el número. Detalle en §19 y §20 de
+> `visar_fastapi/.context/85-motor-de-flujos-agendado.md`.
+> ⚠️ **El `-u` no basta: hay que reiniciar odoo**, o el proceso vivo sigue con
+> el Python viejo en memoria y el despliegue no cambia nada pareciendo aplicado.
+> Anterior: **4-sep-2026** (diseño de la agrupación por zona del día;
 > **no se tocó código**). Releído del manifiesto ese día: **visar_whatsapp_agent
 > 19.0.1.10.0**, no 1.8.0 como decía la línea de abajo — el aviso de siempre,
 > cumpliéndose otra vez.
