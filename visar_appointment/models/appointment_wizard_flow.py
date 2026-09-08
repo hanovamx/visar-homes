@@ -1598,11 +1598,36 @@ class AppointmentType(models.Model):
                      # Ojo al ampliar: el puntaje cuenta keywords, así que dos
                      # raíces anidadas de la misma opción suman dos puntos por
                      # un solo dato. "tengo" ya cubre "ya tengo".
+                     # ⚠️ NOMBRAR UNA PLAGA YA ES CORRECTIVO. Nadie previene
+                     # las termitas que acaba de ver: si el cliente dice cuál
+                     # es, la tiene. Sin esto, *"creo que son termitas"* no
+                     # contestaba este paso —ningún verbo de posesión— y se le
+                     # preguntaba "¿preventivo o correctivo?" a quien acababa
+                     # de decir qué bicho tiene. Peor en la rama de valoración,
+                     # donde la pregunta además no cambia nada.
+                     #
+                     # No lleva 'plaga' a secas a propósito: chocaría con el
+                     # 'no tengo plaga' de preventivo y empataría, y un empate
+                     # aquí es volver a preguntar.
+                     #
+                     # Y NO SABER cuál es también es correctivo, por lo mismo:
+                     # quien no identifica el bicho es porque lo está viendo.
                      'keywords': ['correctiva', 'tengo', 'tenemos', 'hay',
                                   'salieron', 'aparecieron', 'he visto',
                                   'hemos visto', 'se metieron', 'invadido',
                                   'infestacion', 'estan saliendo',
-                                  'me estan', 'nos estan']},
+                                  'me estan', 'nos estan',
+                                  # los bichos, con la raíz más corta que cubre
+                                  # sus variantes y sin anidar (ver el aviso de
+                                  # `classify`)
+                                  'cucarach', 'cuca', 'alacran', 'hormig',
+                                  'arana', 'araña', 'mosca', 'mosquit',
+                                  'zancud', 'rata', 'raton', 'roedor',
+                                  'termit', 'chinch', 'pulga', 'garrapat',
+                                  'bicho', 'insecto',
+                                  # y las formas de decir "no sé cuál es"
+                                  'no se que', 'no se cual', 'no identifico',
+                                  'no sabria decir', 'algo esta']},
                 ],
             }
 
@@ -1636,8 +1661,18 @@ class AppointmentType(models.Model):
                     # y "No estoy seguro de qué es" llegaba como "No estoy
                     # seguro de qu…". Lo que hay que entender cabe en dos
                     # palabras.
+                    # Sin `keywords` esta opción solo se elegía escribiendo
+                    # casi su etiqueta. Nadie contesta "no estoy seguro": dice
+                    # "no sé qué es" o "algo hay". Y es la fila que abre la
+                    # visita de valoración, así que no reconocerla deja al
+                    # cliente repitiendo el paso.
                     {'value': 'no_se', 'label': _('No estoy seguro'),
-                     'description': '', 'is_valuation': True},
+                     'description': '', 'is_valuation': True,
+                     'keywords': ['no se', 'no lo se', 'no se que',
+                                  'no se cual', 'ni idea', 'no identifico',
+                                  'no sabria', 'no lo he visto bien',
+                                  'no distingo', 'algo hay', 'algo esta',
+                                  'no estoy segur']},
                 ]
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'servicio_plaga',

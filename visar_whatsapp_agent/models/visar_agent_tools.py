@@ -308,9 +308,22 @@ class VisarAgentTools(models.AbstractModel):
             return {
                 'cp': normalized, 'served': False, 'zone_code': None,
                 'zone_name': None, 'municipality': record.municipality or None,
+                # El mensaje se redacta para el MODELO y le dice las dos cosas
+                # que se le olvidaron el 8-sep-2026: DECIRSELO y PARAR.
+                #
+                # Aquel dia el cliente escribio un CP de CDMX, el agente siguio
+                # preguntandole metros, plagas y cobertura durante 80 segundos,
+                # y al final lo mando con un asesor sin explicar por que. Desde
+                # el otro lado eso es inexplicable: contesto una pregunta sobre
+                # bichos y lo pasaron a un humano.
                 'message': (
-                    "El CP %s no esta dentro de la cobertura actual. "
-                    "Conviene canalizarlo con un asesor." % normalized
+                    "El CP %s NO esta dentro de la cobertura de Visar. "
+                    "DISELO AL CLIENTE con esas palabras y con su CP, en el "
+                    "mismo mensaje en que lo canalices: sin eso, el traspaso a "
+                    "un asesor no tiene explicacion para el. Y no le sigas "
+                    "preguntando nada mas -ni metros, ni plagas, ni si quiere "
+                    "el exterior-: sin cobertura no hay precio que darle, y "
+                    "cada pregunta de mas es tiempo suyo tirado." % normalized
                 ),
             }
         return {
