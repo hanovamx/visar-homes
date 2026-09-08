@@ -1,13 +1,13 @@
 # Estado y roadmap
 
-> Última actualización: **8-sep-2026 (noche)** — **en el árbol de trabajo, SIN
-> desplegar**: el vocabulario del cliente se edita desde Odoo
-> (`visar.agent.vocabulario`, **visar_appointment 19.0.2.14.0**) y los prompts se
-> aplican al runtime con un botón (**visar_whatsapp_agent 19.0.1.13.0**). Ver
-> "Vocabulario editable y botón de aplicar" más abajo.
-> ⚠️ Hay código nuevo en `/opt/custom` que la BD todavía no conoce: **un
-> reinicio de odoo sin `-u` levanta ese código**. El `overlay` degrada solo si
-> el modelo no existe, así que no rompe nada, pero no aplica nada tampoco.
+> Última actualización: **8-sep-2026 (noche)**, **EN PRODUCCIÓN a las 23:53**:
+> el vocabulario del cliente se edita desde Odoo (`visar.agent.vocabulario`,
+> **visar_appointment 19.0.2.14.0**) y los prompts se aplican al runtime con un
+> botón (**visar_whatsapp_agent 19.0.1.13.0**), versiones leídas de la BD
+> después del `-u`. Desplegado con `visar_fastapi/deploy/deploy-vocabulario.sh`.
+> **El runtime no se tocó**: `agent_booking_step` ya recibía `keywords`; lo
+> único que cambia es de dónde salen del otro lado. Ver "Vocabulario editable y
+> botón de aplicar" más abajo y §23 de `85-motor-de-flujos-agendado.md`.
 > Anterior: **8-sep-2026**, con dos despliegues más ese día:
 > **visar_appointment 19.0.2.13.0** y **visar_whatsapp_agent 19.0.1.12.0**,
 > leídos de la BD después del `-u`, no del manifiesto.
@@ -52,12 +52,21 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
-## Vocabulario editable y botón de aplicar — 8-sep-2026 (noche), **sin desplegar**
+## Vocabulario editable y botón de aplicar — **EN PRODUCCIÓN** el 8-sep-2026
 
-> **visar_appointment 19.0.2.14.0** · **visar_whatsapp_agent 19.0.1.13.0**.
+> **visar_appointment 19.0.2.14.0** · **visar_whatsapp_agent 19.0.1.13.0**,
+> desplegados a las **23:53** con `visar_fastapi/deploy/deploy-vocabulario.sh`.
 > 292 pruebas de los dos módulos en `visar-test`, con los **2 fallos previos**
 > de `TestBookingDedupe` (son de logging en `controllers/appointment.py`, nada
 > que ver). 16 pruebas nuevas.
+>
+> Verificado **contra producción, no contra el fake**: las 7 ranuras existen y
+> `services` resuelve a `['fumigacion', 'corte']`; una fila de consultor llega
+> al paso y se la llevan los pasos que miden (`interior` no la hereda); "patio"
+> no se duplica; una clave mal escrita no se guarda; el formulario enseña lo
+> mismo que se publica; y el botón "Aplicar ahora" alcanza al runtime vivo. La
+> verificación escribe una fila y hace **rollback** — se comprobó desde otra
+> conexión que la tabla quedó vacía. Aceptación de solo lectura: **105/106**.
 
 ### Por qué
 
@@ -111,10 +120,11 @@ dice que *pudo* aplicarse, porque pudo. La dirección va en el
 
 ### Lo que falta
 
-- Desplegar: `-u visar_appointment,visar_whatsapp_agent` **y reiniciar odoo**.
-  El runtime no cambia — no se tocó una línea de `visar_fastapi`.
 - Las medidas por grupo (`group_*`) no tienen ranura: sus claves son ids de
   dimensión, que cambian entre bases.
+- `poliza` tiene la ranura vacía a propósito: alguien tiene que escribirle las
+  palabras de "No, gracias" desde la pantalla (es lo que `extras` aprendió a
+  base de un despliegue).
 
 ## Agrupación por zona del día — construida **y EN PRODUCCIÓN** el 4-sep-2026
 
