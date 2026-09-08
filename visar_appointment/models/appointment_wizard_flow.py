@@ -132,6 +132,36 @@ _VISAR_LUGARES_KEYWORDS = {
               'por dentro y por fuera', 'casa y patio', 'casa y jardin'],
 }
 
+# El vocabulario del CLIENTE para pedir cada servicio, por `code` de grupo.
+#
+# Nadie escribe "Fumigación" ni "Mantenimiento de áreas verdes": escribe el
+# bicho que tiene o lo que ve en el jardín. Sin esto, el primer paso del
+# cuestionario -"¿Qué servicio necesitas?"- no se podía dar por contestado con
+# lo que el cliente ya había dicho, y como es el PRIMERO, se llevaba por delante
+# todo lo que venía detrás.
+#
+# Pasó el 8-sep-2026: alguien escribió "tengo termitas", el agente le explicó
+# bien la valoración técnica, pasó a agendar con `ya_dicho=['tengo termitas']`…
+# y lo primero que le preguntó fue qué servicio quería.
+#
+# Es copy de negocio: lo edita un consultor cuando el chat le enseñe una palabra
+# que no está. La clave es el `code` del grupo, no su id, para que sobreviva a
+# una base distinta.
+_VISAR_GRUPO_KEYWORDS = {
+    'fumigacion': [
+        'fumig', 'plaga', 'insecto', 'bicho', 'desinfect',
+        # los bichos, con la raíz más corta que cubre sus variantes
+        'cucarach', 'cuca', 'alacran', 'escorpion', 'hormig', 'arana',
+        'araña', 'mosca', 'mosquit', 'zancud', 'rata', 'raton', 'roedor',
+        'termit', 'chinch', 'pulga', 'garrapat', 'grillo', 'ciempies',
+    ],
+    'corte': [
+        'jardin', 'jardiner', 'pasto', 'cesped', 'podar', 'poda', 'cortar',
+        'corte', 'arbol', 'arbust', 'maleza', 'hierba', 'area verde',
+        'areas verdes', 'yarda',
+    ],
+}
+
 # Lo que ve un paso que MIDE: solo interior y exterior son lugares que se miden
 # por separado, "ambos" no es un sitio al que se le tomen metros.
 _VISAR_LUGARES_QUE_MIDEN = {
@@ -1570,6 +1600,10 @@ class AppointmentType(models.Model):
                     'value': group.id,
                     'label': group._visar_wizard_label(),
                     'description': group.wizard_help or '',
+                    # Ver `_VISAR_GRUPO_KEYWORDS`: nadie pide "Fumigación",
+                    # pide que le quiten las termitas.
+                    'keywords': list(
+                        _VISAR_GRUPO_KEYWORDS.get(group.code or '', ())),
                 } for group in self._visar_wizard_groups()],
             }
 
