@@ -1,6 +1,13 @@
 # Estado y roadmap
 
-> Última actualización: **8-sep-2026 (noche)**, **EN PRODUCCIÓN a las 23:53**:
+> Última actualización: **9-sep-2026 00:10** — **visar_appointment 19.0.2.15.0**
+> en producción: acceso completo a `base.group_system` sobre
+> `visar.agent.vocabulario`, para que quien ve la pantalla (el menú vive bajo
+> Ajustes) pueda guardarla, como en los otros tres modelos de config del agente.
+> Fue junto con el arreglo del runtime del día del mes que apartaba esa hora
+> (§24 de `85-motor-de-flujos-agendado.md`), con
+> `visar_fastapi/deploy/deploy-fecha-del-dia.sh`.
+> Anterior: **8-sep-2026 (noche)**, **EN PRODUCCIÓN a las 23:53**:
 > el vocabulario del cliente se edita desde Odoo (`visar.agent.vocabulario`,
 > **visar_appointment 19.0.2.14.0**) y los prompts se aplican al runtime con un
 > botón (**visar_whatsapp_agent 19.0.1.13.0**), versiones leídas de la BD
