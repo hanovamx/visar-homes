@@ -3,3 +3,4 @@ access_visar_slot_hold_user,visar.slot.hold.user,model_visar_slot_hold,base.grou
 access_visar_slot_hold_manager,visar.slot.hold.manager,model_visar_slot_hold,appointment.group_appointment_manager,1,1,1,1
 access_visar_agent_vocabulario_user,visar.agent.vocabulario.user,model_visar_agent_vocabulario,base.group_user,1,0,0,0
 access_visar_agent_vocabulario_manager,visar.agent.vocabulario.manager,model_visar_agent_vocabulario,appointment.group_appointment_manager,1,1,1,1
+access_visar_agent_vocabulario_system,visar.agent.vocabulario.system,model_visar_agent_vocabulario,base.group_system,1,1,1,1
