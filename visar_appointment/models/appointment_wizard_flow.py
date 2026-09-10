@@ -238,15 +238,32 @@ _VISAR_PLAGAS_KEYWORDS = {
 # La salida explicita de los dos pasos opcionales. En el chat un menu sin fila de
 # rechazo es una pregunta sin respuesta valida: quien no queria nada se quedaba
 # en bucle o compraba el add-on para poder avanzar.
-#
-# `poliza` cayo en la misma trampa que `extras` y todavia no tiene palabras: la
-# ranura esta vacia para que se le puedan poner sin tocar codigo.
 _VISAR_EXTRAS_KEYWORDS = {
     'no_gracias': ['no gracias', 'ninguno', 'ninguna', 'nada',
                    'asi esta bien', 'asi la dejo', 'nel'],
 }
+
+# ⚠️ "Solo este servicio" CONTRATABA una poliza (10-sep-2026). A "¿Te interesa
+# contratarlo como poliza?" el cliente contesto eso, y se eligio *"3 servicios:
+# Servicio plaga recurrente"*: la raiz "servic" del nombre del plan puntua en la
+# fila de etiquetas, y la de "No, gracias" solo la tenia su DESCRIPCION
+# ("Contrato solo este servicio"), que es la segunda fila y nunca llego a
+# leerse. El cliente lo cazo en el resumen; si no, se le cobraba una suscripcion.
+#
+# Las FRASES de varias palabras son las que lo arreglan, no las sueltas: en un
+# paso de una sola respuesta `flow._frase_unica` las lee ANTES que el conteo de
+# raices, y ahi "solo este servicio" ya no compite con el "servicio" del plan.
+# Nombrar un plan ("la anual", "la de 3 servicios") lo sigue eligiendo.
 _VISAR_POLIZA_KEYWORDS = {
-    'no_gracias': [],
+    'no_gracias': [
+        'no gracias', 'ninguna', 'ninguno', 'nel',
+        'solo este servicio', 'solo este', 'solo el servicio',
+        'solo quiero este', 'solo quiero el servicio', 'nada mas este',
+        'nomas este', 'solo esta vez', 'una sola vez', 'de contado',
+        'sin poliza', 'sin suscripcion', 'no quiero poliza',
+        'no quiero suscripcion', 'no quiero la poliza',
+        'no quiero la suscripcion',
+    ],
 }
 
 # El acuse del aviso de valoracion. Es un paso de UNA sola opcion, asi que el

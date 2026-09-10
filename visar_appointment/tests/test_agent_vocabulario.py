@@ -15,6 +15,8 @@ concreta de romperla sin que nadie se entere:
     y solo lo sabe quien comparte el vocabulario de los lugares;
   * archivar apaga; una opción que no existe no se puede guardar.
 """
+from unittest.mock import patch
+
 from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
@@ -87,15 +89,37 @@ class TestAgentVocabulario(TransactionCase):
                 'paso': 'cobertura', 'opcion': 'el_patio', 'palabras': 'azotea',
             })
 
-    def test_la_ranura_vacia_de_poliza_se_puede_llenar(self):
-        """`poliza` no trae ni una palabra en el código, y esa es la gracia."""
+    def test_la_salida_de_poliza_se_puede_ampliar(self):
+        """Nacio vacia y la lleno el 10-sep "Solo este servicio" (ver
+        `_VISAR_POLIZA_KEYWORDS`). Sigue admitiendo lo que anada un consultor, y
+        lo que ya estaba ("nel") no se repite."""
         self.Vocab.create({
             'paso': 'poliza', 'opcion': 'no_gracias', 'palabras': 'nel\nasi nomas',
         })
         overlay = self.Flow._visar_vocabulario_overlay()
-        self.assertEqual(
-            self.Flow._visar_vocabulario(overlay, 'poliza', 'no_gracias'),
-            ['nel', 'asi nomas'])
+        palabras = self.Flow._visar_vocabulario(overlay, 'poliza', 'no_gracias')
+        self.assertIn('solo este servicio', palabras)
+        self.assertEqual(palabras.count('nel'), 1)
+        self.assertEqual(palabras[-1], 'asi nomas')
+
+    def test_la_poliza_publica_la_salida_con_sus_frases(self):
+        """El payload real del paso: la fila de salida lleva las frases.
+
+        Es lo que evita que "Solo este servicio" contrate el plan de 3 servicios:
+        el runtime las lee como frase antes que el conteo de raices.
+        """
+        planes = [{'plan_id': 7, 'name': 'Suscripcion anual', 'period_total': 7866.0,
+                   'upfront_total': 7866.0, 'saving': 0.0}]
+        with patch.object(type(self.Flow), '_visar_wizard_poliza_offers',
+                          return_value=planes), \
+                patch.object(type(self.Flow), '_visar_wizard_poliza_label',
+                             return_value='Suscripcion anual'), \
+                patch.object(type(self.Flow), '_visar_wizard_poliza_description',
+                             return_value=''):
+            payload = self.Flow._visar_wizard_step_options({}, 'poliza')
+        salida = [o for o in payload['options'] if o['value'] == 0]
+        self.assertTrue(salida)
+        self.assertIn('solo este servicio', salida[0]['keywords'])
 
     def test_lo_efectivo_es_lo_que_se_publica(self):
         """El campo de la pantalla no puede decir una cosa y el agente otra."""
