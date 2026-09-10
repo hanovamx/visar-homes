@@ -1960,6 +1960,70 @@ class VisarAgentTools(models.AbstractModel):
         return cp_record.zone_id if cp_record else self.env['visar.zone'].sudo().browse()
 
     @api.model
+    def agent_cancel_pending_booking(self, payload):
+        """Anula una reserva de WhatsApp que TODAVIA no se paga, y con ella su liga.
+
+        `payload` = {"phone": "5218112345678", "order_id": 291}
+
+        Devuelve {"cancelled": bool, "reason": str | None}. `reason` es uno de
+        'phone_invalid', 'not_found', 'not_owner', 'paid',
+        'payment_in_progress' o 'already_cancelled' (este con cancelled=True:
+        la liga ya estaba muerta, que es lo que se pedia). Nunca lanza.
+
+        **Por que hace falta.** El cliente que cambia de opinion DESPUES de
+        recibir la liga -otra fecha, otra direccion, o nada- se quedaba con la
+        liga vieja viva. El apartado se soltaba al pedir otro (un telefono solo
+        aparta uno), pero la liga no: el guardia de pago re-aparta el horario si
+        sigue libre (diseno 33 §6.1), asi que pagarla por error confirmaba **la
+        cita que el cliente acababa de cambiar**. Y la liga lleva
+        `payment_amount` en la URL, con lo que Odoo pinta el formulario de pago
+        aunque la orden no este en borrador. Cancelar la orden aqui y rechazar
+        el cobro de una orden cancelada (`payment_transaction`) cierran las dos
+        mitades.
+
+        **Nunca toca algo pagado ni a medio pagar.** Solo ordenes en borrador o
+        enviadas, sin transaccion pendiente, autorizada ni hecha. Y solo del
+        cliente que lo pide: el telefono tiene que ser el del pedido.
+        """
+        payload = payload or {}
+
+        def _fallo(reason):
+            return {'cancelled': False, 'reason': reason}
+
+        Partner = self.env['res.partner'].sudo()
+        key = Partner._visar_phone_nat10_value(payload.get('phone'))
+        if not key:
+            return _fallo('phone_invalid')
+        try:
+            order_id = int(payload.get('order_id') or 0)
+        except (TypeError, ValueError):
+            order_id = 0
+        order = self.env['sale.order'].sudo().browse(order_id).exists() \
+            if order_id > 0 else self.env['sale.order']
+        if not order:
+            return _fallo('not_found')
+        if order.partner_id.visar_phone_nat10 != key:
+            _logger.warning(
+                "agent_cancel_pending_booking: el telefono terminado en %s pidio "
+                "anular la orden %s, que no es suya.", key[-4:], order.id)
+            return _fallo('not_owner')
+        if order.state == 'cancel':
+            return {'cancelled': True, 'reason': 'already_cancelled'}
+        if order.state not in ('draft', 'sent'):
+            return _fallo('paid')
+        if order.transaction_ids.filtered(
+                lambda t: t.state in ('pending', 'authorized', 'done')):
+            return _fallo('payment_in_progress')
+
+        Hold = self.env['visar.slot.hold'].sudo()
+        for booking in order.order_line.calendar_booking_ids:
+            Hold._visar_release(booking=booking)
+        order._action_cancel()
+        _logger.info("agent_cancel_pending_booking: orden %s anulada a peticion "
+                     "del telefono terminado en %s.", order.id, key[-4:])
+        return {'cancelled': True, 'reason': None}
+
+    @api.model
     def _agent_booking_partner(self, phone, name=None):
         """(partner, motivo_de_error). Crea el cliente si el telefono es nuevo.
 

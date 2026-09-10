@@ -10,3 +10,4 @@ from . import test_followup
 from . import test_agent_reschedule
 from . import test_agent_day_ranking
 from . import test_agent_runtime_refresh
+from . import test_agent_cancel_booking

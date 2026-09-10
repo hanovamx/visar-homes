@@ -142,8 +142,16 @@ class TestAgentReschedule(TransactionCase):
         Se fija como prueba para que anadir un `agent_cancel_*` sin resolver
         antes que pasa con el dinero rompa aqui y no en produccion.
         """
+        # La unica excepcion es `agent_cancel_pending_booking` (10-sep-2026), y
+        # entra porque NO toca dinero: solo anula reservas sin pagar ni a medio
+        # pagar, para que la liga vieja muera cuando el cliente cambia de fecha.
+        # Que no toque lo pagado lo fija `test_agent_cancel_booking.
+        # test_no_toca_lo_pagado`. Cualquier otro `agent_cancel_*` sigue
+        # rompiendo aqui, que es para lo que existe esta prueba.
+        permitidos = {'agent_cancel_pending_booking'}
         metodos = [m for m in dir(self.Tools)
-                   if m.startswith('agent_') and 'cancel' in m]
+                   if m.startswith('agent_') and 'cancel' in m
+                   and m not in permitidos]
         self.assertEqual(metodos, [])
 
     # --- Lo que cuelga -------------------------------------------------

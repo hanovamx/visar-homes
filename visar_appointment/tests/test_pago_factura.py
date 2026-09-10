@@ -118,3 +118,65 @@ class TestPagoFactura(TransactionCase):
         self.assertFalse(tx._check_amount_and_confirm_order(),
                          "un pago parcial no debe confirmar el pedido")
         self.assertEqual(order.state, 'draft')
+
+
+@tagged('post_install', '-at_install')
+class TestLigaDeOrdenCancelada(TransactionCase):
+    """La liga de una orden cancelada no cobra (10-sep-2026).
+
+    El agente de WhatsApp cancela la orden cuando el cliente cambia de fecha o se
+    arrepiente DESPUES de recibir la liga. Pero la liga lleva `payment_amount`, y
+    con eso el portal nativo pinta el formulario de pago aunque la orden ya no
+    este en borrador; la ruta de la transaccion no mira el estado. Sin este
+    guardia, pagar la liga vieja cobraba la cita que el cliente acababa de
+    cambiar.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner = cls.env['res.partner'].create({'name': 'Cliente Liga Vieja'})
+        cls.product = cls.env['product.template'].create({
+            'name': 'Servicio Liga Vieja', 'type': 'service', 'list_price': 600.0,
+            'taxes_id': [(6, 0, [])],
+        })
+        cls.provider = cls.env['payment.provider'].search(
+            [('company_id', '=', cls.env.company.id)], limit=1)
+
+    def _order(self):
+        return self.env['sale.order'].create({
+            'partner_id': self.partner.id,
+            'order_line': [(0, 0, {
+                'product_id': self.product.product_variant_id.id,
+                'product_uom_qty': 1,
+            })],
+        })
+
+    def _tx(self, order, **extra):
+        vals = {
+            'provider_id': self.provider.id,
+            'payment_method_id': self.provider.payment_method_ids[:1].id,
+            'reference': '%s-%s' % (order.name, len(order.transaction_ids)),
+            'amount': order.amount_total,
+            'currency_id': order.currency_id.id,
+            'partner_id': self.partner.id,
+            'sale_order_ids': [(6, 0, order.ids)],
+        }
+        vals.update(extra)
+        return self.env['payment.transaction'].create(vals)
+
+    def test_una_orden_cancelada_no_se_cobra(self):
+        if not self.provider:
+            self.skipTest("sin proveedor de pago en esta base")
+        order = self._order()
+        order._action_cancel()
+        self.assertEqual(order.state, 'cancel')
+        with self.assertRaisesRegex(Exception, "ya no es válida"):
+            self._tx(order)
+
+    def test_una_orden_viva_se_sigue_cobrando(self):
+        """Comprueba que el guardia sabe NO dar rojo: sin cancelar, pasa."""
+        if not self.provider:
+            self.skipTest("sin proveedor de pago en esta base")
+        order = self._order()
+        self.assertTrue(self._tx(order))

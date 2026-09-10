@@ -2094,7 +2094,9 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
                 'title': _('¿Quieres agregar algo más?'),
-                'hint': _('Si no quieres agregar nada, dime que no y seguimos.'),
+                # Sin `hint` (10-sep-2026): "Si no quieres agregar nada, dime que
+                # no y seguimos" es instruccion de maquina, no conversacion, y
+                # Visar pidio que la pregunta solo ofrezca lo que se agrega.
                 'options': [{
                     'value': offer['product_id'],
                     'label': offer.get('name') or '',
@@ -2109,6 +2111,11 @@ class AppointmentType(models.Model):
                     'value': VISAR_EXTRAS_NONE,
                     'label': _('No, gracias'),
                     'description': _('Seguir sin agregar nada'),
+                    # Se CONTESTA pero no se DICE. La fila tiene que seguir aqui:
+                    # es la que el canal reconoce como salida, y sin ella "no"
+                    # no tendria respuesta valida -el bucle que obligo a
+                    # anadirla-. Lo unico que pidio Visar es no pintarla.
+                    'oculta': True,
                     'keywords': self._visar_vocabulario(
                         vocab, VISAR_STEP_EXTRAS, 'no_gracias'),
                 }],

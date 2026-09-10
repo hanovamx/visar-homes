@@ -58,6 +58,23 @@ class PaymentTransaction(models.Model):
         canal web no crea apartados y no tiene por qué pasar por aquí.
         """
         self.ensure_one()
+        # Una orden CANCELADA no se cobra, y hay que decirlo aqui porque el
+        # nativo no lo impide por nuestra liga: lleva `payment_amount` en la
+        # URL, y con eso el portal pinta el formulario de pago aunque la orden no
+        # este en borrador (`sale/controllers/portal.py`), y la ruta de la
+        # transaccion no mira el estado. Pasa cuando el cliente cambio de fecha
+        # o se arrepintio DESPUES de recibir la liga
+        # (`agent_cancel_pending_booking`): pagar la vieja confirmaria la cita
+        # que acababa de cambiar, o cobraria una que ya no quiere.
+        #
+        # Los reembolsos no pasan por aqui: se hacen justamente sobre ordenes que
+        # ya no valen.
+        if self.operation != 'refund' and self.sale_order_ids.filtered(
+                lambda o: o.state == 'cancel'):
+            raise ValidationError(_(
+                "Esta liga de pago ya no es válida: la reserva se cambió o se "
+                "canceló. No se hizo ningún cargo. Si necesitas ayuda, "
+                "escríbenos por WhatsApp."))
         bookings = (self.sale_order_ids | self.source_transaction_id.sale_order_ids
                     ).order_line.calendar_booking_ids
         for booking in bookings:
