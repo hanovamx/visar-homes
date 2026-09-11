@@ -320,3 +320,87 @@ class TestFollowupContrato(TransactionCase):
         self.assertEqual(
             self.env['visar.wa.lead.message']._visar_wa_endpoint(),
             '/internal/lead-followup')
+
+
+@tagged('post_install', '-at_install')
+class TestFollowupUnoPorSilencio(TransactionCase):
+    """Visar, 11-sep-2026: un recontacto por cada silencio, no uno en la vida.
+
+    Los leads de un telefono se reutilizan mientras sigan abiertos, asi que
+    "nunca se reprograma" era "nunca vuelve a recibir otro". Y una escalada
+    vieja cerraba para siempre: por eso los numeros de prueba de Visar no
+    recibian nada con la espera en 5 minutos.
+    """
+
+    WA = '5219990004433'
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.Tools = cls.env['visar.agent.tools']
+        cls.Lead = cls.env['crm.lead']
+        cls.env['visar.followup.config'].search([]).unlink()
+        cls.config = cls.env['visar.followup.config'].create({
+            'name': 'Test', 'delay_minutes': 360,
+            'window_start_hour': 0, 'window_end_hour': 24})
+
+    def _lead(self):
+        res = self.Tools.agent_track_interest({
+            'phone': self.WA, 'context': {'etapa': 'pregunto', 'wa_id': self.WA}})
+        return self.Lead.browse(res['lead_id'])
+
+    def _vence(self, lead):
+        lead.visar_wa_followup_due = fields.Datetime.from_string('2020-01-01 00:00:00')
+
+    def test_si_vuelve_a_escribir_despues_del_recontacto_se_rearma(self):
+        lead = self._lead()
+        lead.write({'visar_wa_followup_state': 'sent',
+                    'visar_wa_followup_sent_at': fields.Datetime.now()})
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'scheduled')
+
+    def test_en_cola_no_se_toca(self):
+        lead = self._lead()
+        lead.visar_wa_followup_state = 'queued'
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'queued')
+
+    def test_la_escalada_solo_descarta_su_silencio(self):
+        lead = self._lead()
+        self.Tools.agent_request_handoff({'phone': self.WA, 'reason': 'asesor'})
+        self.assertTrue(lead.visar_wa_handoff_at)
+        self._vence(lead)
+        self.Lead._visar_wa_cron_followup()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped',
+                         "escalo despues de su ultimo mensaje: hay una persona")
+
+        # Vuelve a hablar con el agente despues de la escalada.
+        lead.visar_wa_handoff_at = fields.Datetime.subtract(
+            fields.Datetime.now(), hours=1)
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'scheduled')
+        self._vence(lead)
+        self.Lead._visar_wa_cron_followup()
+        self.assertEqual(lead.visar_wa_followup_state, 'queued')
+
+    def test_una_escalada_sin_fecha_no_cierra_para_siempre(self):
+        """Los leads escalados antes de que existiera la fecha (73 y 75 en
+        produccion): si el cliente escribe, la escalada es anterior."""
+        lead = self._lead()
+        lead.write({'visar_source': 'whatsapp_handoff',
+                    'visar_wa_followup_state': 'skipped',
+                    'visar_wa_followup_skip_reason': "Escalado a un asesor",
+                    'visar_wa_handoff_at': False})
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'scheduled')
+        self._vence(lead)
+        self.Lead._visar_wa_cron_followup()
+        self.assertEqual(lead.visar_wa_followup_state, 'queued')
+
+    def test_dijo_que_no_sigue_cerrando_aunque_sea_un_descarte_viejo(self):
+        lead = self._lead()
+        lead.write({'visar_wa_followup_state': 'skipped',
+                    'visar_wa_followup_skip_reason': "El cliente dijo que no",
+                    'visar_wa_followup_skip_code': False})
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')

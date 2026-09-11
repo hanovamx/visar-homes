@@ -206,3 +206,16 @@ class TestAgentReschedule(TransactionCase):
         self.assertEqual(len(mios), 1)
         self.assertTrue(mios[0]['can_reschedule'])
         self.assertIsNone(mios[0]['reschedule_reason'])
+
+    def test_la_lista_nombra_el_servicio_sin_sus_atributos(self):
+        """El nombre de la variante lleva la zona y el tramo ("(B, 1-250)"): el
+        cliente no debe ver la zona, y esos caracteres de mas dejaban la lista
+        fuera del tope de WhatsApp (7 al 9-sep-2026)."""
+        _evento, pedido = self._cita(dentro_de_horas=72)
+        linea = pedido.order_line.filtered(lambda l: l.product_id.visar_is_service)[:1]
+        salida = self.Tools.agent_customer_services(
+            {'phone': self.WA, 'scope': 'upcoming'})
+        nombres = {s['service'] for s in salida['services']}
+        self.assertIn(linea.product_id.product_tmpl_id.name, nombres)
+        if linea.product_id.product_template_attribute_value_ids:
+            self.assertNotIn(linea.product_id.display_name, nombres)

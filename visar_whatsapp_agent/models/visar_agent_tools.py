@@ -863,7 +863,12 @@ class VisarAgentTools(models.AbstractModel):
             # comprobar que la cita es de este telefono.
             bloqueo = event._visar_reschedule_blocked() if event else 'sin_fecha'
             entries.append({
-                'service': line.product_id.display_name,
+                # El nombre de la PLANTILLA, no el de la variante. El de la
+                # variante lleva sus atributos -"(B, 1-250, 0 - 50)"-: la zona,
+                # que el cliente no debe ver, y veinte caracteres por renglon
+                # que con siete servicios pasaban el tope de 1024 de WhatsApp
+                # (la lista no llegaba, 7 al 9-sep-2026).
+                'service': line.product_id.product_tmpl_id.name,
                 'date': date.isoformat() if date else None,
                 'date_label': self._agent_format_date(date, tz),
                 'status': self._agent_service_status(line, date, now),
@@ -1852,6 +1857,9 @@ class VisarAgentTools(models.AbstractModel):
         # justo lo que este metodo existe para evitar.
         scheduled = False
         try:
+            # Cuando: el recontacto de este silencio se descarta, el de los
+            # siguientes no (`crm.lead._visar_wa_followup_blocked`).
+            lead.sudo().write({'visar_wa_handoff_at': fields.Datetime.now()})
             lead.message_post(body=self._agent_handoff_note(payload))
             assignee = self._agent_handoff_assignee(lead)
             if assignee:

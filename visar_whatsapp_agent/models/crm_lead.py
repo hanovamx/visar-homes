@@ -29,8 +29,10 @@ Cinco exclusiones, y ninguna es cosmética:
 
 1. **Ya no está en *Nuevo*.** Pagó, o un asesor lo movió. El pipeline es la
    fuente de verdad; no se duplica el estado.
-2. **Escalado a un asesor** (`visar_source = whatsapp_handoff`). Hay una persona
-   encima; un empujón automático le pasa por arriba.
+2. **Escalado a un asesor** *en este silencio* (`visar_wa_handoff_at`). Hay una
+   persona encima; un empujón automático le pasa por arriba. Si el cliente
+   vuelve a hablar con el agente después, sí vuelve a haber recontacto
+   (11-sep-2026).
 3. **Dijo que no.** Lo detecta el runtime y lo avisa (`agent_drop_followup`).
    Insistirle a quien ya declinó es exactamente lo que hace que la gente bloquee
    el número.
@@ -65,6 +67,9 @@ MOTIVOS = {
     'caducado': "Se pasó la ventana de 24 h de WhatsApp",
 }
 
+# Los descartes que NO se rearman aunque el cliente vuelva a escribir.
+DESCARTES_DEFINITIVOS = ('declino', 'queja')
+
 
 class CrmLead(models.Model):
     _inherit = 'crm.lead'
@@ -97,6 +102,24 @@ class CrmLead(models.Model):
     visar_wa_followup_skip_reason = fields.Char(
         string="Motivo de descarte", readonly=True, copy=False)
 
+    # La clave de `MOTIVOS`, no su texto. Hace falta desde que un descarte deja
+    # de ser para siempre (11-sep-2026): "dijo que no" sigue cerrando, y
+    # "escalado" ya no. Los descartes anteriores no la tienen; ver
+    # `_visar_wa_skip_code`.
+    visar_wa_followup_skip_code = fields.Char(
+        string="Clave del descarte", readonly=True, copy=False)
+
+    visar_wa_followup_desde = fields.Datetime(
+        string="Último mensaje del cliente", readonly=True, copy=False,
+        help="Desde cuándo cuenta la espera del recontacto.")
+
+    visar_wa_handoff_at = fields.Datetime(
+        string="Escalado a asesor el", readonly=True, copy=False,
+        help="La última vez que el agente pasó este lead a una persona. Un "
+             "recontacto se descarta si la escalada es posterior al último "
+             "mensaje del cliente; si el cliente volvió a hablar con el agente "
+             "después, sí se manda.")
+
     # ------------------------------------------------------------------
     # Programar
     # ------------------------------------------------------------------
@@ -109,22 +132,46 @@ class CrmLead(models.Model):
         siga escribiendo, el reloj se reinicia. El recontacto sale seis horas
         después del último mensaje, no seis horas después del primero.
 
-        Un lead ya enviado o descartado NO se reprograma aquí: si el cliente
-        vuelve a escribir después de un recontacto, la conversación es nueva y
-        lo que corresponde es atenderla, no volver a empujar.
+        **Uno por cada silencio** (Visar, 11-sep-2026). Aquí decía que un lead
+        ya enviado o descartado no se reprogramaba nunca, y como el lead de un
+        teléfono se reutiliza mientras siga abierto, eso era UN recontacto en la
+        vida del cliente: quien volvía a preguntar días después y se callaba otra
+        vez ya no recibía nada. Ahora, si el cliente vuelve a escribir:
+
+        * después de un recontacto enviado, se rearma;
+        * después de un descarte, se rearma — salvo que dijera que no o se
+          quejara, que siguen cerrando (insistirle es lo que hace que bloqueen
+          el número);
+        * en cola, no se toca: está a punto de salir.
+
+        La escalada a un asesor ya no cierra para siempre: solo descarta el
+        recontacto del silencio en que ocurrió (`_visar_wa_followup_blocked`).
         """
         config = self.env['visar.followup.config'].sudo()._visar_active()
         if not config or not config.enabled:
             return
         desde = desde or fields.Datetime.now()
         for lead in self:
-            if lead.visar_wa_followup_state in ('queued', 'sent', 'skipped'):
+            if lead.visar_wa_followup_state == 'queued':
+                continue
+            if lead.visar_wa_followup_state == 'skipped' \
+                    and lead._visar_wa_skip_code() in DESCARTES_DEFINITIVOS:
                 continue
             valores = {
                 'visar_wa_followup_state': 'scheduled',
                 'visar_wa_followup_due': self._visar_wa_followup_due_at(
                     desde, config),
+                'visar_wa_followup_desde': desde,
+                'visar_wa_followup_skip_reason': False,
+                'visar_wa_followup_skip_code': False,
             }
+            if lead.visar_wa_followup_state != 'none' \
+                    and lead.visar_source == 'whatsapp_handoff' \
+                    and not lead.visar_wa_handoff_at:
+                # Escalado antes de que existiera la fecha. Si el cliente esta
+                # escribiendo ahora, la escalada es anterior a este mensaje.
+                valores['visar_wa_handoff_at'] = fields.Datetime.subtract(
+                    desde, seconds=1)
             if context is not None:
                 valores['visar_wa_followup_context'] = json.dumps(
                     context, ensure_ascii=False)
@@ -170,7 +217,18 @@ class CrmLead(models.Model):
                 'visar_wa_followup_state': 'skipped',
                 'visar_wa_followup_due': False,
                 'visar_wa_followup_skip_reason': MOTIVOS.get(reason, reason),
+                'visar_wa_followup_skip_code': reason,
             })
+
+    def _visar_wa_skip_code(self):
+        """La clave del descarte. Los anteriores al 11-sep solo guardaban el
+        texto, y se reconocen por él."""
+        self.ensure_one()
+        if self.visar_wa_followup_skip_code:
+            return self.visar_wa_followup_skip_code
+        texto = self.visar_wa_followup_skip_reason or ''
+        return next((clave for clave, frase in MOTIVOS.items() if frase == texto),
+                    texto or None)
 
     # ------------------------------------------------------------------
     # Exclusiones
@@ -184,7 +242,20 @@ class CrmLead(models.Model):
         que ya tenía servicio con nosotros.
         """
         self.ensure_one()
-        if self.visar_source == 'whatsapp_handoff':
+        # Solo si la escalada es de ESTE silencio. Una escalada vieja cerraba
+        # el recontacto para siempre, y los leads se reutilizan: el cliente
+        # que pidio un asesor en agosto no volvia a recibir ninguno.
+        #
+        # Se mira la FECHA y no `visar_source`: `_agent_open_lead` reutiliza el
+        # lead abierto del telefono y no le cambia el origen, asi que quien
+        # preguntaba primero y escalaba despues seguia siendo 'whatsapp' y
+        # recibia el recontacto con un asesor encima. `visar_source` solo queda
+        # para los escalados de antes de que existiera la fecha.
+        if self.visar_wa_handoff_at:
+            if (not self.visar_wa_followup_desde
+                    or self.visar_wa_handoff_at >= self.visar_wa_followup_desde):
+                return 'escalado'
+        elif self.visar_source == 'whatsapp_handoff':
             return 'escalado'
         nuevo = self.env.ref(WA_STAGE_NUEVO_XMLID, raise_if_not_found=False)
         if not nuevo or self.stage_id != nuevo:
