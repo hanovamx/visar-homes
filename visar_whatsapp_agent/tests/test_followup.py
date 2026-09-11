@@ -397,6 +397,20 @@ class TestFollowupUnoPorSilencio(TransactionCase):
         self.Lead._visar_wa_cron_followup()
         self.assertEqual(lead.visar_wa_followup_state, 'queued')
 
+    def test_colgar_no_cierra_el_recontacto_para_siempre(self):
+        """Terminar el chat llega como 'cerro', no como 'declino'.
+
+        Visar, 11-sep-2026: tocar "Sí, terminar" excluia de por vida, y era el
+        unico camino que marcaba "dijo que no" en todo el agente.
+        """
+        lead = self._lead()
+        self.Tools.agent_drop_followup({'phone': self.WA, 'reason': 'cerro'})
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+        self.assertEqual(lead.visar_wa_followup_skip_reason,
+                         "Cerró la conversación")
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'scheduled')
+
     def test_dijo_que_no_sigue_cerrando_aunque_sea_un_descarte_viejo(self):
         lead = self._lead()
         lead.write({'visar_wa_followup_state': 'skipped',

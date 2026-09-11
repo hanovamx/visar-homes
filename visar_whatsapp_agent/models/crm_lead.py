@@ -35,7 +35,8 @@ Cinco exclusiones, y ninguna es cosmética:
    (11-sep-2026).
 3. **Dijo que no.** Lo detecta el runtime y lo avisa (`agent_drop_followup`).
    Insistirle a quien ya declinó es exactamente lo que hace que la gente bloquee
-   el número.
+   el número. **Terminar el chat no es decir que no**: eso llega como `cerro` y
+   solo cancela el recontacto pendiente.
 4. **Se quejó.** Igual que el anterior. Venderle a alguien enojado se lee fatal.
 5. **Ya es cliente de Visar** en ese grupo. Misma exclusión que `agent_track_lead`
    aplica al crear.
@@ -62,12 +63,17 @@ MOTIVOS = {
     'escalado': "Escalado a un asesor",
     'declino': "El cliente dijo que no",
     'queja': "El cliente puso una queja",
+    'cerro': "Cerró la conversación",
     'cliente_existente': "Ya es cliente de Visar",
     'apagado': "El recontacto está apagado",
     'caducado': "Se pasó la ventana de 24 h de WhatsApp",
 }
 
-# Los descartes que NO se rearman aunque el cliente vuelva a escribir.
+# Los descartes que NO se rearman aunque el cliente vuelva a escribir. Terminar
+# el chat NO esta aqui, y esa es la correccion del 11-sep-2026 (tarde): cerrar
+# la conversacion era lo UNICO que marcaba 'declino' en todo el agente, asi que
+# quien tocaba "Sí, terminar" quedaba excluido de por vida sin haber rechazado
+# nada. Rechazar una oferta y colgar no son lo mismo.
 DESCARTES_DEFINITIVOS = ('declino', 'queja')
 
 
