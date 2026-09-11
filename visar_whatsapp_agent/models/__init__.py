@@ -9,4 +9,5 @@ from . import calendar_booking
 from . import visar_slot_hold
 from . import visar_followup_config
 from . import crm_lead
+from . import project_task_type
 from . import wa_lead_outbox

@@ -765,15 +765,21 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_service_status(self, line, date, now):
-        """Estado legible del servicio.
+        """Estado legible del servicio, tal y como lo lee el CLIENTE.
 
-        Si hay tarea FSM con etapa, se usa su nombre (es el estado real que ve el
-        staff). Si no, se deriva de la fecha: futura = Programada, pasada =
+        Si hay tarea FSM con etapa, manda lo que esa etapa diga que hay que
+        decirle al cliente (`visar_agent_label`); si no dice nada, su nombre,
+        que es lo que se hacia siempre. La etiqueta existe porque los nombres
+        de etapa estan escritos para el staff: "Incidencia — Reprogramar" es
+        lenguaje de operaciones, no algo que se le diga a quien solo quiere
+        saber cuando van a su casa. Ver `project_task_type.py`.
+
+        Sin tarea se deriva de la fecha: futura = Programada, pasada =
         Realizada, sin fecha = Pendiente de agendar.
         """
         task = line.task_id
         if task and task.stage_id:
-            return task.stage_id.name
+            return task.stage_id.visar_agent_label or task.stage_id.name
         if not date:
             return "Pendiente de agendar"
         return "Programada" if date >= now else "Realizada"
@@ -813,13 +819,24 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_service_bucket(self, line, date, today_start):
-        """Clasifica un servicio en 'upcoming' o 'history'.
+        """Clasifica un servicio en 'upcoming' (proximos) o 'history'.
 
-        history = cerrado (etapa FSM con fold=True: Completado / Cancelado) o de
-        fecha pasada. upcoming = lo demas (proximo, en curso o sin fecha).
+        **Manda lo que diga la ETAPA** (`visar_agent_bucket`), y solo si no
+        dice nada -'auto', el valor de fabrica- se deduce como siempre:
+        cerrado (`fold`) o de fecha pasada es historia; lo demas, proximos.
+
+        La deduccion sola no basta desde el 11-sep-2026: la etapa nativa de
+        FSM `planning_project_stage_4` se llama *Cancelled* en Odoo, esta
+        marcada como cerrada, y Visar la usa como "Incidencia — Reprogramar",
+        que significa lo contrario: el servicio sigue pendiente, y Visar no
+        cancela servicios. El cliente la leia bajo "tus servicios anteriores"
+        con una fecha futura. Ver `project_task_type.py`.
         """
-        task = line.task_id
-        if task and task.stage_id and task.stage_id.fold:
+        stage = line.task_id.stage_id if line.task_id else False
+        forzado = stage.visar_agent_bucket if stage else 'auto'
+        if forzado in ('upcoming', 'history'):
+            return forzado
+        if stage and stage.fold:
             return 'history'
         if date and date < today_start:
             return 'history'

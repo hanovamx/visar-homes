@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         Etapas de servicio: que le dice cada una al agente.
+
+         Pantalla propia dentro de "Agente WhatsApp" y no un campo perdido en
+         la etapa: quien configura el agente no vive en el kanban de campo, y
+         la lista corta (cinco etapas) se entiende de un vistazo. Ver el
+         docstring de `project_task_type.py`.
+         ============================================================== -->
+
+    <record id="project_task_type_view_list_agente" model="ir.ui.view">
+        <field name="name">project.task.type.list.agente</field>
+        <field name="model">project.task.type</field>
+        <field name="arch" type="xml">
+            <list string="Etapas de servicio" editable="bottom" create="0" delete="0">
+                <field name="sequence" widget="handle"/>
+                <field name="name" readonly="1"/>
+                <field name="visar_agent_bucket"/>
+                <field name="visar_agent_label"
+                       placeholder="El nombre de la etapa"/>
+                <field name="fold" readonly="1" optional="hide"
+                       string="Cerrada en Odoo"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="project_task_type_view_search_agente" model="ir.ui.view">
+        <field name="name">project.task.type.search.agente</field>
+        <field name="model">project.task.type</field>
+        <field name="arch" type="xml">
+            <search string="Etapas de servicio">
+                <field name="name"/>
+                <filter name="configuradas" string="Configuradas para el agente"
+                        domain="[('visar_agent_bucket', '!=', 'auto')]"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="project_task_type_action_agente" model="ir.actions.act_window">
+        <field name="name">Etapas de servicio</field>
+        <field name="res_model">project.task.type</field>
+        <field name="view_mode">list</field>
+        <field name="view_id" ref="project_task_type_view_list_agente"/>
+        <field name="search_view_id" ref="project_task_type_view_search_agente"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Dile al agente que significa cada etapa
+            </p>
+            <p>
+                El agente le cuenta al cliente que servicios tiene
+                <em>pendientes</em> y cuales <em>anteriores</em>. Con
+                <b>Automatico</b> lo deduce de Odoo, y eso falla cuando una
+                etapa cerrada significa lo contrario: <em>"Incidencia —
+                Reprogramar"</em> es la etapa <em>Cancelled</em> de Odoo
+                renombrada, pero ese servicio sigue pendiente.
+            </p>
+            <p>
+                Marcala como <b>Pendiente</b> y escribe en la ultima columna lo
+                que quieres que lea el cliente. Se aplica al instante, sin
+                reiniciar nada.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_service_stages"
+              name="Etapas de servicio"
+              parent="menu_agent_root"
+              action="project_task_type_action_agente"
+              sequence="26"/>
+
+</odoo>
