@@ -662,6 +662,59 @@ class TestWizardFlow(TransactionCase):
         self.assertEqual(valores[-1], VISAR_POLIZA_NONE,
                          "y va al final, despues de las ofertas")
 
+    def test_la_salida_dice_que_se_lleva_quien_no_contrata(self):
+        """Visar, 11-sep-2026: "No, gracias" no decia QUE pierde el cliente.
+
+        Se lee en `es_MX` porque es el idioma en que lo lee el cliente
+        (`_agent_flow_type`); el usuario que corre las pruebas puede estar en
+        otro, y entonces se compara contra una traduccion que nadie ve.
+        """
+        options = self.AptType.with_context(lang='es_MX')._visar_wizard_step_options(
+            {}, 'poliza')
+        salida = [o for o in options['options'] if o['value'] == VISAR_POLIZA_NONE]
+        self.assertEqual(len(salida), 1)
+        self.assertEqual(salida[0]['label'], "Un solo servicio")
+        self.assertIn('no incluye visitas de refuerzo', salida[0]['description'])
+
+    def test_la_salida_va_marcada_y_no_se_deduce_de_su_nombre(self):
+        """La bandera `salida` es lo que la hace reconocible para el chat.
+
+        El runtime la buscaba corriendo un detector de NEGATIVOS sobre la
+        etiqueta, y "Un solo servicio" no lo es: renombrarla sin marcarla dejaba
+        el paso sin forma de decir que no, que es el bucle que la hizo nacer.
+        Vale para los dos pasos opcionales.
+        """
+        for paso in ('poliza', 'extras'):
+            options = self.AptType._visar_wizard_step_options({}, paso)
+            marcadas = [o for o in options['options'] if o.get('salida')]
+            self.assertEqual(len(marcadas), 1,
+                             "%s: una salida marcada, y solo una" % paso)
+
+    def test_la_salida_se_puede_contestar_copiando_su_etiqueta(self):
+        """Medido contra el catalogo real: sin esto, *"un solo servicio"* elegia
+        el plan *"3 servicios"* -misma raiz "servic"- y contrataba una poliza.
+
+        Es el incidente del 10-sep otra vez, provocado por el nombre nuevo.
+        """
+        options = self.AptType._visar_wizard_step_options({}, 'poliza')
+        salida = [o for o in options['options']
+                  if o['value'] == VISAR_POLIZA_NONE][0]
+        for frase in ('un solo servicio', 'solo un servicio'):
+            self.assertIn(frase, salida['keywords'],
+                          "la etiqueta de la fila tiene que estar en su propio "
+                          "vocabulario")
+
+    def test_la_pista_de_servicios_dice_que_esto_es_para_hogar(self):
+        """Visar, 11-sep-2026: quien escribia por su negocio se enteraba al
+        final, despues de contestar medio cuestionario. Es una invitacion y no
+        un paso: no frena a los clientes de casa, que son casi todos."""
+        pista = self.AptType.with_context(lang='es_MX')._visar_wizard_step_options(
+            {}, 'services').get('hint') or ''
+        self.assertIn('para casa', pista)
+        self.assertIn('negocio', pista)
+        self.assertIn('Puedes decirme varios', pista,
+                      "y sin perder lo que ya decia")
+
     def test_no_contratar_poliza_deja_el_plan_vacio(self):
         """Contestar "no" no puede parecerse a no haber contestado."""
         booking = self._booking_fum(motivo='correctivo')

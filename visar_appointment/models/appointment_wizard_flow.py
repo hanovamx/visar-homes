@@ -254,6 +254,13 @@ _VISAR_EXTRAS_KEYWORDS = {
 # paso de una sola respuesta `flow._frase_unica` las lee ANTES que el conteo de
 # raices, y ahi "solo este servicio" ya no compite con el "servicio" del plan.
 # Nombrar un plan ("la anual", "la de 3 servicios") lo sigue eligiendo.
+#
+# ⚠️ Y desde el 11-sep-2026 la fila se LLAMA *"Un solo servicio"*, asi que su
+# propia etiqueta entra en esta lista. No es redundante: contestar copiando lo
+# que se ve en pantalla es la forma mas natural de contestar, y medido contra el
+# catalogo real *"un solo servicio"* elegia el plan *"3 servicios"* -la misma
+# raiz "servic", el mismo incidente de arriba-. Si alguien renombra la fila,
+# aqui hay que poner el nombre nuevo.
 _VISAR_POLIZA_KEYWORDS = {
     'no_gracias': [
         'no gracias', 'ninguna', 'ninguno', 'nel',
@@ -263,6 +270,9 @@ _VISAR_POLIZA_KEYWORDS = {
         'sin poliza', 'sin suscripcion', 'no quiero poliza',
         'no quiero suscripcion', 'no quiero la poliza',
         'no quiero la suscripcion',
+        # La etiqueta de la propia fila, y como la escribe la gente.
+        'un solo servicio', 'solo un servicio', 'un servicio unico',
+        'solo uno', 'pago unico',
     ],
 }
 
@@ -1828,7 +1838,15 @@ class AppointmentType(models.Model):
                 # que decirse como se dice hablando. Estas opciones NO las usa
                 # el wizard web -tiene sus propias plantillas-, asi que aqui no
                 # hay dos canales que contentar.
-                'hint': _('Puedes decirme varios.'),
+                #
+                # La segunda frase la pidio Visar el 11-sep-2026: por WhatsApp
+                # solo se agenda HOGAR, y quien escribia por su negocio se
+                # enteraba al final, despues de contestar medio cuestionario.
+                # Es una INVITACION y no un paso: preguntarselo a todos cuesta
+                # una pregunta a los clientes de casa, que son casi todos.
+                'hint': _('Puedes decirme varios. Y por aquí agendamos '
+                          'servicios para casa: si es para tu negocio, dímelo '
+                          'y te canalizo con nuestro equipo.'),
                 'options': [{
                     'value': group.id,
                     'label': group._visar_wizard_label(),
@@ -2133,6 +2151,11 @@ class AppointmentType(models.Model):
                     # no tendria respuesta valida -el bucle que obligo a
                     # anadirla-. Lo unico que pidio Visar es no pintarla.
                     'oculta': True,
+                    # Y CUAL es la salida lo dice Odoo, no el canal. Ver el
+                    # paso de poliza: el runtime la reconocia corriendo un
+                    # detector de negativos sobre la ETIQUETA, y eso ataba el
+                    # copy de negocio al codigo del runtime.
+                    'salida': True,
                     'keywords': self._visar_vocabulario(
                         vocab, VISAR_STEP_EXTRAS, 'no_gracias'),
                 }],
@@ -2158,8 +2181,19 @@ class AppointmentType(models.Model):
             # justo antes del horario.
             options.append({
                 'value': VISAR_POLIZA_NONE,
-                'label': _('No, gracias'),
-                'description': _('Contrato solo este servicio'),
+                # Visar, 11-sep-2026: el cliente tiene que leer QUE pierde si
+                # no contrata poliza, y "No, gracias" no lo dice. La fila ya no
+                # es un "no": es la otra cosa que puede comprar.
+                #
+                # Y por eso viaja `salida`. El canal reconocia esta fila
+                # corriendo un detector de NEGATIVOS sobre su etiqueta, asi que
+                # renombrarla a secas dejaba el paso sin forma de decir que no
+                # -el mismo bucle que obligo a crear la fila-. Con la bandera,
+                # el copy se edita aqui sin tocar el runtime.
+                'label': _('Un solo servicio'),
+                'description': _('Pago único, no incluye visitas de refuerzo '
+                                 'ni garantía'),
+                'salida': True,
                 # Vacío en el código, y esa es la gracia: `extras` necesitó un
                 # despliegue para aprender "nel" y esta fila puede aprenderlo
                 # desde Odoo. Ver `_VISAR_POLIZA_KEYWORDS`.
