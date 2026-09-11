@@ -835,3 +835,45 @@ Directions más en `visar_field_app` (`driving-traffic` en `project_task.py`, `d
 un refactor sin síntoma que lo pida. Lo que sí conviene tener presente: **comparten token**
 (`web_map.token_map_box`) y por tanto **comparten cupo** de peticiones — si algún día una agota
 el límite, la otra se entera. Quien lo toque, que traiga un motivo mejor que la simetría.
+
+## [DECIDIDA E IMPLEMENTADA — 11-sep-2026] La etapa dice qué hacer con el servicio; no se deduce de `fold`
+
+El agente deducía de `stage_id.fold`: etapa cerrada = servicio terminado. Es una inferencia
+razonable y estaba **mal** para el caso que más importa. La etapa nativa de FSM
+`planning_project_stage_4` se llama *"Cancelled"* en Odoo, **Visar la usa como "Incidencia —
+Reprogramar"** y viene marcada como cerrada — así que una cita pendiente **con fecha futura** le
+salía al cliente bajo *"servicios anteriores"*. Y por la decisión del 4-sep de aquí arriba,
+**Visar no cancela servicios**: los reprograma.
+
+**Se resolvió con configuración en la etapa, no dándole la vuelta al `fold`.** `project.task.type`
+gana `visar_agent_bucket` (`auto` / `upcoming` / `history`) y `visar_agent_label` (lo que lee el
+**cliente**; vacío = el nombre de la etapa, que está escrito para el staff). Pantalla en *Agente
+WhatsApp → Etapas de servicio*.
+
+Por qué así y no tocando `fold`: ese campo lo usan el kanban de operaciones y la app de campo, y
+moverlo para contentar al chat habría cambiado el trabajo de gente que no pidió nada. Y porque
+el valor de fábrica (`auto`) **conserva el comportamiento anterior**: instalar esto no cambia
+nada por su cuenta. En producción solo la etapa 20 está configurada; las otras 26 siguen en
+`auto`. Si mañana crean una etapa, se configura desde la pantalla y **no hace falta desplegar**.
+
+## [DECIDIDA E IMPLEMENTADA — 11-sep-2026] Cuál es la fila de SALIDA lo dice Odoo, no la adivina el runtime
+
+Los pasos `extras` y `poliza` llevan una fila de "no quiero nada de esto" — sin ella el paso es
+una pregunta sin respuesta válida en un chat. El runtime la encontraba corriendo un **detector de
+negativos sobre su etiqueta**, y eso ataba el copy de negocio al código del canal: en cuanto Visar
+renombró la de póliza a **"Un solo servicio"** —para que diga qué pierde quien no contrata— el
+paso se quedó sin forma de decir que no. Exactamente el bucle que obligó a crear la fila.
+
+Ahora la fila viaja con **`salida: True`**. La etiqueta sigue valiendo de respaldo, y ese orden es
+deliberado: un Odoo sin la bandera se comporta igual que ayer. Degradar, nunca romper.
+
+⚠️ **Quien renombre esa fila tiene que añadir el nombre nuevo a `_VISAR_POLIZA_KEYWORDS`.** No es
+higiene: medido contra el catálogo real, *"un solo servicio"* elegía el plan *"3 servicios:
+Servicio plaga recurrente"* —la misma raíz "servic"— y **contrataba una suscripción**. Contestar
+copiando lo que se ve en pantalla es la forma más natural de contestar.
+
+> **Lo que se probó y se descartó:** excluir del clasificador la etiqueta de la fila de salida,
+> para que no compitiera con el nombre de los planes. Se midió antes de quedárselo y era
+> **dañino** — rompía justo el caso de copiar la etiqueta— y el beneficio que se le suponía no
+> existía: nombrar un plan gana igual con y sin la exclusión. El diario está en §26 de
+> `visar_fastapi/.context/85-motor-de-flujos-agendado.md`.

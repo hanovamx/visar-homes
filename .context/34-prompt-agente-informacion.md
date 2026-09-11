@@ -87,7 +87,49 @@ esta versión ni tiene por qué serlo.
 
 ---
 
-## Qué cambió en esta versión (3-sep-2026)
+## Qué cambió en esta versión (11-sep-2026)
+
+Segunda tanda de feedback de Visar, aplicada al prompt **vivo** de `visar-db` con
+`visar_fastapi/deploy/prompt-feedback2-11sep.py`: reemplazos **puntuales** sobre
+el cuerpo vigente, nunca un fichero entero, porque el negocio edita estos prompts
+desde Odoo. Si un ancla no aparece exactamente una vez, el script no escribe
+nada. Seis cambios:
+
+- **Los metros, con salida** (§3). Al **pedirlos** se dice en el mismo mensaje
+  que no pasa nada si no los sabe. Es la pregunta donde más gente abandona: quien
+  no sabe su medida y no ve salida, se va. El "de uno en uno" que ya estaba
+  resuelve al que se queda; esto es para el que se iba antes de llegar ahí.
+- **Hogar vs negocio** (memoria de `info`). Una línea diciendo que por aquí se
+  atienden servicios para hogar y que un negocio se canaliza. **Es una invitación
+  y no una pregunta**: preguntárselo a todos costaría una pregunta a los clientes
+  de casa, que son casi todos. En la ruta de agendar lo dice el cuestionario, no
+  el prompt (la pista del paso `services`).
+- **"Visar Homes", no "Visar"** — 14 menciones sueltas en los siete registros. Se
+  aplicó por regex con un negativo (`(?! Homes)`) para que sea idempotente y para
+  que no se escape ninguna. Los dos textos que escribe el **código** (saludo y
+  despedida del menú) se arreglaron aparte, en `menu.py`.
+- **Cuando la fecha u hora que pide no está** (§9). Disculpa breve, decirlo sin
+  rodeos, ofrecer de inmediato la más cercana de la disponibilidad **real** (una,
+  o como mucho dos) y cerrar con **una** pregunta. Nunca explicar cómo funciona
+  la agenda ni repetir la lista completa. ⚠️ Esto es la **barandilla**: quien
+  contesta de verdad es el código del runtime, que sí ve la agenda (§26 de
+  `visar_fastapi/.context/85-motor-de-flujos-agendado.md`).
+- **El jardín antes del precio** (§2e). Si dice exterior o los dos, se piden los
+  metros del patio **antes** de cotizar. Dar el precio y preguntar el jardín
+  después deja al cliente con una cifra que no va a ser la final.
+- **El combo de áreas verdes, solo cuando de verdad aplica** (§5). El 50% del
+  corte exige fumigación **interior Y exterior** más corte (`visar.combo.rule`
+  id 1, `discount_factor` 0.5). Con solo interior se puede ofrecer el
+  mantenimiento, pero **no** el descuento: prometer un precio que
+  `quote_service` no va a dar es una queja después.
+
+> El **texto íntegro** de más abajo es el snapshot del **3-sep-2026**. El prompt
+> que corre está en `visar-db` (`visar.agent.prompt`, el registro vigente sin
+> `ruta`), y es el único autoritativo. Para leerlo: *Agente WhatsApp → Prompts*.
+
+---
+
+## Qué cambió en la versión anterior (3-sep-2026)
 
 Del segundo recorrido completo de la conversación, con el agente ya cerrando
 citas. Tres tics y dos reglas de precio:
@@ -118,7 +160,7 @@ cuestionario se lo vuelve a preguntar al cliente.
 
 ---
 
-## Qué cambió en la versión anterior (20-ago-2026)
+## Qué cambió antes (20-ago-2026)
 
 El agendado por WhatsApp ya funciona de principio a fin, y el prompt seguía
 diciendo lo contrario. En el primer uso real el cliente pidió cotización,
@@ -156,6 +198,13 @@ agendan por aquí**.
 > así que ese archivo **es** su copia de referencia versionada y un `-u` no las
 > vuelve a pisar. Este archivo sigue siendo la copia del base, que no se siembra
 > (sembrarlo crearía un segundo candidato a base en producción).
+
+> ⚠️ **Este texto es el snapshot del 3-sep-2026, y ya NO es lo que corre.** Sobre
+> él se aplicaron después reemplazos puntuales en la BD (ver "Qué cambió" arriba,
+> 11-sep). Lo autoritativo es el registro vigente sin `ruta` de
+> `visar.agent.prompt` en `visar-db` — *Agente WhatsApp → Prompts*. Deja esta
+> copia como referencia de estructura, no la uses para deducir qué dice hoy el
+> agente: entre otras cosas, aquí la marca todavía se llama "Visar" a secas.
 
 ```
 Eres el asistente de atención a clientes de Visar por WhatsApp.

@@ -1,6 +1,22 @@
 # Estado y roadmap
 
-> Última actualización: **9-sep-2026 00:10** — **visar_appointment 19.0.2.15.0**
+> Última actualización: **11-sep-2026 23:40** — en producción
+> **visar_appointment 19.0.2.18.0** y **visar_whatsapp_agent 19.0.1.17.0**,
+> leídas de la BD después del `-u`. Dos despliegues esa noche, y este archivo
+> llevaba **dos días y 6 commits** sin tocarse: el detalle, en "Feedback del 10 y
+> 11-sep" más abajo.
+> **22:51** — la **etapa** le dice al agente qué hacer con el servicio en vez de
+> deducirlo de `fold`: `project.task.type` gana `visar_agent_bucket` y
+> `visar_agent_label`, con pantalla propia en *Agente WhatsApp → Etapas de
+> servicio*. Con `deploy-etapas-11sep.sh`.
+> **23:38** — la fila de salida del paso de póliza pasa a llamarse **"Un solo
+> servicio"** y viaja con `salida: True`; la pista del paso de servicios avisa
+> que por aquí se agenda **hogar**; y los prompts reciben los puntos 1, 2, 3, 5,
+> 6 y 7 del segundo feedback (metros con salida, hogar/negocio, **"Visar Homes"**
+> en las 14 menciones sueltas, tono cuando no hay fecha u hora, jardín antes del
+> precio, y el combo de áreas verdes **solo cuando de verdad aplica**). Con
+> `visar_fastapi/deploy/deploy-feedback2-11sep.sh`.
+> Anterior: **9-sep-2026 00:10** — **visar_appointment 19.0.2.15.0**
 > en producción: acceso completo a `base.group_system` sobre
 > `visar.agent.vocabulario`, para que quien ve la pantalla (el menú vive bajo
 > Ajustes) pueda guardarla, como en los otros tres modelos de config del agente.
@@ -58,6 +74,47 @@
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Feedback del 10 y 11-sep — **EN PRODUCCIÓN** el 11-sep-2026
+
+> Lo que este archivo no registró durante dos días. Seis commits del lado de
+> Odoo: `eaba145`, `c8cf394` (10-sep), `6cda362`, `49638bb`, `d4ad9b6`,
+> `f91572e` (11-sep).
+
+| Qué se vio | Dónde vive el arreglo |
+|---|---|
+| *"Si no quieres agregar nada, dime que no y seguimos"*: instrucción de máquina, no conversación | paso `extras` sin `hint`; la fila de salida se marca `oculta` y se contesta pero no se pinta |
+| *"Solo este servicio"* **contrataba** una póliza: la raíz "servic" del plan *"3 servicios"* puntuaba y la fila de salida solo la tenía en su descripción | `_VISAR_POLIZA_KEYWORDS` — frases de varias palabras, que `_frase_unica` lee antes que el conteo de raíces |
+| El recontacto de leads fríos no salía | `visar.followup.config` + `crm.lead`: uno por silencio, y la escalada solo cierra **el suyo** |
+| Colgar el chat contaba como "declinó" y cerraba el recontacto de por vida | motivo `cerro`, fuera de `DESCARTES_DEFINITIVOS` |
+| Un servicio **pendiente con fecha futura** salía bajo "servicios anteriores" | `project.task.type`: `visar_agent_bucket` / `visar_agent_label` |
+| *"No, gracias"* no decía qué pierde quien no contrata póliza | fila **"Un solo servicio"** + `salida: True` + su etiqueta en el vocabulario |
+| Quien escribía por su **negocio** se enteraba al final | `hint` del paso `services` |
+
+**Las dos decisiones que valen para más adelante.**
+
+*La etapa manda, no la deducción.* Se deducía de `stage_id.fold`, y la etapa
+nativa `planning_project_stage_4` se llama *"Cancelled"* en Odoo mientras Visar
+la usa como **"Incidencia — Reprogramar"**. Se resolvió con **configuración en la
+etapa**, no dándole la vuelta al `fold`: así el kanban de operaciones y la app de
+campo no se enteran, y el valor de fábrica (`auto`) conserva el comportamiento
+anterior. En producción solo la etapa 20 está configurada; las otras 26 siguen en
+`auto`.
+
+*Cuál es la salida lo dice Odoo.* El runtime la reconocía corriendo un **detector
+de negativos sobre la etiqueta**, así que renombrarla a algo que no es un "no"
+dejaba el paso sin respuesta válida. Ahora viaja `salida: True` y el copy se
+edita aquí. ⚠️ **Si alguien renombra esa fila, el nombre nuevo tiene que entrar en
+`_VISAR_POLIZA_KEYWORDS`**: medido, *"un solo servicio"* elegía el plan
+recurrente —la misma raíz "servic"— y contestar copiando lo que se ve en pantalla
+es la forma más natural de contestar.
+
+**Verificación.** 317 pruebas del módulo (4 nuevas), con los 2 fallos de
+`test_partner_dedupe` que **ya fallaban el 10-sep**, antes de este trabajo, y que
+no toca. 629 del runtime. Cero ERROR/CRITICAL en el log real de Odoo en la
+ventana del despliegue. Suite de producción 105/106 (el `SEC-08` de siempre).
+Marcha atrás: `/var/backups/visar-db_feedback2-11sep_2026-09-11-2338.sql.gz` y
+los prompts aparte en `/opt/visar_fastapi/var/prompts-backup-20260911-233830.tsv`.
 
 ## Vocabulario editable y botón de aplicar — **EN PRODUCCIÓN** el 8-sep-2026
 

@@ -1336,9 +1336,30 @@ continuar—, pero en WhatsApp **el paso ES el menú**: sin una fila de "no", la
 única respuesta válida era contratar, y el cliente que no quería póliza se
 quedaba atrapado justo antes de elegir horario.
 
-Ahora la última opción es siempre "No, gracias" (`VISAR_POLIZA_NONE = 0`). No
-hizo falta tocar la normalización: `_visar_wizard_answer_poliza` ya descartaba
+Ahora la última opción es siempre la de **no contratar** (`VISAR_POLIZA_NONE = 0`).
+No hizo falta tocar la normalización: `_visar_wizard_answer_poliza` ya descartaba
 cualquier valor que no fuera un plan ofrecido.
+
+> **Actualizado el 11-sep-2026 (`f91572e`, visar_appointment 19.0.2.18.0).** Esa
+> fila se llamaba *"No, gracias"*; ahora se llama **"Un solo servicio"**, con el
+> subtítulo *"Pago único, no incluye visitas de refuerzo ni garantía"*. Visar
+> pidió que diga **qué pierde** quien no contrata, en vez de ser solo un "no".
+>
+> El cambio no es cosmético. El runtime reconocía esta fila corriendo un
+> **detector de negativos sobre su etiqueta**, así que un nombre que ya no es un
+> negativo dejaba el paso sin forma de decir que no — exactamente el bucle que
+> obligó a crearla. Por eso la fila viaja ahora con **`salida: True`** (y la de
+> extras también): cuál es la salida **lo dice Odoo**, no lo adivina el canal
+> leyendo prosa, y el copy se edita aquí sin tocar el runtime. El contrato está
+> en `30-odoo-contract.md` del `.context` del runtime.
+>
+> Y la etiqueta entra en su propio `_VISAR_POLIZA_KEYWORDS`. No es redundante:
+> medido contra el catálogo real, *"un solo servicio"* elegía el plan *"3
+> servicios: Servicio plaga recurrente"* —la misma raíz "servic"— y **contrataba
+> una suscripción**. Es el incidente de §4.1 otra vez, provocado por el nombre
+> nuevo. Contestar copiando lo que se ve en pantalla es la forma más natural de
+> contestar, así que si alguien renombra la fila, el nombre nuevo tiene que
+> entrar en esa lista.
 
 De paso, la descripción decía `billing_period_display_sentence` — *"per month"*,
 en **inglés**, porque su fuente es inglesa y se traduce con el idioma del usuario
@@ -1776,7 +1797,7 @@ El canal elegía botones con ≤3 opciones y lista con más. Un reply button **n
 tiene subtítulo**, así que en los pasos cortos la descripción no se degradaba:
 *desaparecía*. Se veía en dos sitios a la vez:
 
-* **Póliza** — dos planes que en el catálogo se llaman igual y un "No, gracias".
+* **Póliza** — dos planes que en el catálogo se llaman igual y la fila de salida.
   Tres opciones → botones, y lo único que distinguía un plan de otro era justo
   esa línea (*"$450.00 al mes · ahorras $150.00"*). Llegaban dos botones idénticos
   y ningún precio.
