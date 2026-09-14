@@ -1,6 +1,17 @@
 # Estado y roadmap
 
-> **12-sep-2026 01:15 — reagenda por incidencia: EN `visar-test`, SIN DESPLEGAR.**
+> **14-sep-2026 23:15 — reagenda por incidencia y plantillas en Odoo: DESPLEGADO en
+> `visar-db`**, fusionado a `main` (todavía sin salida en vivo). En la BD:
+> **visar_base 19.0.1.12.0**, **visar_fsm 19.0.1.3.0**, **visar_appointment
+> 19.0.2.19.0**, **visar_field_app 19.0.1.27.0**, **visar_whatsapp_agent
+> 19.0.1.19.0**. 358 pruebas del módulo y 643 del runtime. La plantilla de cada
+> aviso se elige en *Agente WhatsApp → Configuración → Plantillas de avisos* (todas
+> vacías = todo libre, como antes). Pendiente: que Meta apruebe
+> `visar_reagenda_elegir_horario`, asignarla ahí, y la prueba con una cita real.
+> El primer intento del script de despliegue no corrió el `-u` y dijo "terminado":
+> detalle y arreglo en `visar_fastapi/.context/87-reagendar-citas.md` §2.
+>
+> Anterior: **12-sep-2026 01:15 — reagenda por incidencia: EN `visar-test`, SIN DESPLEGAR.**
 > El botón "Cliente no llegó" pasa de avisar a **dejar que el cliente elija
 > horario**, con botón equivalente en el backend. Sube
 > **visar_base 19.0.1.12.0**, **visar_fsm 19.0.1.3.0**,
