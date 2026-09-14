@@ -838,8 +838,8 @@ class ProjectTask(models.Model):
         horas = Event._visar_reschedule_min_hours()
         text = ("Hola, le saluda Visar Homes. Su técnico%s acudió a su domicilio, "
                 "pero no fue posible realizar el servicio.\n\n"
-                "¿Elegimos un nuevo horario? Toca el botón para ver los horarios "
-                "disponibles.\n\n"
+                "¿Elegimos un nuevo horario? Presione el botón para ver los "
+                "horarios disponibles.\n\n"
                 "_%s_" % (tech, politica))
         return text, [name, horas]
 
