@@ -1,5 +1,36 @@
 # Estado y roadmap
 
+> ## ⚠️ Trabajo en OTRA RAMA: `reagenda-incidencia` (14-sep-2026)
+>
+> **Hasta ahora todo vivía en `main`. Esto no.** La reagenda por incidencia —el
+> botón "Cliente no llegó" deja que el cliente elija horario, con botón
+> equivalente en el backend— está **terminada y probada en `visar-test`, pero
+> SIN desplegar**, y vive en la rama `reagenda-incidencia` de los DOS repos:
+> `/opt/custom` (`f71d7dc`, `0677406`, `86a1308`) y `/opt/visar_fastapi`
+> (`2368621`, `2fc5ce6`, `78a88ee`). **No está en `main` ni en GitHub.**
+>
+> **Por qué en rama y no en `main`:** `/opt/custom` y `/opt/visar_fastapi` son
+> el árbol que **sirve producción**. Con el código nuevo en disco y sin `-u`, un
+> reinicio de `odoo` (reboot, caída, otro despliegue) cargaba un campo sin columna
+> en `visar-db`: probado en un clon exacto de producción, abrir una cita y la
+> lista de servicios del agente fallaban con `UndefinedColumn`. Mientras la
+> función espera la plantilla de Meta, **el disco se queda en `main`**, igual a
+> lo que corre producción.
+>
+> **Qué bloquea el despliegue:** la plantilla `visar_reagenda_elegir_horario`,
+> por crear y aprobar desde el módulo WhatsApp de Odoo (cuenta "Portafolio").
+>
+> **Para retomarlo:**
+> 1. `git checkout reagenda-incidencia` en los dos repos;
+> 2. `visar_fastapi/deploy/deploy-reagenda-12sep.sh` — reinicia el runtime
+>    PRIMERO y luego hace el `-u` (el orden inverso deja avisos `failed`);
+> 3. fusionar a `main` y empujar.
+>
+> ⚠️ **No hacer `-u` ni reiniciar con la rama a medias**, y no dejar la rama
+> desplegada en disco sin su `-u`. `visar-test` **ya** está actualizada a la rama
+> (va por delante de `main`); para probar ahí, cambiar antes de rama. Diseño
+> completo, en la rama: `visar_fastapi/.context/87-reagendar-citas.md` §2.
+
 > Última actualización: **11-sep-2026 23:40** — en producción
 > **visar_appointment 19.0.2.18.0** y **visar_whatsapp_agent 19.0.1.17.0**,
 > leídas de la BD después del `-u`. Dos despliegues esa noche, y este archivo

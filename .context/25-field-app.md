@@ -843,6 +843,10 @@ ruta normal).
 
 ### Reagenda ("Cliente no llegó") — señal a gestión, sin reagendar
 
+> **En `main` y en producción esto sigue siendo cierto.** La rama
+> `reagenda-incidencia` (14-sep-2026, sin desplegar) lo cambia: el botón autoriza
+> la reagenda y el cliente elige horario. Ver la cabecera de `50-status-roadmap.md`.
+
 `_visar_flag_reschedule(employee)`: etapa 4 + `state='1_canceled'` + atribución
 (`visar_reschedule_requested_by_id/_at`) + **actividad** (`activity_schedule('mail.mail_activity_data_todo')`)
 + **siempre** una nota `message_post`. El técnico vuelve a su lista; **gestión** reagenda el calendario
