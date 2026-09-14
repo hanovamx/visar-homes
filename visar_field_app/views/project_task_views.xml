@@ -55,6 +55,25 @@
                 </button>
             </xpath>
 
+            <!-- "Solicitar reagenda al cliente": el equivalente de backend del
+                 botón "Cliente no llegó" de la app de campo, para cuando el
+                 coordinador tiene que arrancarlo él (el cliente llamó, o el
+                 técnico no pudo usar la app).
+
+                 Va en la CABECERA y llama a un método: el envío tiene que colgar
+                 de una acción explícita. Si colgara del valor de la etapa,
+                 arrastrar la tarjeta a "Incidencia — Reprogramar" en el Kanban le
+                 mandaría un WhatsApp a un cliente que no lo pidió. De ahí también
+                 el `confirm`: no es un botón que convenga pulsar sin querer. -->
+            <xpath expr="//header" position="inside">
+                <button name="visar_action_request_reschedule"
+                        type="object"
+                        string="Solicitar reagenda al cliente"
+                        groups="project.group_project_user"
+                        confirm="Se le enviará un WhatsApp al cliente invitándole a elegir un horario nuevo, y el servicio quedará en «Incidencia — Reprogramar». ¿Continuar?"
+                        invisible="not is_fsm or state in ['1_done'] or has_template_ancestor or has_project_template"/>
+            </xpath>
+
             <!-- Atribución del cierre en campo (quién cerró el servicio).
                  La asignación de técnicos vive en visar_fsm; la worksheet y la firma
                  son nativas (industry_fsm) y se ven en sus propias secciones. -->
@@ -82,6 +101,15 @@
                             <field name="visar_worksheet_saved_by_id" readonly="1"/>
                             <field name="visar_field_closed_by_id" readonly="1"/>
                             <field name="visar_field_closed_at" readonly="1"/>
+                        </group>
+                        <!-- Hasta ahora la solicitud de reagenda solo existía en
+                             el chatter y en la actividad: quien abría la tarea no
+                             tenía forma de ver que ya se le había pedido al cliente
+                             elegir horario. -->
+                        <group string="Reagenda solicitada"
+                               invisible="not visar_reschedule_requested_at">
+                            <field name="visar_reschedule_requested_at" readonly="1"/>
+                            <field name="visar_reschedule_requested_by_id" readonly="1"/>
                         </group>
                         <group string="Venta en campo (upsell)">
                             <field name="visar_upsell_order_id" readonly="1"/>

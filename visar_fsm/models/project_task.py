@@ -95,3 +95,68 @@ class ProjectTask(models.Model):
             label = ' + '.join(groups.mapped('name'))
             order_name = task.sale_order_id.name or ''
             task.name = '%s - %s' % (order_name, label) if order_name else label
+
+    # ==================================================================
+    # Puente tarea ↔ cita, y vuelta a "Programado"
+    # ==================================================================
+    # Los dos viven aquí, en el módulo común, y no en `visar_field_app` ni en
+    # `visar_appointment`: esos dos son HERMANOS (ninguno depende del otro) y
+    # ambos los necesitan. La app de campo para autorizar la reagenda al pulsar
+    # "cliente no llegó"; `visar_appointment` para devolver la tarea a su sitio
+    # cuando el cliente acaba de elegir horario nuevo.
+
+    def _visar_calendar_event(self):
+        """La cita de la que nace este servicio externo, o vacío.
+
+        **No existe ningún `project.task.visar_event_id`.** El puente real es
+        indirecto, por la línea de la orden (`sale.order.line.calendar_event_id`),
+        y es el mismo camino que recorre `_visar_sync_fsm_tasks` en sentido
+        contrario. Se devuelve un recordset —no un id— para que quien llame pueda
+        encadenar sin comprobar nada.
+        """
+        self.ensure_one()
+        return self.visar_sale_line_ids.mapped('calendar_event_id')[:1]
+
+    def _visar_back_to_scheduled(self):
+        """Devuelve a "Programado" una tarea que estaba cancelada por incidencia.
+
+        Es la otra mitad de mover la cita: sin esto la tarea se queda en
+        *Incidencia — Reprogramar* con `state='1_canceled'` y una fecha futura, o
+        sea invisible para el técnico, que es exactamente el estado que el
+        reagendado existe para deshacer.
+
+        Solo toca las tareas que **están** canceladas: una tarea ya completada no
+        se reabre porque alguien mueva la cita, y una que sigue programada no
+        necesita nada.
+        """
+        # xmlid NATIVO de Field Service (etapa 0 = Programado): disponible desde
+        # cualquier módulo, y por eso no hace falta el helper de `visar_field_app`.
+        stage = self.env.ref(
+            'industry_fsm.planning_project_stage_0', raise_if_not_found=False)
+        for task in self:
+            if task.state != '1_canceled':
+                continue
+            vals = {'state': '01_in_progress'}
+            if stage:
+                vals['stage_id'] = stage.id
+            # La solicitud de reagenda queda ATENDIDA, y borrarla no es limpieza
+            # cosmética: el guardia de doble pulsación de la app de campo se mira
+            # en `visar_reschedule_requested_at`, así que dejándola puesta un
+            # SEGUNDO no-show de la misma tarea no le mandaría nada al cliente —
+            # el técnico pulsaría el botón y no pasaría nada visible.
+            #
+            # Los campos los define `visar_field_app`, que es un módulo HERMANO:
+            # se comprueba que existan en vez de depender de él.
+            for campo in ('visar_reschedule_requested_at',
+                          'visar_reschedule_requested_by_id'):
+                if campo in task._fields:
+                    vals[campo] = False
+            task.sudo().write(vals)
+            # Rastro para oficina: la actividad de "reagendar" sigue abierta y
+            # quien la cierre tiene que poder ver que ya se resolvió sola.
+            try:
+                task.sudo().message_post(body=(
+                    "El cliente eligió un horario nuevo: el servicio vuelve a "
+                    "<b>Programado</b> con la fecha actualizada."))
+            except Exception:  # noqa: BLE001 - la nota es rastro, no el trabajo
+                pass

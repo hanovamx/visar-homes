@@ -219,3 +219,180 @@ class TestAgentReschedule(TransactionCase):
         self.assertIn(linea.product_id.product_tmpl_id.name, nombres)
         if linea.product_id.product_template_attribute_value_ids:
             self.assertNotIn(linea.product_id.display_name, nombres)
+
+
+@tagged('post_install', '-at_install')
+class TestReagendaPorIncidencia(TestAgentReschedule):
+    """La reagenda que autoriza VISAR, no la que pide el cliente por gusto.
+
+    El tecnico acudio al domicilio y no se pudo prestar el servicio. Es un caso
+    aparte porque **las reglas de la reagenda normal lo hacen imposible**: tras el
+    no-show la cita ya esta en el pasado, asi que `_visar_reschedule_blocked`
+    contesta 'ya_paso' a un cliente al que Visar acaba de invitar a elegir
+    horario. Lo que se prueba aqui es que la autorizacion abre exactamente esa
+    puerta y **ninguna otra**.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Una tarea SIN proyecto es privada, y ahi `stage_id` es la etapa
+        # PERSONAL del usuario: escribirla revienta. Devolver la tarea a
+        # "Programado" es media prueba de esta clase, asi que hace falta proyecto.
+        cls.project = cls.env['project.project'].create({
+            'name': 'FSM Incidencia Reagenda', 'is_fsm': True,
+            'company_id': cls.env.company.id})
+
+    def _autorizada(self, dentro_de_horas=72):
+        evento, pedido = self._cita(dentro_de_horas=dentro_de_horas)
+        evento.write({'visar_reschedule_granted_at': fields.Datetime.now()})
+        return evento, pedido
+
+    # --- Lo que la autorizacion SI abre --------------------------------
+
+    def test_sin_autorizacion_una_cita_pasada_no_se_puede_mover(self):
+        """La linea base: sin esto el resto de la clase no significa nada."""
+        evento, _pedido = self._cita(dentro_de_horas=-2)
+        self.assertEqual(evento._visar_reschedule_blocked(), 'ya_paso')
+
+    def test_autorizada_una_cita_pasada_si_se_puede_mover(self):
+        """Es la razon de existir de todo esto: tras un no-show la cita SIEMPRE
+        esta en el pasado."""
+        evento, _pedido = self._cita(dentro_de_horas=-2)
+        evento.write({'visar_reschedule_granted_at': fields.Datetime.now()})
+        self.assertIsNone(evento._visar_reschedule_blocked())
+
+    def test_autorizada_se_salta_la_antelacion_de_la_cita_actual(self):
+        """La punta 1 existe para que el cliente no deshaga la ruta del dia
+        avisando tarde. Aqui la ruta ya se deshizo."""
+        evento, _pedido = self._cita(dentro_de_horas=3)
+        self.assertEqual(evento._visar_reschedule_blocked(), 'muy_proxima')
+        evento.write({'visar_reschedule_granted_at': fields.Datetime.now()})
+        self.assertIsNone(evento._visar_reschedule_blocked())
+
+    # --- Lo que la autorizacion NO abre --------------------------------
+
+    def test_el_horario_NUEVO_sigue_exigiendo_la_antelacion(self):
+        """Decision de negocio: elegir para dentro de dos horas desordena la ruta
+        del tecnico venga de una incidencia o de un capricho."""
+        evento, _pedido = self._autorizada(dentro_de_horas=-2)
+        pronto = fields.Datetime.add(fields.Datetime.now(), hours=3)
+        self.assertEqual(
+            evento._visar_reschedule_blocked(nuevo_inicio=pronto), 'muy_proxima')
+        ok, motivo = evento._visar_reschedule(
+            pronto, fields.Datetime.add(pronto, hours=1))
+        self.assertFalse(ok)
+        self.assertEqual(motivo, 'muy_proxima')
+
+    def test_el_tope_de_cambios_sigue_aplicando(self):
+        """Decision explicita del 12-sep-2026: la incidencia consume uno de los
+        cambios del cliente. Agotados, lo atiende un asesor."""
+        evento, _pedido = self._autorizada(dentro_de_horas=-2)
+        evento.visar_reschedule_count = 2
+        self.assertEqual(evento._visar_reschedule_blocked(), 'limite')
+
+    def test_una_poliza_sigue_fuera_de_alcance(self):
+        """Una visita de poliza no tiene cita que mover: es *agendar* lo que
+        nunca tuvo fecha, y eso es otro requerimiento."""
+        evento, pedido = self._autorizada(dentro_de_horas=-2)
+        plan = self.env['sale.subscription.plan'].search([], limit=1)
+        if not plan:
+            self.skipTest("la BD no tiene planes de suscripcion configurados")
+        # Odoo rechaza un plan sin producto recurrente ("Please add a recurring
+        # product in the subscription or remove the recurring plan"), asi que el
+        # producto de la linea tiene que serlo.
+        pedido.order_line[0].product_id.product_tmpl_id.write(
+            {'recurring_invoice': True})
+        pedido.write({'plan_id': plan.id})
+        self.assertEqual(evento._visar_reschedule_blocked(), 'poliza')
+
+    # --- La autorizacion se consume ------------------------------------
+
+    def test_mover_consume_la_autorizacion(self):
+        """Si no se borrara, una cita con incidencia quedaria movible para
+        siempre sin antelacion y sin tope."""
+        evento, _pedido = self._autorizada(dentro_de_horas=-2)
+        nuevo = fields.Datetime.add(fields.Datetime.now(), hours=96)
+        ok, motivo = evento._visar_reschedule(
+            nuevo, fields.Datetime.add(nuevo, hours=1))
+        self.assertTrue(ok, motivo)
+        self.assertFalse(evento.visar_reschedule_granted_at)
+
+    # --- La tarea vuelve a su sitio ------------------------------------
+
+    def test_la_MISMA_tarea_vuelve_a_programado(self):
+        """No se crea ninguna tarea nueva: la de siempre recupera fecha y etapa.
+
+        `_visar_sync_fsm_tasks` solo escribe fechas y tecnicos, asi que sin esto
+        el cliente ya tiene horario nuevo y el tecnico no ve el servicio: se
+        queda cancelado en "Incidencia — Reprogramar" con una fecha futura.
+        """
+        evento, pedido = self._autorizada(dentro_de_horas=-2)
+        tarea = self.env['project.task'].create({
+            'name': 'Tarea con incidencia',
+            'project_id': self.project.id,
+            'planned_date_begin': evento.start,
+            'date_deadline': evento.stop,
+            'state': '1_canceled',
+        })
+        pedido.order_line[0].task_id = tarea.id
+        etapa_incidencia = self.env.ref(
+            'industry_fsm.planning_project_stage_4', raise_if_not_found=False)
+        if etapa_incidencia:
+            tarea.stage_id = etapa_incidencia.id
+
+        nuevo = fields.Datetime.add(fields.Datetime.now(), hours=96)
+        ok, motivo = evento._visar_reschedule(
+            nuevo, fields.Datetime.add(nuevo, hours=1))
+        self.assertTrue(ok, motivo)
+
+        self.assertEqual(tarea.planned_date_begin, nuevo, "fecha nueva")
+        self.assertEqual(tarea.state, '01_in_progress', "ya no esta cancelada")
+        etapa_programado = self.env.ref(
+            'industry_fsm.planning_project_stage_0', raise_if_not_found=False)
+        if etapa_programado:
+            self.assertEqual(tarea.stage_id, etapa_programado)
+        # Y sigue siendo UNA tarea, no dos.
+        self.assertEqual(len(pedido.order_line[0].task_id), 1)
+
+    def test_una_tarea_completada_no_se_reabre(self):
+        """Mover la cita no puede resucitar un servicio que ya se presto."""
+        evento, pedido = self._autorizada(dentro_de_horas=-2)
+        tarea = self.env['project.task'].create({
+            'name': 'Tarea ya cerrada', 'project_id': self.project.id,
+            'state': '1_done'})
+        pedido.order_line[0].task_id = tarea.id
+        nuevo = fields.Datetime.add(fields.Datetime.now(), hours=96)
+        evento._visar_reschedule(nuevo, fields.Datetime.add(nuevo, hours=1))
+        self.assertEqual(tarea.state, '1_done')
+
+    # --- Una reagenda normal no toca la etapa --------------------------
+
+    def test_sin_incidencia_no_se_reabre_ninguna_etapa(self):
+        """Un cliente que mueve su cita por gusto no tiene nada que reabrir."""
+        evento, pedido = self._cita(dentro_de_horas=72)
+        tarea = self.env['project.task'].create({
+            'name': 'Tarea normal', 'project_id': self.project.id,
+            'state': '1_canceled'})
+        pedido.order_line[0].task_id = tarea.id
+        nuevo = fields.Datetime.add(fields.Datetime.now(), hours=96)
+        ok, motivo = evento._visar_reschedule(
+            nuevo, fields.Datetime.add(nuevo, hours=1))
+        self.assertTrue(ok, motivo)
+        self.assertEqual(tarea.state, '1_canceled',
+                         "solo la incidencia devuelve la tarea a Programado")
+
+    # --- La politica, en un solo sitio ---------------------------------
+
+    def test_la_politica_dice_las_horas_configuradas(self):
+        """Estaba escrita a mano ("24 horas") en la confirmacion por WhatsApp, asi
+        que cambiar el ajuste dejaba la frase mintiendole al cliente."""
+        Param = self.env['ir.config_parameter'].sudo()
+        Param.set_param('visar.reschedule.min_hours', '48')
+        try:
+            texto = self.Event._visar_reschedule_policy_text()
+            self.assertIn('48', texto)
+            self.assertNotIn('24 horas', texto)
+            self.assertIn('no son cancelables', texto)
+        finally:
+            Param.set_param('visar.reschedule.min_hours', '24')

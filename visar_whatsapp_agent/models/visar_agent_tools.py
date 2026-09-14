@@ -1595,10 +1595,10 @@ class VisarAgentTools(models.AbstractModel):
         if not event:
             return self.env['calendar.event'].browse(), 'not_found'
 
-        lineas = self.env['sale.order.line'].sudo().search([
-            ('calendar_event_id', '=', event.id),
-        ])
-        if partner not in lineas.mapped('order_id.partner_id'):
+        # La regla vive en `calendar.event` (modulo comun): la app de campo la
+        # necesita tambien, para no invitar a reagendar a un numero al que luego
+        # este mismo metodo le diria que la cita no es suya.
+        if partner not in event._visar_appointment_partners():
             return self.env['calendar.event'].browse(), 'not_found'
         return event, None
 

@@ -1,6 +1,23 @@
 # Estado y roadmap
 
-> Última actualización: **11-sep-2026 23:40** — en producción
+> **12-sep-2026 01:15 — reagenda por incidencia: EN `visar-test`, SIN DESPLEGAR.**
+> El botón "Cliente no llegó" pasa de avisar a **dejar que el cliente elija
+> horario**, con botón equivalente en el backend. Sube
+> **visar_base 19.0.1.12.0**, **visar_fsm 19.0.1.3.0**,
+> **visar_appointment 19.0.2.19.0**, **visar_field_app 19.0.1.27.0** y
+> **visar_whatsapp_agent 19.0.1.18.0** (versiones **del árbol**, no de la BD de
+> producción). 337 pruebas del módulo y 635 del runtime en `visar-test`; las 2 de
+> `TestBookingDedupe` que fallan ya fallaban antes.
+> ⚠️ **El código está en disco en `/opt/custom` y `/opt/visar_fastapi`, que son
+> los que sirven a producción.** Un reinicio de `odoo` antes del `-u` en
+> `visar-db` dejaría `calendar.event.visar_reschedule_granted_at` sin columna.
+> Falta además la plantilla `WA_TEMPLATE_RESCHEDULE_OFFER` en Meta y el E2E con
+> una cita real. Diseño en `visar_fastapi/.context/87-reagendar-citas.md` §2.
+> **Se descartó la liga de portal del documento de diseño**: el portal nativo de
+> Odoo no reprograma, solo cancela — y con `has_payment_step` en 11 de 12 tipos
+> de cita ni eso (`min_cancellation_hours` es código muerto ahí).
+>
+> Anterior: **11-sep-2026 23:40** — en producción
 > **visar_appointment 19.0.2.18.0** y **visar_whatsapp_agent 19.0.1.17.0**,
 > leídas de la BD después del `-u`. Dos despliegues esa noche, y este archivo
 > llevaba **dos días y 6 commits** sin tocarse: el detalle, en "Feedback del 10 y

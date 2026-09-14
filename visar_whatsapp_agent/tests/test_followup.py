@@ -318,7 +318,8 @@ class TestFollowupContrato(TransactionCase):
     def test_el_endpoint_es_el_del_recontacto(self):
         """No reusa `/booking-event`: aquel reenvia texto, este pide redaccion."""
         self.assertEqual(
-            self.env['visar.wa.lead.message']._visar_wa_endpoint(),
+            self.env['visar.wa.lead.message']._visar_wa_endpoint(
+                'lead_followup'),
             '/internal/lead-followup')
 
 

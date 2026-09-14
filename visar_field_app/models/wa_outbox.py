@@ -25,7 +25,19 @@ TEMPLATE_KEYS = [
     ('enroute', "Técnico en camino"),
     ('arrived', "Técnico llegó"),
     ('reschedule', "Reagendar (cliente no llegó)"),
+    ('reschedule_offer', "Reagendar — el cliente elige horario"),
 ]
+
+# `reschedule_offer` no es un texto más: el cliente tiene que poder CONTESTARLO.
+# Va a `/internal/booking-event`, que primero deja la conversación apuntando a la
+# cita que hay que mover y luego envía, para que el "sí" siguiente aterrice en el
+# flujo de reagenda y no en el menú principal.
+#
+# `reschedule` (el aviso pasivo de siempre) se queda como red para las tareas sin
+# cita resoluble: ahí no hay autoservicio que ofrecer y prometerlo sería peor.
+ENDPOINTS = {
+    'reschedule_offer': '/internal/booking-event',
+}
 
 # Vida útil de cada aviso, en minutos. Sale de para qué sirve el mensaje, no de un
 # número redondo: el "ya llegué" acompaña una ventana de espera de ~10 min, así que
@@ -34,6 +46,9 @@ TTL_MINUTES = {
     'enroute': 30,
     'arrived': 15,
     'reschedule': 24 * 60,
+    # Lo mismo que el pasivo: el cliente se quedó sin servicio hoy y la
+    # invitación a elegir horario sigue siendo verdad mañana por la mañana.
+    'reschedule_offer': 24 * 60,
 }
 DEFAULT_TTL_MINUTES = 30
 
@@ -65,14 +80,31 @@ class VisarWaMessage(models.Model):
     def _visar_wa_cron_xmlid(self):
         return 'visar_field_app.visar_wa_outbox_cron'
 
+    @api.model
+    def _visar_wa_endpoints(self):
+        return ENDPOINTS
+
     def _visar_wa_chatter(self):
         self.ensure_one()
         return self.task_id
 
     def _visar_wa_context(self):
-        # Solo para trazas del runtime: permite cruzar el envío con la tarea.
         self.ensure_one()
-        return {'task_id': self.task_id.id}
+        # `task_id` es solo para trazas del runtime: permite cruzar el envío con
+        # la tarea en los logs.
+        contexto = {'task_id': self.task_id.id}
+        if self.template_key == 'reschedule_offer':
+            # Este sí es funcional: el runtime necesita saber QUÉ cita se está
+            # invitando a mover, para poder dejar la conversación apuntando a
+            # ella. Sin el id, el "sí" del cliente tendría que adivinar cuál de
+            # sus servicios es, y el modelo nunca ve los ids de las citas.
+            #
+            # Se resuelve al ENVIAR y no al encolar a propósito: entre una cosa y
+            # otra puede pasar el cron, y lo que importa es la cita que cuelga de
+            # la tarea ahora.
+            evento = self.task_id._visar_calendar_event()
+            contexto['event_id'] = evento.id or None
+        return contexto
 
     # ------------------------------------------------------------------
     # Encolar

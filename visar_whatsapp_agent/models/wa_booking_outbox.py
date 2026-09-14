@@ -74,10 +74,10 @@ class VisarWaBookingMessage(models.Model):
         return 'visar_whatsapp_agent.visar_wa_booking_outbox_cron'
 
     @api.model
-    def _visar_wa_endpoint(self):
-        # No es solo un texto: el runtime tiene que dejar la conversación lista
-        # para lo que sigue (volver a elegir horario, o cerrar la reserva).
-        return '/internal/booking-event'
+    def _visar_wa_endpoints(self):
+        # Ninguno es solo un texto: el runtime tiene que dejar la conversación
+        # lista para lo que sigue (volver a elegir horario, o cerrar la reserva).
+        return {clave: '/internal/booking-event' for clave, _ in TEMPLATE_KEYS}
 
     def _visar_wa_chatter(self):
         """`calendar.booking` no tiene chatter; la nota va al cliente.
