@@ -841,18 +841,35 @@ ruta normal).
 - Configuración: `ir.config_parameter visar_field.waiting_minutes` (default **10** por código,
   overrideable en Parámetros del sistema); helpers `_default_waiting_minutes` / `_coerce_waiting_minutes`.
 
-### Reagenda ("Cliente no llegó") — señal a gestión, sin reagendar
+### Reagenda ("Cliente no llegó") — ahora el cliente SÍ elige horario
 
-> **En `main` y en producción esto sigue siendo cierto.** La rama
-> `reagenda-incidencia` (14-sep-2026, sin desplegar) lo cambia: el botón autoriza
-> la reagenda y el cliente elige horario. Ver la cabecera de `50-status-roadmap.md`.
-
-`_visar_flag_reschedule(employee)`: etapa 4 + `state='1_canceled'` + atribución
-(`visar_reschedule_requested_by_id/_at`) + **actividad** (`activity_schedule('mail.mail_activity_data_todo')`)
-+ **siempre** una nota `message_post`. El técnico vuelve a su lista; **gestión** reagenda el calendario
-en el backend. Asignado de la actividad: `user_ids → visar_sale_order_id.user_id (vendedor) →
+`_visar_flag_reschedule(employee=None, forzar_aviso=False, origen=...)`: etapa 4 +
+`state='1_canceled'` + atribución (`visar_reschedule_requested_by_id/_at`) +
+**actividad** (`activity_schedule('mail.mail_activity_data_todo')`) + **siempre** una nota
+`message_post`. Asignado de la actividad: `user_ids → visar_sale_order_id.user_id (vendedor) →
 project_id.user_id (PM)` — porque los técnicos **no tienen usuario**, `user_ids` suele estar vacío
 (verificado: cae al vendedor).
+
+> **Cambió el 12-sep-2026.** Antes esto era solo una señal a gestión: el cliente recibía
+> *"nos pondremos en contacto"* y el calendario lo rehacía alguien a mano. Ahora el mismo
+> botón **autoriza la reagenda** en la cita (`calendar.event.visar_reschedule_granted_at`) y
+> encola `reschedule_offer`, que lleva al cliente al flujo de reagenda del agente para que
+> elija entre los horarios realmente libres. Sin la autorización el flujo era imposible: tras
+> el no-show la cita está en el pasado y `_visar_reschedule_blocked` contesta `'ya_paso'`.
+> Al confirmar, **la misma tarea** recupera fecha y vuelve a *Programado*. Diseño completo en
+> `/opt/visar_fastapi/.context/87-reagendar-citas.md` §2.
+>
+> Una tarea **sin cita ligada** sigue recibiendo el aviso pasivo (`reschedule`): ahí no hay
+> horarios que ofrecer, y prometer un botón que no existe es peor que decir "te contactamos".
+>
+> Existe además un botón equivalente en el backend (`visar_action_request_reschedule`, en la
+> cabecera de la tarea) para cuando el coordinador tiene que arrancarlo él. **Reutiliza** el
+> mismo método, con `forzar_aviso=True`: el guardia de doble pulsación protege al técnico que
+> toca dos veces la pantalla, no al coordinador que pide el envío a propósito.
+>
+> ⚠️ El envío cuelga de la **acción**, nunca del valor de la etapa. Arrastrar la tarjeta a
+> *Incidencia — Reprogramar* en el Kanban **no manda nada**, y hay una prueba de regresión
+> que lo vigila (`visar_field_app/tests/test_reschedule_request.py`).
 
 ### Validación de cierre
 
@@ -1398,6 +1415,9 @@ secundario de un cambio de etapa**: si se mandaran en línea, un WhatsApp lento 
   caducar dejaba los `failed` en silencio (lo detectó la prueba de la máquina de estados).
 - **Reintento manual, no automático, desde la vista de oficina**: reenviar un aviso viejo solo tiene
   sentido si alguien confirma que sigue siendo verdad.
+- > **14-sep-2026 (rama `reagenda-incidencia`):** las `WA_TEMPLATE_*` de esta sección ya no se
+  > configuran en el `.env`: la plantilla de cada aviso se asigna en *Agente WhatsApp →
+  > Configuración → Plantillas de avisos*. Ver `40-decisions.md`.
 - Menú **App de Campo Visar → Avisos por WhatsApp**, que abre filtrado por **No entregados**: esa
   lista son los clientes a los que hay que llamar.
 

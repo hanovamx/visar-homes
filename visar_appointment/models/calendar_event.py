@@ -44,6 +44,23 @@ DEFAULT_MIN_HOURS = 24
 RESCHEDULE_MAX_PARAM = 'visar.reschedule.max_times'
 DEFAULT_MAX_TIMES = 2
 
+# La frase de politica que se le dice al cliente. Vivia DOS veces: en
+# `appointment.type.message_intro` (editado a mano, solo en la BD, sin nada en git
+# que lo reponga) y palabra por palabra en la confirmacion por WhatsApp
+# (`visar_whatsapp_agent/models/calendar_booking.py`). Y con las "24 horas"
+# escritas a mano en el Python, asi que cambiar `visar.reschedule.min_hours`
+# dejaba la frase MINTIENDO.
+#
+# Ahora el texto es una plantilla con un solo hueco -las horas, que salen de la
+# configuracion- y vive en un parametro editable sin desplegar.
+RESCHEDULE_POLICY_PARAM = 'visar.reschedule.policy_text'
+# Redaccion NEUTRA a proposito (sin "tu" ni "usted"): la leen la confirmacion
+# del agente, que tutea, y los avisos de la app de campo, que hablan de usted.
+DEFAULT_POLICY_TEXT = (
+    "Las citas pagadas no son cancelables ni reembolsables; pero pueden ser "
+    "reprogramadas sin costo con al menos %(horas)s horas de anticipación."
+)
+
 # Motivos por los que una cita NO se puede mover. El agente los traduce a algo
 # que un cliente entienda; aqui son claves estables para poder probarlas.
 MOTIVOS = (
@@ -93,6 +110,23 @@ class CalendarEvent(models.Model):
         except (TypeError, ValueError):
             return DEFAULT_MAX_TIMES
 
+    @api.model
+    def _visar_reschedule_policy_text(self):
+        """La frase de "no cancelable, si reprogramable", con las horas de verdad.
+
+        Un solo sitio para los dos consumidores (la confirmacion de la cita y el
+        aviso de incidencia). Si la plantilla configurada no trae el hueco
+        `%(horas)s` se devuelve tal cual: alguien quiso escribir la frase a su
+        manera y no es tarea de esto discutirselo.
+        """
+        params = self.env['ir.config_parameter'].sudo()
+        plantilla = (params.get_param(RESCHEDULE_POLICY_PARAM)
+                     or DEFAULT_POLICY_TEXT)
+        try:
+            return plantilla % {'horas': self._visar_reschedule_min_hours()}
+        except (KeyError, ValueError, TypeError):
+            return plantilla
+
     # ------------------------------------------------------------------
     # ¿Se puede mover?
     # ------------------------------------------------------------------
@@ -104,6 +138,25 @@ class CalendarEvent(models.Model):
         servicios —para no ofrecer un cambio imposible— y otra vez al confirmar,
         ya con el horario elegido, porque entre una cosa y otra el cliente
         estuvo conversando y el reloj corrio.
+
+        ## Cuando la culpa NO es del cliente
+
+        Con `visar_reschedule_granted_at` puesto —el tecnico acudio y no pudo
+        prestarse el servicio— dos de estas reglas dejan de tener sentido y se
+        omiten:
+
+        * **`ya_paso`**, que de otro modo hace imposible todo el flujo: tras un
+          no-show la cita SIEMPRE esta en el pasado, asi que sin esta excepcion el
+          cliente recibe la invitacion a elegir horario y el sistema le contesta
+          que ya no se puede mover.
+        * **la punta 1** de la antelacion (que falten N horas para la cita
+          ACTUAL), por lo mismo: esa punta existe para que el cliente no deshaga
+          la ruta del dia avisando tarde, y aqui la ruta ya se deshizo.
+
+        Lo que NO se omite, a proposito: `cancelada`, `sin_fecha`, `poliza`,
+        `limite`, y **la punta 2** —el horario NUEVO sigue teniendo que estar a N
+        horas—, porque elegir para dentro de dos horas desordena la ruta del
+        tecnico exactamente igual venga de una incidencia o de un capricho.
         """
         self.ensure_one()
         if not self.active:
@@ -113,14 +166,16 @@ class CalendarEvent(models.Model):
         if self._visar_is_subscription_visit():
             return 'poliza'
 
+        autorizada = bool(self.visar_reschedule_granted_at)
+
         ahora = fields.Datetime.now()
-        if self.start <= ahora:
+        if self.start <= ahora and not autorizada:
             return 'ya_paso'
 
         minimo = self._visar_reschedule_min_hours()
         limite = fields.Datetime.add(ahora, hours=minimo)
         # Punta 1: la cita ACTUAL tiene que estar suficientemente lejos.
-        if self.start < limite:
+        if self.start < limite and not autorizada:
             return 'muy_proxima'
         # Punta 2: y el horario NUEVO tambien. Decision de negocio (ago-2026):
         # un cambio a ultima hora desordena la ruta del tecnico igual de tarde
@@ -159,10 +214,16 @@ class CalendarEvent(models.Model):
             return False, motivo
 
         anterior = self.start
+        # Se lee ANTES del write, que es el que la borra.
+        autorizada = bool(self.visar_reschedule_granted_at)
         self.sudo().write({
             'start': start,
             'stop': stop,
             'visar_reschedule_count': self.visar_reschedule_count + 1,
+            # La autorizacion se CONSUME: cubria este cambio, no los siguientes.
+            # Si no se borrara, una cita con incidencia quedaria movible para
+            # siempre sin antelacion y sin tope.
+            'visar_reschedule_granted_at': False,
         })
 
         # Las fechas de las líneas de reserva son related almacenados y ya
@@ -183,8 +244,27 @@ class CalendarEvent(models.Model):
                     'appointment_resource_ids': [(6, 0, nuevos.ids)]})
 
         self._visar_sync_fsm_tasks()
+        if autorizada:
+            # Venia de una incidencia: la tarea esta cancelada en "Incidencia —
+            # Reprogramar" y hay que devolverla a "Programado", porque
+            # `_visar_sync_fsm_tasks` solo escribe fechas y tecnicos. Sin esto el
+            # cliente ya tiene horario nuevo y el tecnico no ve el servicio.
+            self._visar_reschedule_tasks()._visar_back_to_scheduled()
         self._visar_log_reschedule(anterior)
         return True, None
+
+    def _visar_reschedule_tasks(self):
+        """Las tareas de campo de esta cita. Un solo sitio que sepa el camino.
+
+        El puente es indirecto —por `sale.order.line.calendar_event_id`— y lo
+        necesitan dos cosas: reescribir las fechas y devolver la tarea a
+        "Programado". Antes estaba escrito dentro de `_visar_sync_fsm_tasks`.
+        """
+        self.ensure_one()
+        lineas = self.env['sale.order.line'].sudo().search([
+            ('calendar_event_id', '=', self.id),
+        ])
+        return lineas.mapped('task_id').filtered(lambda t: t.id)
 
     def _visar_sync_fsm_tasks(self):
         """Reescribe fecha y técnicos en las tareas de campo de esta cita.
@@ -194,10 +274,7 @@ class CalendarEvent(models.Model):
         app y sigue viendo la hora vieja — y se presenta cuando no toca.
         """
         self.ensure_one()
-        lineas = self.env['sale.order.line'].sudo().search([
-            ('calendar_event_id', '=', self.id),
-        ])
-        tareas = lineas.mapped('task_id').filtered(lambda t: t.id)
+        tareas = self._visar_reschedule_tasks()
         if not tareas:
             return
 

@@ -11,3 +11,4 @@ from . import visar_followup_config
 from . import crm_lead
 from . import project_task_type
 from . import wa_lead_outbox
+from . import visar_wa_template_route

@@ -99,10 +99,19 @@ class TestWaBookingOutbox(TransactionCase):
 
     def test_el_buzon_apunta_al_endpoint_del_agendado(self):
         """No es solo un texto: el runtime tiene que rebobinar la conversacion."""
-        self.assertEqual(self.Outbox._visar_wa_endpoint(), '/internal/booking-event')
         self.assertEqual(
-            self.env['visar.wa.message'].sudo()._visar_wa_endpoint(),
-            '/internal/send-notification')
+            self.Outbox._visar_wa_endpoint('booking_confirmed'),
+            '/internal/booking-event')
+        # La ruta se resuelve por CLAVE, no por buzon: el de la app de campo
+        # manda avisos de los dos tipos.
+        Campo = self.env['visar.wa.message'].sudo()
+        self.assertEqual(
+            Campo._visar_wa_endpoint('enroute'), '/internal/send-notification')
+        self.assertEqual(
+            Campo._visar_wa_endpoint('reschedule_offer'),
+            '/internal/booking-event',
+            "invitar a elegir horario tiene que dejar la conversacion lista, "
+            "o el 'si' del cliente cae en el menu principal")
 
     def test_encolar_sin_telefono_no_crea_nada(self):
         """Nunca lanza: encolar corre dentro de un cobro y de un cron."""

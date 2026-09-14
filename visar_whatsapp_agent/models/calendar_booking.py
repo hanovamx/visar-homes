@@ -60,14 +60,18 @@ class CalendarBooking(models.Model):
             # aparte: es el único momento en que el cliente la lee, y es justo
             # cuando acaba de pagar. Enterarse el día que quiere cancelar es
             # enterarse tarde.
+            #
+            # El texto NO se escribe aquí. Estaba copiado palabra por palabra —con
+            # las "24 horas" a mano—, así que cambiar `visar.reschedule.min_hours`
+            # dejaba esta frase mintiéndole al cliente. Ahora la compone quien
+            # conoce las horas de verdad.
+            politica = self.env['calendar.event']._visar_reschedule_policy_text()
             texto = (
                 "%s Tu cita quedó confirmada. ✅\n\n"
                 "*%s*\n\n"
                 "Te avisamos cuando el técnico vaya en camino. "
                 "Si necesitas algo, escríbeme por aquí.\n\n"
-                "_Las citas pagadas no son cancelables ni reembolsables. Si "
-                "necesitas cambiar tu cita, puedes reprogramarla sin costo con "
-                "al menos 24 horas de anticipación._" % (saludo, cuando)
+                "_%s_" % (saludo, cuando, politica)
             )
             self.env['visar.wa.booking.message'].sudo()._visar_wa_enqueue(
                 'booking_confirmed', self.visar_wa_phone, texto,

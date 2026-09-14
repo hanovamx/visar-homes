@@ -228,12 +228,13 @@ over **loopback**.
 ⚠️ **Meta's 24-hour window — this is the part that will bite.** A free-form document is only
 delivered if the customer messaged you in the last 24 h, and a customer who booked through the
 web wizard **never messaged**. For production you need an **approved template with a DOCUMENT
-header**, then set in the runtime `.env`:
+header**, then assign it to the notice **"Reporte de servicio firmado"** in Odoo:
 
-```
-WA_REPORT_TEMPLATE=<approved template name>
-WA_REPORT_TEMPLATE_LANG=es_MX
-```
+> **Actualizado 14-sep-2026:** las plantillas ya **no** van en el `.env`. Se asignan en
+> Odoo, en *Agente WhatsApp → Configuración → Plantillas de avisos* (una fila por aviso,
+> la plantilla elegida de las aprobadas en *WhatsApp → Plantillas*), y *Aplicar ahora*.
+> Al guardar se valida que la plantilla tenga las variables, cabecera y botones que el
+> aviso manda. Sin asignar, el aviso sale libre.
 
 Template approval is **Meta lead time**, not a code task — start it early. With the variable
 empty the runtime sends free-form, which is fine to test the transport (message the business
@@ -264,15 +265,18 @@ That failure is visible by design, not silent:
 - the task chatter gets "el cliente NO fue avisado — conviene llamarle", and still carries the
   full text of what the customer *would* have been told.
 
-Create and submit three **text** templates (body parameters, no media header), es_MX, then set
-in the runtime `.env` and restart `visar-fastapi`:
+Create and submit three **text** templates (body parameters, no media header), es_MX, and
+assign each to its notice in Odoo — no `.env`, no restart:
 
-```
-WA_TEMPLATE_ENROUTE=<name>      # {{1}} = technician, {{2}} = ETA minutes
-WA_TEMPLATE_ARRIVED=<name>      # {{1}} = technician, {{2}} = waiting minutes
-WA_TEMPLATE_RESCHEDULE=<name>   # {{1}} = technician
-WA_NOTIFICATION_TEMPLATE_LANG=es_MX
-```
+- *Técnico en camino* — `{{1}}` = technician, `{{2}}` = ETA minutes
+- *Técnico llegó* — `{{1}}` = technician, `{{2}}` = waiting minutes
+- *Reagendar — aviso de contacto* — `{{1}}` = technician
+
+> **Actualizado 14-sep-2026:** las plantillas ya **no** van en el `.env`. Se asignan en
+> Odoo, en *Agente WhatsApp → Configuración → Plantillas de avisos* (una fila por aviso,
+> la plantilla elegida de las aprobadas en *WhatsApp → Plantillas*), y *Aplicar ahora*.
+> Al guardar se valida que la plantilla tenga las variables, cabecera y botones que el
+> aviso manda. Sin asignar, el aviso sale libre.
 
 The current Spanish wording lives in `project_task._visar_msg_enroute` / `_arrived` /
 `_reschedule` — submit text that matches it, so the chatter record and what the customer
@@ -286,7 +290,7 @@ curl -s -X POST 127.0.0.1:8000/internal/send-notification \
   -H "X-Visar-Token: <secret>" -H 'Content-Type: application/json' \
   -d '{"phone":"5281XXXXXXXX","template_key":"enroute","params":["Juan","30"],
        "fallback_text":"prueba"}'
-# 200 {"mode":"template"} = plantilla en uso · {"mode":"free"} = falta configurar esa clave
+# 200 {"mode":"template"} = plantilla en uso · {"mode":"free"} = ese aviso no tiene plantilla asignada en Odoo
 # 502 = Meta rechazó (fuera de la ventana de 24 h, o params que no cuadran con la plantilla)
 ```
 
@@ -323,8 +327,9 @@ Lo que decide cuánto trabajo se repite **no es el número, es la WABA**:
 cron, y el aislamiento loopback. Todo eso es agnóstico del número.
 
 **Lo que sí cambia** al migrar: `WA_PHONE_ID`, `WA_TOKEN`, `WA_APP_ID`, `WA_APP_SECRET`,
-`WA_VERIFY_TOKEN`, el Callback URL en el dashboard de Meta y —si cambia la WABA— los nombres en
-`WA_REPORT_TEMPLATE` / `WA_TEMPLATE_*`.
+`WA_VERIFY_TOKEN`, el Callback URL en el dashboard de Meta y —si cambia la WABA— las plantillas
+asignadas en *Agente WhatsApp → Configuración → Plantillas de avisos* (una plantilla es de una
+cuenta: al guardar se rechaza la de una cuenta que no es la del número del agente).
 
 La redacción de las plantillas sí se conserva como texto: vive en
 `project_task._visar_msg_enroute` / `_arrived` / `_reschedule` y en `_visar_report_whatsapp_caption`,

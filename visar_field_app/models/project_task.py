@@ -387,20 +387,43 @@ class ProjectTask(models.Model):
                 or self.visar_sale_order_id.user_id
                 or self.project_id.user_id)
 
-    def _visar_flag_reschedule(self, employee):
+    def _visar_flag_reschedule(self, employee=None, forzar_aviso=False,
+                               origen="la app de campo"):
         """Marca 'Cliente no llegó': etapa Incidencia—Reprogramar + cancelación,
         actividad para gestión (si hay a quién) y SIEMPRE una nota en el chatter.
-        No reagenda el calendario (eso lo hace gestión en el backend)."""
+
+        **Ahora sí reagenda**, en el sentido que importa: autoriza al cliente a
+        mover la cita él mismo y le manda la invitación para que elija horario.
+        Mover la cita de verdad sigue siendo trabajo de
+        `calendar.event._visar_reschedule`, que es quien sabe arrastrar las líneas
+        de reserva, los técnicos y esta misma tarea.
+
+        Es el ÚNICO sitio donde vive esta transición, y por eso lo llaman los dos
+        orígenes: el botón del técnico en la app de campo y el botón del
+        coordinador en el backend. `employee` es opcional porque quien pulsa
+        desde el backend es el coordinador, que puede no tener ficha de empleado.
+
+        `forzar_aviso` existe para el backend: el guardia de doble pulsación
+        protege al técnico que toca dos veces la misma pantalla, pero un
+        coordinador que pulsa "solicitar reagenda" espera que el mensaje salga.
+
+        **`employee` es quien PIDE la reagenda, no quien acudió al domicilio.**
+        Son dos datos distintos y confundirlos hace mentir a la ficha: desde el
+        backend pulsa el coordinador, y el técnico que fue sigue siendo el de la
+        tarea. El texto del mensaje saca el técnico de `visar_technician_ids`.
+        """
         self.ensure_one()
         # Doble pulsación: si ya se marcó, no se vuelve a avisar al cliente (el
-        # aviso ya está en la cola o entregado).
+        # aviso ya está en la cola o entregado), salvo que lo pidan expresamente.
         already_flagged = bool(self.visar_reschedule_requested_at)
-        self.visar_reschedule_requested_by_id = employee.id
+        if employee:
+            self.visar_reschedule_requested_by_id = employee.id
         self.visar_reschedule_requested_at = fields.Datetime.now()
         self._visar_set_stage(4)
         self.state = '1_canceled'
-        body = ("Reagenda solicitada desde la app de campo por <b>%s</b>: el cliente "
-                "no atendió tras la espera." % (employee.name or ''))
+        quien = (" por <b>%s</b>" % employee.name) if employee and employee.name else ""
+        body = ("Reagenda solicitada desde %s%s: el cliente "
+                "no atendió tras la espera." % (origen, quien))
         assignee = self._visar_reschedule_assignee()
         if assignee:
             self.activity_schedule(
@@ -409,11 +432,79 @@ class ProjectTask(models.Model):
                 summary="Reagendar servicio — cliente no llegó",
                 note=body)
         self.message_post(body=body)
-        # Cerrar el bucle con el cliente: se fue sin servicio y hay que decirle que
-        # se le va a contactar. No promete fecha — reagendar es trabajo de gestión.
-        if not already_flagged:
-            text, params = self._visar_msg_reschedule(employee)
-            self._visar_notify_client(text, event='reschedule', params=params)
+        if already_flagged and not forzar_aviso:
+            return
+        self._visar_request_client_reschedule()
+
+    def _visar_request_client_reschedule(self):
+        """Autoriza la reagenda y le pide al cliente que elija horario.
+
+        Dos avisos posibles, y la diferencia no es cosmética:
+
+        * **Con cita ligada** se autoriza el cambio en el `calendar.event` y sale
+          `reschedule_offer`, que deja la conversación lista para que el cliente
+          elija entre los horarios realmente libres.
+        * **Sin cita** (una tarea que nunca nació de una reserva) no hay
+          autoservicio que ofrecer, así que sale el aviso pasivo de siempre. Es
+          peor prometer un botón que no existe que decir "te contactamos".
+        """
+        self.ensure_one()
+        # El técnico del MENSAJE es quien acudió (el asignado de la tarea), no
+        # quien pulsó el botón: al cliente se le habla del técnico que fue.
+        tecnico = self.visar_technician_ids[:1]
+        evento = self._visar_calendar_event()
+        if not evento:
+            text, params = self._visar_msg_reschedule(tecnico)
+            return self._visar_notify_client(
+                text, event='reschedule', params=params)
+
+        # ¿Reconocerá la reagenda a quien vamos a escribirle? El flujo comprueba
+        # la pertenencia contra el cliente del PEDIDO, y a quien se le escribe es
+        # al contacto de servicio: cuando no coinciden (2 de 80 casos en
+        # producción), el cliente recibiría "¿elegimos otro horario?" y al
+        # contestar "sí" se llevaría un *"no encontré esa cita a tu nombre"*.
+        #
+        # Prometer y luego negar es peor que no prometer, y este cliente ya se
+        # quedó hoy sin servicio. Se cae al aviso pasivo y se avisa a oficina.
+        if self._visar_client_partner() not in evento._visar_appointment_partners():
+            text, params = self._visar_msg_reschedule(tecnico)
+            queued = self._visar_notify_client(
+                text, event='reschedule', params=params)
+            self.message_post(body=(
+                "No se le ofreció elegir horario porque el número al que se le "
+                "escribe no es el cliente del pedido, y la reagenda no lo "
+                "reconocería. Se mandó el aviso de contacto: <b>hay que llamarle "
+                "para reagendar</b>."))
+            return queued
+
+        # La autorización es lo que hace posible el resto: tras el no-show la cita
+        # está en el pasado, y sin esto `_visar_reschedule_blocked` contestaría
+        # 'ya_paso' a un cliente al que acabamos de invitar a elegir horario.
+        evento.sudo().write(
+            {'visar_reschedule_granted_at': fields.Datetime.now()})
+        text, params = self._visar_msg_reschedule_offer(tecnico)
+        return self._visar_notify_client(
+            text, event='reschedule_offer', params=params)
+
+    def visar_action_request_reschedule(self):
+        """Botón de backend: "Solicitar reagenda al cliente".
+
+        Reutiliza la misma transición que el botón de la app de campo en vez de
+        copiarla — dos copias de esta regla divergen en cuanto alguien toca una.
+
+        Cuelga de una acción EXPLÍCITA y no del valor de la etapa: arrastrar la
+        tarjeta a "Incidencia — Reprogramar" en el Kanban no manda nada, para que
+        reorganizar el tablero no le escriba a un cliente que no lo pidió.
+        """
+        for task in self:
+            task._visar_flag_reschedule(
+                # Quien pide la reagenda es quien pulsa: el coordinador. Si no
+                # tiene ficha de empleado no se atribuye a nadie, que es mejor
+                # que atribuirlo al técnico, que no lo pidió.
+                employee=self.env.user.employee_id or None,
+                forzar_aviso=True,
+                origen="el backend")
+        return True
 
     # ==================================================================
     # Reporte PDF desde el backend (mismo que ve el técnico al cerrar)
@@ -506,15 +597,28 @@ class ProjectTask(models.Model):
     # ==================================================================
     # Aviso al cliente (hoy: simulación en chatter; futuro: WhatsApp)
     # ==================================================================
+    def _visar_client_partner(self):
+        """Contacto al que de verdad se le escribe (no siempre `partner_id`).
+
+        Se separó de `_visar_client_phone` porque hace falta saber QUIÉN es, no
+        solo su número: el reagendado comprueba la pertenencia de la cita contra
+        el cliente del PEDIDO, y en producción ese no es el contacto de servicio
+        en 79 de 80 casos.
+        """
+        self.ensure_one()
+        partner = self.partner_id
+        if not partner:
+            return partner
+        return partner if partner.phone else partner.commercial_partner_id
+
     def _visar_client_phone(self):
         """Número del cliente al que se enviaría el aviso. El contacto de servicio
         (entrega) suele no tener teléfono → se cae al cliente comercial. Devuelve
         (display, e164) o ('', '') si no hay."""
         self.ensure_one()
-        partner = self.partner_id
-        if not partner:
+        source = self._visar_client_partner()
+        if not source:
             return '', ''
-        source = partner if partner.phone else partner.commercial_partner_id
         phone = source.phone or ''
         if not phone:
             return '', ''
@@ -707,6 +811,37 @@ class ProjectTask(models.Model):
                 "fue posible realizar el servicio. Nos pondremos en contacto con "
                 "usted para reagendar su cita." % tech)
         return text, [name]
+
+    def _visar_msg_reschedule_offer(self, employee=None):
+        """`(texto, params)` de la invitación a elegir horario nuevo.
+
+        Es el aviso pasivo de siempre **más una pregunta que el sistema sabe
+        contestar**: el "sí" siguiente aterriza en el flujo de reagenda porque
+        este aviso sale por `/internal/booking-event`, que primero deja la
+        conversación apuntando a esta cita.
+
+        Plantilla `visar_reagenda_elegir_horario`: `{{1}}`=técnico,
+        `{{2}}`=horas de antelación. **`{{2}}` son las horas y no la frase de
+        política entera**: Meta rechaza un cuerpo que termina en variable y
+        desconfía de variables que cargan oraciones completas. Así la frase fija
+        vive en la plantilla y el número sigue saliendo de la configuración.
+
+        En modo libre la frase la compone `_visar_reschedule_policy_text()`, que
+        es editable: si alguien la cambia, el mensaje libre y la plantilla dejan
+        de decir exactamente lo mismo. Las horas, en cambio, coinciden siempre.
+        """
+        self.ensure_one()
+        name = (employee.name if employee else '') or "asignado"
+        tech = (" %s" % employee.name) if employee and employee.name else ""
+        Event = self.env['calendar.event']
+        politica = Event._visar_reschedule_policy_text()
+        horas = Event._visar_reschedule_min_hours()
+        text = ("Hola, le saluda Visar Homes. Su técnico%s acudió a su domicilio, "
+                "pero no fue posible realizar el servicio.\n\n"
+                "¿Elegimos un nuevo horario? Presione el botón para ver los "
+                "horarios disponibles.\n\n"
+                "_%s_" % (tech, politica))
+        return text, [name, horas]
 
     def _visar_enroute_eta_minutes(self, tech_lat=None, tech_lng=None):
         """Minutos estimados de traslado del técnico al domicilio de servicio.

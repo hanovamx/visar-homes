@@ -123,16 +123,31 @@ class VisarWaOutboxMixin(models.AbstractModel):
         return None
 
     @api.model
-    def _visar_wa_endpoint(self):
-        """Ruta del runtime a la que se manda. Misma respuesta para todas.
+    def _visar_wa_endpoint(self, template_key=None):
+        """Ruta del runtime a la que se manda el aviso de esta CLAVE.
 
-        Los avisos de la app de campo son solo un texto (`/send-notification`);
-        los del agendado además **cambian lo que el cliente puede hacer después**
-        y por eso van a `/booking-event`, que primero toca la conversación y luego
-        envía. Decirle "¿elegimos otro horario?" solo sirve si el "sí" siguiente
-        aterriza en el flujo de agendado y no en el menú principal.
+        Los avisos que son solo un texto van a `/send-notification`; los que
+        además **cambian lo que el cliente puede hacer después** van a
+        `/booking-event`, que primero toca la conversación y luego envía.
+        Decirle "¿elegimos otro horario?" solo sirve si el "sí" siguiente
+        aterriza en el flujo que sabe moverle la cita y no en el menú principal.
+
+        Se resuelve **por clave y no por modelo** (antes daba una sola ruta para
+        todo el buzón): el buzón de la app de campo manda avisos de los dos
+        tipos — "voy en camino" es un texto, pero "no se pudo hacer el servicio,
+        ¿elegimos otro horario?" necesita dejar la conversación preparada.
+
+        Sigue siendo `@api.model` y toma la clave como argumento en vez de leer
+        `self.template_key`: así se puede preguntar "¿a dónde iría tal aviso?"
+        sin tener un registro delante, que es como lo comprueban las pruebas.
         """
-        return '/internal/send-notification'
+        return self._visar_wa_endpoints().get(
+            template_key, '/internal/send-notification')
+
+    @api.model
+    def _visar_wa_endpoints(self):
+        """`{clave: ruta}` de las claves que NO van a `/send-notification`."""
+        return {}
 
 
     def _visar_wa_chatter(self):
@@ -262,7 +277,7 @@ class VisarWaOutboxMixin(models.AbstractModel):
         })
         try:
             response = requests.post(
-                base + self._visar_wa_endpoint(), json=payload,
+                base + self._visar_wa_endpoint(self.template_key), json=payload,
                 headers={'X-Visar-Token': token}, timeout=SEND_TIMEOUT)
         except requests.RequestException as exc:
             self._visar_register_failure(str(exc)[:200])

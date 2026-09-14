@@ -60,8 +60,8 @@ class VisarWaLeadMessage(models.Model):
         return 'visar_whatsapp_agent.visar_wa_lead_outbox_cron'
 
     @api.model
-    def _visar_wa_endpoint(self):
-        return '/internal/lead-followup'
+    def _visar_wa_endpoints(self):
+        return {clave: '/internal/lead-followup' for clave, _ in TEMPLATE_KEYS}
 
     def _visar_wa_chatter(self):
         """El aviso fallido se anota en el lead: es donde mira el asesor."""

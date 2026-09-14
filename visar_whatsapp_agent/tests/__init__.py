@@ -12,3 +12,4 @@ from . import test_agent_day_ranking
 from . import test_agent_runtime_refresh
 from . import test_agent_cancel_booking
 from . import test_service_stage_config
+from . import test_wa_template_route

@@ -29,3 +29,5 @@ access_wa_lead_message_user,visar.wa.lead.message user,model_visar_wa_lead_messa
 access_wa_lead_message_manager,visar.wa.lead.message manager,model_visar_wa_lead_message,base.group_system,1,1,1,1
 access_followup_config_manager,visar.followup.config manager,model_visar_followup_config,base.group_system,1,1,1,1
 access_followup_config_readonly,visar.followup.config readonly,model_visar_followup_config,group_whatsapp_agent_readonly,1,0,0,0
+access_wa_template_route_readonly,wa.template.route.readonly,model_visar_wa_template_route,group_whatsapp_agent_readonly,1,0,0,0
+access_wa_template_route_manager,wa.template.route.manager,model_visar_wa_template_route,base.group_system,1,1,0,0
