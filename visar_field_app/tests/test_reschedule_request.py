@@ -134,9 +134,17 @@ class TestSolicitudDeReagenda(TransactionCase):
     def test_el_aviso_lleva_la_politica_de_no_devolucion(self):
         tarea, _evento = self._tarea_con_cita()
         tarea._visar_flag_reschedule(self.employee)
-        texto = self._avisos(tarea).fallback_text
+        aviso = self._avisos(tarea)
+        texto = aviso.fallback_text
         self.assertIn('no son cancelables', texto)
+        self.assertIn('pueden ser reprogramadas', texto)
         self.assertIn('24', texto, "con las horas que de verdad estan puestas")
+        # Contrato con la plantilla de Meta: {{1}}=tecnico, {{2}}=HORAS. Si alguien
+        # vuelve a mandar la frase entera, Meta rechaza el envio.
+        import json
+        params = json.loads(aviso.params_json)
+        self.assertEqual(len(params), 2)
+        self.assertEqual(params[1], '24')
 
     # --- Sin cita no se promete un boton que no existe -----------------
 

@@ -820,21 +820,28 @@ class ProjectTask(models.Model):
         este aviso sale por `/internal/booking-event`, que primero deja la
         conversación apuntando a esta cita.
 
-        Plantilla: `{{1}}`=técnico, `{{2}}`=política. La política **no se escribe
-        aquí**: la compone `calendar.event._visar_reschedule_policy_text()` con
-        las horas que de verdad estén configuradas, y es la misma frase que ya lee
-        el cliente en la confirmación de su cita.
+        Plantilla `visar_reagenda_elegir_horario`: `{{1}}`=técnico,
+        `{{2}}`=horas de antelación. **`{{2}}` son las horas y no la frase de
+        política entera**: Meta rechaza un cuerpo que termina en variable y
+        desconfía de variables que cargan oraciones completas. Así la frase fija
+        vive en la plantilla y el número sigue saliendo de la configuración.
+
+        En modo libre la frase la compone `_visar_reschedule_policy_text()`, que
+        es editable: si alguien la cambia, el mensaje libre y la plantilla dejan
+        de decir exactamente lo mismo. Las horas, en cambio, coinciden siempre.
         """
         self.ensure_one()
         name = (employee.name if employee else '') or "asignado"
         tech = (" %s" % employee.name) if employee and employee.name else ""
-        politica = self.env['calendar.event']._visar_reschedule_policy_text()
-        text = ("Hola, le saluda Visar. Su técnico%s acudió a su domicilio pero no "
-                "fue posible realizar el servicio.\n\n"
-                "¿Elegimos un nuevo horario? Responda *sí* y le muestro los "
-                "horarios disponibles.\n\n"
+        Event = self.env['calendar.event']
+        politica = Event._visar_reschedule_policy_text()
+        horas = Event._visar_reschedule_min_hours()
+        text = ("Hola, le saluda Visar Homes. Su técnico%s acudió a su domicilio, "
+                "pero no fue posible realizar el servicio.\n\n"
+                "¿Elegimos un nuevo horario? Toca el botón para ver los horarios "
+                "disponibles.\n\n"
                 "_%s_" % (tech, politica))
-        return text, [name, politica]
+        return text, [name, horas]
 
     def _visar_enroute_eta_minutes(self, tech_lat=None, tech_lng=None):
         """Minutos estimados de traslado del técnico al domicilio de servicio.

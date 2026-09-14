@@ -54,10 +54,11 @@ DEFAULT_MAX_TIMES = 2
 # Ahora el texto es una plantilla con un solo hueco -las horas, que salen de la
 # configuracion- y vive en un parametro editable sin desplegar.
 RESCHEDULE_POLICY_PARAM = 'visar.reschedule.policy_text'
+# Redaccion NEUTRA a proposito (sin "tu" ni "usted"): la leen la confirmacion
+# del agente, que tutea, y los avisos de la app de campo, que hablan de usted.
 DEFAULT_POLICY_TEXT = (
-    "Las citas pagadas no son cancelables ni reembolsables. Si necesitas "
-    "cambiar tu cita, puedes reprogramarla sin costo con al menos %(horas)s "
-    "horas de anticipación."
+    "Las citas pagadas no son cancelables ni reembolsables; pero pueden ser "
+    "reprogramadas sin costo con al menos %(horas)s horas de anticipación."
 )
 
 # Motivos por los que una cita NO se puede mover. El agente los traduce a algo
