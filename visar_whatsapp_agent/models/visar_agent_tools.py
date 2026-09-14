@@ -284,6 +284,11 @@ class VisarAgentTools(models.AbstractModel):
             'prompt': Prompt._agent_active_body(),
             'route_prompts': Prompt._agent_route_memories(),
             'llm': self.env['visar.llm.config']._agent_active_payload(),
+            # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
+            # ausente es "mensaje libre", lo de siempre. Ver
+            # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y
+            # una petición de envío sigue sin poder nombrar ninguna.
+            'wa_templates': self.env['visar.wa.template.route']._agent_payload(),
         }
 
     # ------------------------------------------------------------------

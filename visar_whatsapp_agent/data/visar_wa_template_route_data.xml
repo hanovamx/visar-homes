@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Una fila por aviso, TODAS sin plantilla: instalar el modulo no cambia
+         nada para ningun cliente (sin plantilla = mensaje libre, lo de antes).
+         noupdate: la plantilla que asigne un administrador no la pisa un -u. -->
+    <data noupdate="1">
+        <record id="wa_template_route_enroute" model="visar.wa.template.route">
+            <field name="key">enroute</field><field name="sequence">10</field>
+        </record>
+        <record id="wa_template_route_arrived" model="visar.wa.template.route">
+            <field name="key">arrived</field><field name="sequence">20</field>
+        </record>
+        <record id="wa_template_route_reschedule" model="visar.wa.template.route">
+            <field name="key">reschedule</field><field name="sequence">30</field>
+        </record>
+        <record id="wa_template_route_reschedule_offer" model="visar.wa.template.route">
+            <field name="key">reschedule_offer</field><field name="sequence">40</field>
+        </record>
+        <record id="wa_template_route_report" model="visar.wa.template.route">
+            <field name="key">report</field><field name="sequence">50</field>
+        </record>
+        <record id="wa_template_route_booking_confirmed" model="visar.wa.template.route">
+            <field name="key">booking_confirmed</field><field name="sequence">60</field>
+        </record>
+        <record id="wa_template_route_hold_expired" model="visar.wa.template.route">
+            <field name="key">hold_expired</field><field name="sequence">70</field>
+        </record>
+        <record id="wa_template_route_hold_expired_link" model="visar.wa.template.route">
+            <field name="key">hold_expired_link</field><field name="sequence">80</field>
+        </record>
+
+        <!-- El webhook de Meta de este numero llega al runtime, no a Odoo: sin
+             esto el estado de una plantilla solo cambia cuando alguien pulsa
+             Sync. Diario basta: aprobar o pausar una plantilla no es cosa de
+             minutos, y el runtime ademas tarda hasta 15 en recoger el cambio. -->
+        <record id="visar_wa_template_sync_cron" model="ir.cron">
+            <field name="name">Visar: sincronizar estado de plantillas de WhatsApp</field>
+            <field name="model_id" ref="model_visar_wa_template_route"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_sync_templates()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>

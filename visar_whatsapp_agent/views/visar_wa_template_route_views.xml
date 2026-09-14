@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_wa_template_route_view_list" model="ir.ui.view">
+        <field name="name">visar.wa.template.route.list</field>
+        <field name="model">visar.wa.template.route</field>
+        <field name="arch" type="xml">
+            <!-- Las filas las siembra el modulo (una por aviso): aqui solo se
+                 elige la plantilla. Sin crear ni borrar, para que no pueda haber
+                 un aviso sin fila ni dos filas del mismo aviso. -->
+            <list editable="bottom" create="0" delete="0">
+                <header>
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary" display="always"
+                            help="El runtime recoge el cambio en hasta 15 minutos; esto lo aplica ya."/>
+                </header>
+                <field name="sequence" widget="handle"/>
+                <field name="key"/>
+                <field name="nota"/>
+                <field name="template_id"
+                       placeholder="Sin plantilla: mensaje libre (solo llega a quien escribió en 24 h)"
+                       options="{'no_create': True}"/>
+                <!-- El estado va ESCRITO: una plantilla asignada pero aun en
+                     revision no se usa, y eso tiene que leerse, no adivinarse
+                     por un color. -->
+                <field name="template_status" widget="badge"
+                       decoration-success="template_status == 'approved'"
+                       decoration-warning="template_status in ('pending', 'in_appeal')"
+                       decoration-danger="template_status in ('paused', 'disabled', 'rejected')"/>
+                <field name="template_lang"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_wa_template_route_action" model="ir.actions.act_window">
+        <field name="name">Plantillas de avisos</field>
+        <field name="res_model">visar.wa.template.route</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html">
+            <p>
+                Qué plantilla aprobada por Meta usa cada aviso al cliente. Un aviso
+                sin plantilla se manda como mensaje libre, que WhatsApp solo entrega
+                si el cliente escribió en las últimas 24 horas.
+            </p>
+            <p>
+                Una plantilla en revisión se puede dejar asignada: empieza a usarse
+                sola cuando Meta la aprueba. Las plantillas se crean en
+                <b>WhatsApp → Plantillas</b>.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_wa_template_routes"
+              name="Plantillas de avisos"
+              parent="menu_agent_config"
+              action="visar_wa_template_route_action"
+              sequence="25"/>
+
+</odoo>

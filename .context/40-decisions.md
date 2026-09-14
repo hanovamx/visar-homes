@@ -877,3 +877,25 @@ copiando lo que se ve en pantalla es la forma más natural de contestar.
 > **dañino** — rompía justo el caso de copiar la etiqueta— y el beneficio que se le suponía no
 > existía: nombrar un plan gana igual con y sin la exclusión. El diario está en §26 de
 > `visar_fastapi/.context/85-motor-de-flujos-agendado.md`.
+
+
+## [RAMA `reagenda-incidencia` — 14-sep-2026] Qué plantilla usa cada aviso se elige en Odoo, no en el `.env`
+
+- **Antes:** el nombre de cada plantilla vivía en el `.env` del runtime (`WA_TEMPLATE_*`,
+  `WA_REPORT_TEMPLATE`). Cambiarlo pedía acceso al servidor y reiniciar, y un nombre mal escrito
+  solo se descubría cuando Meta rechazaba el envío. En producción **no había ninguno** puesto:
+  todo salía libre aunque había cuatro plantillas aprobadas desde el 11-ago.
+- **Ahora:** `visar.wa.template.route` (en `visar_whatsapp_agent`), una fila por aviso con un
+  Many2one a `whatsapp.template`, en *Agente WhatsApp → Configuración → Plantillas de avisos*.
+  Viaja al runtime con `agent_runtime_config` (`wa_templates`) y se aplica al pulsar *Aplicar
+  ahora* o en el refresco de 15 min. **Solo viajan las aprobadas**; sin asignar = mensaje libre.
+- **Lo que NO cambia:** el catálogo cerrado. La petición de envío sigue trayendo solo una clave;
+  la plantilla la decide la configuración, así que un token filtrado sigue sin poder mandar
+  cualquier plantilla. Y seguimos sin mandar **salientes** con el módulo nativo (ver arriba):
+  sus registros de plantilla solo se usan como configuración; el envío sigue en el runtime.
+- **Por qué se valida al guardar:** el runtime rellena la plantilla con los parámetros que el
+  código ya manda. Variables de más, una cabecera que nadie rellena o un botón sin payload se
+  rechazan al elegir la plantilla, no en producción. El contrato por aviso vive en
+  `ESPECIFICACION` (`models/visar_wa_template_route.py`).
+- **Estado:** el webhook de Meta llega al runtime, no a Odoo, así que un cron diario sincroniza el
+  estado de las plantillas asignadas (una pausada por Meta deja de viajar).

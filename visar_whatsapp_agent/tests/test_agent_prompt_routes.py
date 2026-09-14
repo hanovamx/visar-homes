@@ -88,7 +88,8 @@ class TestAgentPromptRoutes(TransactionCase):
         self._memoria('schedule')
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
-            set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm'})
+            set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
+                           'wa_templates'})
         self.assertIsInstance(payload['route_prompts'], dict)
         self.assertEqual(set(payload['route_prompts']), {'info', 'schedule'})
         # El base no se ve afectado por que existan memorias.
@@ -243,7 +244,8 @@ class TestAgentRouteMeta(TransactionCase):
         self._uno('schedule')          # si no, `route_prompts` viaja vacio
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
-            set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm'})
+            set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
+                           'wa_templates'})
         self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
         for cuerpo in payload['route_prompts'].values():
             self.assertNotIn('resolve_zone  (lee)', cuerpo)

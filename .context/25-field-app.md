@@ -1415,6 +1415,9 @@ secundario de un cambio de etapa**: si se mandaran en línea, un WhatsApp lento 
   caducar dejaba los `failed` en silencio (lo detectó la prueba de la máquina de estados).
 - **Reintento manual, no automático, desde la vista de oficina**: reenviar un aviso viejo solo tiene
   sentido si alguien confirma que sigue siendo verdad.
+- > **14-sep-2026 (rama `reagenda-incidencia`):** las `WA_TEMPLATE_*` de esta sección ya no se
+  > configuran en el `.env`: la plantilla de cada aviso se asigna en *Agente WhatsApp →
+  > Configuración → Plantillas de avisos*. Ver `40-decisions.md`.
 - Menú **App de Campo Visar → Avisos por WhatsApp**, que abre filtrado por **No entregados**: esa
   lista son los clientes a los que hay que llamar.
 
