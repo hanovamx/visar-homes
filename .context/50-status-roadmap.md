@@ -6,8 +6,14 @@
 > botón "Cliente no llegó" deja que el cliente elija horario, con botón
 > equivalente en el backend— está **terminada y probada en `visar-test`, pero
 > SIN desplegar**, y vive en la rama `reagenda-incidencia` de los DOS repos:
-> `/opt/custom` (`f71d7dc`, `0677406`, `86a1308`) y `/opt/visar_fastapi`
-> (`2368621`, `2fc5ce6`, `78a88ee`). **No está en `main` ni en GitHub.**
+> `/opt/custom` (`f71d7dc`, `0677406`, `86a1308`, `170aed7`) y `/opt/visar_fastapi`
+> (`2368621`, `2fc5ce6`, `78a88ee`, `c061897`). **No está en `main` ni en GitHub.**
+>
+> La rama trae además, desde el 14-sep, que **la plantilla de cada aviso se elige en
+> Odoo** (*Agente WhatsApp → Configuración → Plantillas de avisos*) y no en el `.env`
+> del runtime. La plantilla `visar_reagenda_elegir_horario` ya está **creada y enviada
+> a Meta** (en producción, *WhatsApp → Plantillas*, pendiente de revisión): no espera
+> a la rama. Al desplegar hay que asignarla en esa pantalla.
 >
 > **Por qué en rama y no en `main`:** `/opt/custom` y `/opt/visar_fastapi` son
 > el árbol que **sirve producción**. Con el código nuevo en disco y sin `-u`, un
@@ -17,8 +23,8 @@
 > función espera la plantilla de Meta, **el disco se queda en `main`**, igual a
 > lo que corre producción.
 >
-> **Qué bloquea el despliegue:** la plantilla `visar_reagenda_elegir_horario`,
-> por crear y aprobar desde el módulo WhatsApp de Odoo (cuenta "Portafolio").
+> **Qué bloquea el despliegue:** que Meta apruebe `visar_reagenda_elegir_horario`
+> (pulsar *Sync* en la plantilla para ver su estado).
 >
 > **Para retomarlo:**
 > 1. `git checkout reagenda-incidencia` en los dos repos;
@@ -28,7 +34,9 @@
 >
 > ⚠️ **No hacer `-u` ni reiniciar con la rama a medias**, y no dejar la rama
 > desplegada en disco sin su `-u`. `visar-test` **ya** está actualizada a la rama
-> (va por delante de `main`); para probar ahí, cambiar antes de rama. Diseño
+> (va por delante de `main`, e incluye ya la dependencia de `visar_whatsapp_agent`
+> con el módulo `whatsapp`); para probar ahí, trabajar con la rama — mejor en un
+> `git worktree` fuera de `/opt` y `--addons-path`, para no sacar `/opt` de `main`. Diseño
 > completo, en la rama: `visar_fastapi/.context/87-reagendar-citas.md` §2.
 
 > Última actualización: **11-sep-2026 23:40** — en producción
