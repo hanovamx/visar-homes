@@ -448,6 +448,32 @@ class TestWizardFlow(TransactionCase):
         self.assertIn('construcción', interior['title'])
         self.assertNotEqual(interior['title'], directo['title'])
 
+    def test_los_metros_avisan_que_no_saberlos_tiene_salida(self):
+        """Visar, 14-sep-2026: por "agendar" no se decía, y por información sí.
+
+        Quien entra por agendar oye los metros del CUESTIONARIO, no del modelo.
+        Se lee en `es_MX`, que es como lo lee el cliente.
+        """
+        interior = self.AptType.with_context(lang='es_MX')._visar_wizard_step_options(
+            self._booking_fum(motivo='preventivo'), 'interior')
+        self.assertIn('te ayudo a calcularlo', interior['hint'])
+        self.assertIn('no los del terreno', interior['hint'],
+                      "sin perder lo que ya decía")
+
+    def test_la_casa_se_pregunta_pieza_por_pieza_en_orden(self):
+        """Cada pieza trae su pregunta, en el orden en que la hace el agente en
+        la ruta de información: recámaras, baños, pisos, cochera, terreno."""
+        interior = self.AptType.with_context(lang='es_MX')._visar_wizard_step_options(
+            self._booking_fum(motivo='preventivo'), 'interior')
+        campos = interior['estimate_fields']
+        self.assertEqual([c['name'] for c in campos],
+                         ['rec', 'ban', 'niv', 'gar', 'predio'])
+        for campo in campos:
+            self.assertTrue((campo.get('pregunta') or '').startswith('¿'),
+                            "%s sin pregunta" % campo['name'])
+        self.assertIn('recámaras', campos[0]['pregunta'])
+        self.assertTrue(campos[0]['required'], "las recámaras siguen siendo obligatorias")
+
     def test_el_tramo_de_valoracion_no_llega_cortado(self):
         """Una fila de WhatsApp son 24 caracteres y el paréntesis no cabe.
 

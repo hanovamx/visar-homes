@@ -2009,8 +2009,16 @@ class AppointmentType(models.Model):
                 payload['mide_lugar'] = 'interior'
                 payload['lugares'] = self._visar_vocabulario_lugares(vocab)
             if interior:
+                # La segunda frase es la misma que dice el agente en la ruta de
+                # informacion (prompt, 11-sep-2026). Faltaba AQUI, y Visar la
+                # echo de menos el 14-sep: quien entra por "agendar" oye los
+                # metros del cuestionario, no los del modelo, y sin esa frase no
+                # sabe que "no se" tiene salida. Es la pregunta donde mas gente
+                # abandona.
                 payload['hint'] = _('Son los metros construidos de tu casa, no '
-                                    'los del terreno.')
+                                    'los del terreno. Si no lo sabes, no hay '
+                                    'problema: avísame y te ayudo a calcularlo '
+                                    'en un momento.')
                 # El paso interior admite dos caminos, y el segundo evita que el
                 # cliente que no sabe sus m² se caiga del flujo.
                 payload['mode_key'] = 'interior_mode'
@@ -2018,12 +2026,24 @@ class AppointmentType(models.Model):
                     {'value': 'sabe', 'label': _('Sé mis metros cuadrados')},
                     {'value': 'estima', 'label': _('Prefiero estimarlos')},
                 ]
+                # `pregunta`: como se le pregunta ESA pieza al cliente, de una
+                # en una y en este orden -el mismo que sigue el agente en la
+                # ruta de informacion-. Antes el chat preguntaba solo las
+                # recamaras y mencionaba el resto en una linea opcional, asi que
+                # casi nadie las daba y la casa se estimaba con un solo dato.
+                # El web no usa esta clave: tiene su formulario.
                 payload['estimate_fields'] = [
-                    {'name': 'rec', 'label': _('Recámaras'), 'required': True},
-                    {'name': 'ban', 'label': _('Baños'), 'required': False},
-                    {'name': 'niv', 'label': _('Niveles'), 'required': False},
-                    {'name': 'gar', 'label': _('Cajones de garage'), 'required': False},
-                    {'name': 'predio', 'label': _('Terreno (m²)'), 'required': False},
+                    {'name': 'rec', 'label': _('Recámaras'), 'required': True,
+                     'pregunta': _('¿Cuántas recámaras tiene tu casa?')},
+                    {'name': 'ban', 'label': _('Baños'), 'required': False,
+                     'pregunta': _('¿Cuántos baños completos tiene?')},
+                    {'name': 'niv', 'label': _('Niveles'), 'required': False,
+                     'pregunta': _('¿Cuántos pisos o niveles tiene?')},
+                    {'name': 'gar', 'label': _('Cajones de garage'), 'required': False,
+                     'pregunta': _('¿Cuántos cajones de cochera tiene?')},
+                    {'name': 'predio', 'label': _('Terreno (m²)'), 'required': False,
+                     'pregunta': _('¿Sabes cuántos metros mide el terreno o '
+                                   'predio? Si no lo sabes, no pasa nada.')},
                 ]
             return payload
 
