@@ -235,6 +235,38 @@ class TestSolicitudDeReagenda(TransactionCase):
                          "el segundo no-show tambien avisa")
 
 
+    # --- Las notas del chatter se ven como HTML, no como etiquetas -------
+
+    def _ultima_nota(self, tarea, texto):
+        return tarea.message_ids.filtered(lambda m: texto in str(m.body))[:1]
+
+    def test_la_nota_de_la_solicitud_muestra_negritas_no_etiquetas(self):
+        """Con un str, Odoo escapa el `<b>` y la ficha decia literalmente
+        "por &lt;b&gt;Pedro Martinez&lt;/b&gt;" (tareas 231, 311, 556, 621)."""
+        tarea, _evento = self._tarea_con_cita()
+        tarea._visar_flag_reschedule(self.employee)
+        nota = self._ultima_nota(tarea, "Reagenda solicitada")
+        self.assertTrue(nota)
+        self.assertIn("<b>Tecnico Incidencia</b>", str(nota.body))
+        self.assertNotIn("&lt;", str(nota.body))
+
+    def test_el_nombre_del_tecnico_se_escapa_aunque_la_nota_sea_html(self):
+        tarea, _evento = self._tarea_con_cita()
+        raro = self.env['hr.employee'].create({'name': 'Ana <script>'})
+        tarea._visar_flag_reschedule(raro)
+        cuerpo = str(self._ultima_nota(tarea, "Reagenda solicitada").body)
+        self.assertNotIn("<script>", cuerpo)
+        self.assertIn("<b>", cuerpo)
+
+    def test_la_nota_de_vuelta_a_programado_muestra_negritas(self):
+        tarea, _evento = self._tarea_con_cita()
+        tarea._visar_flag_reschedule(self.employee)
+        tarea._visar_back_to_scheduled()
+        nota = self._ultima_nota(tarea, "eligió un horario nuevo")
+        self.assertTrue(nota)
+        self.assertIn("<b>Programado</b>", str(nota.body))
+        self.assertNotIn("&lt;", str(nota.body))
+
     # --- Pertenencia: a quien se le escribe vs de quien es la cita -------
 
     def test_no_se_ofrece_autoservicio_a_un_numero_que_la_reagenda_no_reconoce(self):

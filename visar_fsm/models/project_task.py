@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from markupsafe import Markup
+
 from odoo import api, fields, models
 
 
@@ -155,7 +157,8 @@ class ProjectTask(models.Model):
             # Rastro para oficina: la actividad de "reagendar" sigue abierta y
             # quien la cierre tiene que poder ver que ya se resolvió sola.
             try:
-                task.sudo().message_post(body=(
+                # `Markup`: como str, el `<b>` sale escapado en el chatter.
+                task.sudo().message_post(body=Markup(
                     "El cliente eligió un horario nuevo: el servicio vuelve a "
                     "<b>Programado</b> con la fecha actualizada."))
             except Exception:  # noqa: BLE001 - la nota es rastro, no el trabajo

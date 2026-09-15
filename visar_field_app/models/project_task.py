@@ -421,9 +421,11 @@ class ProjectTask(models.Model):
         self.visar_reschedule_requested_at = fields.Datetime.now()
         self._visar_set_stage(4)
         self.state = '1_canceled'
-        quien = (" por <b>%s</b>" % employee.name) if employee and employee.name else ""
-        body = ("Reagenda solicitada desde %s%s: el cliente "
-                "no atendió tras la espera." % (origen, quien))
+        # `Markup`: un str con `<b>` se escapa al postearse y el chatter muestra
+        # las etiquetas como texto. El `%` de Markup escapa el nombre, no el formato.
+        quien = (Markup(" por <b>%s</b>") % employee.name) if employee and employee.name else ""
+        body = Markup("Reagenda solicitada desde %s%s: el cliente "
+                      "no atendió tras la espera.") % (origen, quien)
         assignee = self._visar_reschedule_assignee()
         if assignee:
             self.activity_schedule(
