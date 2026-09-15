@@ -870,6 +870,14 @@ project_id.user_id (PM)` — porque los técnicos **no tienen usuario**, `user_i
 > ⚠️ El envío cuelga de la **acción**, nunca del valor de la etapa. Arrastrar la tarjeta a
 > *Incidencia — Reprogramar* en el Kanban **no manda nada**, y hay una prueba de regresión
 > que lo vigila (`visar_field_app/tests/test_reschedule_request.py`).
+>
+> **Primera prueba real, 15-sep-2026.** Dos cosas que tocan a esta pantalla:
+> * El aviso sale con el teléfono en E.164 (`52` + 10) y WhatsApp contesta con su `wa_id`
+>   (`521` + 10). El runtime los unifica al entrar (`40-decisions.md`, 15-sep); aquí no
+>   hace falta cambiar nada.
+> * Cuando el cliente elige su horario nuevo, **la tarea** recibe ahora una nota interna
+>   con el antes y el después en hora local (*"El cliente reagendó el servicio desde
+>   WhatsApp…"*). Antes solo quedaba la nota de que el técnico pidió reagendar.
 
 ### Validación de cierre
 

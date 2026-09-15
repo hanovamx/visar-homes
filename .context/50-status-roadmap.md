@@ -1,6 +1,20 @@
 # Estado y roadmap
 
-> **14-sep-2026 23:15 — reagenda por incidencia y plantillas en Odoo: DESPLEGADO en
+> **15-sep-2026 00:39 — en `visar-db`: visar_appointment 19.0.2.21.0 y
+> visar_whatsapp_agent 19.0.1.20.0**, leídas de la BD después del `-u`. Dos
+> despliegues, los dos por feedback de Visar probando en vivo (detalle en
+> "Feedback del 14 y 15-sep" más abajo):
+> **14-sep 23:53** — los metros de la casa se preguntan **igual en agendar que en
+> información**: aviso de que no saberlos tiene salida, y la casa pieza por pieza
+> (`estimate_fields[].pregunta`). Con `deploy-estimacion-14sep.sh`.
+> **15-sep 00:38** — **primera prueba real de la reagenda por incidencia**, y tres
+> fallos: el botón contestaba *"¿En qué te ayudo?"*, el agente no se enteraba de que
+> ya había movido la cita, y el servicio externo no registraba cuándo reagendó el
+> cliente. Además, fuera el 🎉 al apartar horario. Con `deploy-reagenda-15sep.sh`.
+> 347 pruebas de los dos módulos (los 2 fallos de `TestBookingDedupe` de siempre) y
+> 657 del runtime. Sigue pendiente la plantilla de Meta.
+>
+> Anterior: **14-sep-2026 23:15 — reagenda por incidencia y plantillas en Odoo: DESPLEGADO en
 > `visar-db`**, fusionado a `main` (todavía sin salida en vivo). En la BD:
 > **visar_base 19.0.1.12.0**, **visar_fsm 19.0.1.3.0**, **visar_appointment
 > 19.0.2.19.0**, **visar_field_app 19.0.1.27.0**, **visar_whatsapp_agent
@@ -105,6 +119,31 @@
 > Entradas anteriores: 3-ago-2026 (pólizas en producción) · 26-jun-2026 (split en módulos + D-06
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
+
+## Feedback del 14 y 15-sep — **EN PRODUCCIÓN** el 15-sep-2026
+
+> Commits de Odoo: `b9a19c2` (14-sep), `d7302ef` (15-sep). Del runtime: `2e40529`,
+> `6552d04`. El diario del runtime, en `visar_fastapi/.context/85-motor-de-flujos-agendado.md`
+> §27 y `87-reagendar-citas.md` §2.
+
+| Qué se vio | Dónde vive el arreglo |
+|---|---|
+| Por **agendar**, la pregunta de metros no decía que no saberlos tiene salida (por información sí) | `hint` del paso `interior` |
+| La estimación preguntaba **solo recámaras**, y un *"5"* suelto se tomó como **5 m² de construcción** | `estimate_fields[].pregunta` + el runtime pregunta de una en una |
+| El botón *"Elegir nuevo horario"* contestaba *"Claro. ¿En qué te ayudo?"* | runtime: el número de la app de campo (`52…`) y el de WhatsApp (`521…`) eran dos conversaciones |
+| Si el cliente tocaba el botón pasadas 3 h (la invitación vale 24) pasaría lo mismo | `agent_customer_services` publica `reschedule_granted` |
+| El **servicio externo** no decía cuándo reagendó el cliente | `calendar.event._visar_log_reschedule` escribe también en cada tarea, con hora local y como nota interna |
+| El 🎉 al apartar hacía creer que la cita ya estaba agendada, sin haber pagado | runtime |
+
+**Dos cosas que conviene saber de aquí.** La nota de la reagenda **ya existía**, pero solo
+en la cita del calendario, en UTC crudo y como comentario (que notifica a los seguidores
+de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos según la
+ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
+Odoo. Visar creía que eran el mismo, y deberían serlo.
+
+**Visto y no tocado:** la nota que deja la app de campo al pedir la reagenda sale con el
+HTML escapado (`por &lt;b&gt;Pedro Martín`). Mismo tipo de fallo que el de la nota del
+cliente; no se pidió.
 
 ## Feedback del 10 y 11-sep — **EN PRODUCCIÓN** el 11-sep-2026
 

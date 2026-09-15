@@ -899,3 +899,34 @@ copiando lo que se ve en pantalla es la forma más natural de contestar.
   `ESPECIFICACION` (`models/visar_wa_template_route.py`).
 - **Estado:** el webhook de Meta llega al runtime, no a Odoo, así que un cron diario sincroniza el
   estado de las plantillas asignadas (una pausada por Meta deja de viajar).
+
+## [DECIDIDA E IMPLEMENTADA — 15-sep-2026] La conversación es el `wa_id` de WhatsApp, y se normaliza al entrar
+
+El runtime identifica cada conversación por el teléfono. WhatsApp manda a un celular de
+México como `521` + 10 dígitos; la app de campo arma el E.164, `52` + 10
+(`_visar_phone_e164`). En la primera prueba real de la reagenda por incidencia, la
+invitación se guardó bajo `528123415696` y el botón volvió de `5218123415696`: dos
+conversaciones, y la del botón no sabía qué cita mover. Meta entrega a los dos formatos,
+así que el fallo no se veía al mandar, solo al contestar.
+
+**Se normaliza en el runtime, a la entrada de todo lo que abre o toca una conversación**
+(`agent.wa_id_canonico`), y no en quien manda. No se corrigió la app de campo: el
+próximo aviso que se escriba en Odoo no tendría por qué acordarse de esto. Un número de
+12 dígitos que empieza por `52` gana el `1`; cualquier otro queda igual.
+
+## [DECIDIDA E IMPLEMENTADA — 14-sep-2026] Un solo estimador de la casa, se entre por donde se entre
+
+Había dos y no se parecían. En la ruta de información los metros los pregunta el
+**modelo**, con las reglas del prompt: una pieza por mensaje y *"con 3 recámaras, 2 baños…
+me da alrededor de 156 metros, ¿te suena bien?"*. En la de agendar los pregunta el
+**cuestionario**: pedía las recámaras y mencionaba el resto en una línea opcional, y un
+número suelto se leía como metros. Visar probó por agendar y encontró lo que por
+información ya estaba arreglado.
+
+Ahora el cuestionario hace lo mismo que el modelo, con la misma cuenta
+(`_visar_estimate_interior_m2`, vía `agent_estimate_m2` para enseñar el número y vía el
+modo `estima` al contestar). Las preguntas de cada pieza las escribe Odoo
+(`estimate_fields[].pregunta`); el runtime solo las encadena. **Regla para lo que venga:**
+un arreglo de lo que el cliente oye hay que comprobarlo **por las dos rutas**; el prompt
+solo gobierna la del modelo.
+
