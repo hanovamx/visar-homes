@@ -43,6 +43,20 @@ class SaleOrder(models.Model):
     visar_upsell_cash_by_id = fields.Many2one(
         'hr.employee', string="Efectivo recibido por", readonly=True, copy=False)
 
+    # --- Vendedor como EMPLEADO, no como usuario ---
+    # Vive al lado del `user_id` estándar y sin relación con él. `user_id` es un
+    # res.users: lo usan `sale_commission` y las reglas de "solo mis documentos",
+    # así que no se toca. Este campo existe para registrar quién vendió sin pagar
+    # una licencia de usuario interno por cada vendedor. Mismo patrón que
+    # `visar_upsell_employee_id` (arriba) y que `project.task.visar_technician_ids`.
+    # Opcional a propósito: las cotizaciones que crean el agente de WhatsApp y el
+    # agendado web se confirman solas al pagar, y un campo obligatorio las trabaría.
+    visar_salesperson_employee_id = fields.Many2one(
+        'hr.employee', string="Vendedor (empleado)", index='btree_not_null',
+        tracking=True,
+        help="Empleado que vendió esta cotización. No necesita usuario de Odoo. "
+             "Es independiente del campo Vendedor (usuario), que sigue igual.")
+
     @api.depends('visar_upsell_order_ids')
     def _compute_visar_upsell_order_count(self):
         counts = dict(self.env['sale.order']._read_group(

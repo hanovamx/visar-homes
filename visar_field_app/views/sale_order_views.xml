@@ -16,6 +16,13 @@
         <field name="inherit_id" ref="sale.view_order_form"/>
         <field name="arch" type="xml">
 
+            <!-- Vendedor como empleado, debajo del Vendedor estándar en "Otra
+                 información". Los dos quedan visibles y sin relación entre ellos. -->
+            <xpath expr="//group[@name='sales_person']/field[@name='user_id']" position="after">
+                <field name="visar_salesperson_employee_id"
+                       options="{'no_create': True}"/>
+            </xpath>
+
             <!-- (a) Desde el pedido ORIGINAL: todo lo que sus visitas vendieron en
                  campo. Una póliza acumula uno por visita, de ahí el contador. -->
             <xpath expr="//div[@name='button_box']" position="inside">
@@ -74,6 +81,8 @@
                         domain="[('visar_upsell_cash_at', '!=', False)]"/>
             </filter>
             <filter name="salesperson" position="after">
+                <filter name="visar_salesperson_employee" string="Vendedor (empleado)"
+                        context="{'group_by': 'visar_salesperson_employee_id'}"/>
                 <filter name="visar_upsell_technician" string="Técnico (upsell)"
                         context="{'group_by': 'visar_upsell_employee_id'}"/>
                 <filter name="visar_upsell_task" string="Servicio de origen"
@@ -91,6 +100,7 @@
         <field name="inherit_id" ref="sale.view_order_tree"/>
         <field name="arch" type="xml">
             <field name="user_id" position="after">
+                <field name="visar_salesperson_employee_id" optional="hide"/>
                 <field name="visar_upsell_employee_id" optional="hide"/>
                 <field name="visar_upsell_task_id" optional="hide"/>
             </field>
