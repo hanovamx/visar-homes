@@ -419,3 +419,85 @@ class TestFollowupUnoPorSilencio(TransactionCase):
                     'visar_wa_followup_skip_code': False})
         self._lead()
         self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+
+
+@tagged('post_install', '-at_install')
+class TestFollowupDijoQueNo(TransactionCase):
+    """"No me interesa" cierra el recontacto, llegue cuando llegue.
+
+    Hasta el 15-sep-2026 el motivo `declino` existia en Odoo pero nada lo
+    mandaba, y aunque lo hubiera mandado solo tocaba leads 'Programado' o 'En
+    cola'. El "no me interesa" mas comun es la RESPUESTA al recontacto, con el
+    lead ya en 'Enviado': ahi no hacia nada, y el siguiente mensaje lo rearmaba.
+    """
+
+    WA = '5219990003322'
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.Tools = cls.env['visar.agent.tools']
+        cls.Lead = cls.env['crm.lead']
+        cls.Outbox = cls.env['visar.wa.lead.message']
+        cls.env['visar.followup.config'].search([]).unlink()
+        cls.config = cls.env['visar.followup.config'].create({
+            'name': 'Test', 'delay_minutes': 360,
+            'window_start_hour': 0, 'window_end_hour': 24})
+
+    def _lead(self):
+        res = self.Tools.agent_track_interest({
+            'phone': self.WA, 'context': {'etapa': 'pregunto', 'wa_id': self.WA}})
+        return self.Lead.browse(res['lead_id'])
+
+    def _no(self, motivo='declino'):
+        return self.Tools.agent_drop_followup({'phone': self.WA, 'reason': motivo})
+
+    def test_contestar_no_al_recontacto_lo_cierra_para_siempre(self):
+        lead = self._lead()
+        lead.write({'visar_wa_followup_state': 'sent',
+                    'visar_wa_followup_sent_at': fields.Datetime.now()})
+        self.assertEqual(self._no()['dropped'], 1)
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+        self.assertTrue(lead.visar_wa_followup_sent_at,
+                        "el recontacto SI salio; eso no se borra")
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped',
+                         "volver a escribir no lo rearma")
+
+    def test_colgar_despues_del_recontacto_no_toca_el_enviado(self):
+        """Lo de arriba es solo para lo definitivo: cerrar el chat no es decir que no."""
+        lead = self._lead()
+        lead.write({'visar_wa_followup_state': 'sent'})
+        self._no('cerro')
+        self.assertEqual(lead.visar_wa_followup_state, 'sent')
+
+    def test_decir_que_no_con_el_aviso_en_cola_lo_detiene(self):
+        lead = self._lead()
+        lead.visar_wa_followup_due = fields.Datetime.from_string('2020-01-01 00:00:00')
+        self.Lead._visar_wa_cron_followup()
+        self.assertEqual(lead.visar_wa_followup_state, 'queued')
+        aviso = self.Outbox.search([('lead_id', '=', lead.id)])
+        self.assertEqual(aviso.state, 'pending')
+
+        self._no()
+
+        self.assertEqual(aviso.state, 'cancelled',
+                         "si el aviso sigue pendiente, el buzon lo manda igual")
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+
+    def test_decir_que_no_antes_de_programar_tambien_cuenta(self):
+        lead = self._lead()
+        lead.write({'visar_wa_followup_state': 'none',
+                    'visar_wa_followup_due': False})
+        self._no()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')
+
+    def test_un_descarte_no_definitivo_se_vuelve_definitivo(self):
+        lead = self._lead()
+        self._no('cerro')
+        self._no('declino')
+        self.assertEqual(lead._visar_wa_skip_code(), 'declino')
+        self._lead()
+        self.assertEqual(lead.visar_wa_followup_state, 'skipped')

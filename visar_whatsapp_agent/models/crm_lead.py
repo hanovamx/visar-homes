@@ -215,10 +215,25 @@ class CrmLead(models.Model):
         return tz.localize(local).astimezone(pytz.utc).replace(tzinfo=None)
 
     def _visar_wa_drop_followup(self, reason):
-        """Cancela el recontacto por algo que solo el runtime puede ver."""
+        """Cancela el recontacto por algo que solo el runtime puede ver.
+
+        Un lead 'Enviado' se deja como está, salvo que el motivo sea definitivo
+        (dijo que no, se quejó): el caso más común de "no me interesa" es
+        justamente la RESPUESTA al recontacto, y dejarlo en 'Enviado' permitía
+        rearmarlo en cuanto el cliente volviera a escribir (15-sep-2026).
+
+        Uno 'En cola' ya tiene su aviso en el buzón, y cambiarle el estado no lo
+        detiene: el buzón lo mandaría igual y lo volvería a marcar 'Enviado'.
+        Por eso se cancela el aviso pendiente.
+        """
+        definitivo = reason in DESCARTES_DEFINITIVOS
         for lead in self:
-            if lead.visar_wa_followup_state == 'sent':
+            if lead.visar_wa_followup_state == 'sent' and not definitivo:
                 continue
+            if lead.visar_wa_followup_state == 'queued':
+                self.env['visar.wa.lead.message'].sudo().search([
+                    ('lead_id', '=', lead.id), ('state', '=', 'pending'),
+                ]).action_visar_cancel()
             lead.sudo().write({
                 'visar_wa_followup_state': 'skipped',
                 'visar_wa_followup_due': False,

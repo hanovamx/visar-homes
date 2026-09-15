@@ -141,6 +141,11 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
+**"No me interesa" cierra el recontacto — 15-sep, noche** (visar_whatsapp_agent
+19.0.1.21.0 + runtime `9bbc1f0`, `deploy-declino-15sep.sh`). El motivo `declino`
+existía y nadie lo mandaba, y `agent_drop_followup` no tocaba leads ya *Enviado* ni
+detenía un aviso *En cola*. Detalle en `visar_fastapi/.context/86-recontacto-de-leads.md`.
+
 **HTML escapado en el chatter — corregido y desplegado el 15-sep 20:33**
 (visar_field_app 19.0.1.28.0, visar_fsm 19.0.1.4.0, `deploy-notas-html-15sep.sh`). Dos
 notas se posteaban como `str` con `<b>` adentro y Odoo 19 las escapa: *"por

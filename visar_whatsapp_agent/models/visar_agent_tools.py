@@ -27,6 +27,8 @@ from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
 )
 from odoo.tools import format_datetime
 
+from .crm_lead import DESCARTES_DEFINITIVOS
+
 _logger = logging.getLogger(__name__)
 
 # Notas de negocio para el prompt, editables sin tocar codigo desde
@@ -1244,8 +1246,12 @@ class VisarAgentTools(models.AbstractModel):
         exclusiones (etapa, escalamiento, cliente existente) se comprueban al
         enviar y no necesitan que nadie avise.
 
-        Cancela **todos** los leads abiertos del telefono: quien dice "ya no,
-        gracias" no lo esta diciendo de un grupo de servicio en particular.
+        Cancela **todos** los leads abiertos del telefono: quien dice "no me
+        interesa" no lo esta diciendo de un grupo de servicio en particular.
+
+        Un motivo definitivo (`declino`, `queja`) alcanza tambien a los leads
+        sin programar, ya enviados o descartados por otra razon: si no, el
+        siguiente mensaje del cliente los rearmaba y "definitivo" no lo era.
         """
         payload = payload or {}
         nat = self._agent_normalize_phone(payload.get('phone'))
@@ -1253,10 +1259,17 @@ class VisarAgentTools(models.AbstractModel):
             return {'dropped': 0}
 
         reason = payload.get('reason') or 'declino'
-        leads = self.env['crm.lead'].sudo().search([
-            ('visar_wa_phone_norm', '=', nat),
-            ('visar_wa_followup_state', 'in', ('scheduled', 'queued')),
-        ])
+        Lead = self.env['crm.lead'].sudo()
+        if reason in DESCARTES_DEFINITIVOS:
+            leads = Lead.search([('visar_wa_phone_norm', '=', nat)]).filtered(
+                lambda lead: not (
+                    lead.visar_wa_followup_state == 'skipped'
+                    and lead._visar_wa_skip_code() in DESCARTES_DEFINITIVOS))
+        else:
+            leads = Lead.search([
+                ('visar_wa_phone_norm', '=', nat),
+                ('visar_wa_followup_state', 'in', ('scheduled', 'queued')),
+            ])
         if not leads:
             return {'dropped': 0}
         leads._visar_wa_drop_followup(reason)
