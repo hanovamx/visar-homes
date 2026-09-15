@@ -141,9 +141,16 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
-**Visto y no tocado:** la nota que deja la app de campo al pedir la reagenda sale con el
-HTML escapado (`por &lt;b&gt;Pedro Martín`). Mismo tipo de fallo que el de la nota del
-cliente; no se pidió.
+**HTML escapado en el chatter — corregido y desplegado el 15-sep 20:33**
+(visar_field_app 19.0.1.28.0, visar_fsm 19.0.1.4.0, `deploy-notas-html-15sep.sh`). Dos
+notas se posteaban como `str` con `<b>` adentro y Odoo 19 las escapa: *"por
+&lt;b&gt;Pedro Martínez&lt;/b&gt;"* (`_visar_flag_reschedule`) y *"vuelve a
+&lt;b&gt;Programado&lt;/b&gt;"* (`_visar_back_to_scheduled`). Ahora van como `Markup`
+(el nombre del técnico se sigue escapando). En la BD se corrigieron las **11** notas ya
+guardadas —3 de ellas de la nota vieja "Cita reagendada por el cliente", reemplazada esa
+misma madrugada—, por id y solo `<b>`, `</b>`, `<br/>`. **Regla:** todo `message_post`
+con etiquetas va con `Markup`; los `&lt;` que quedan en la BD (errores de urllib3 en los
+avisos fallidos) son texto y están bien escapados.
 
 ## Feedback del 10 y 11-sep — **EN PRODUCCIÓN** el 11-sep-2026
 
