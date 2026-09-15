@@ -32,7 +32,10 @@ demas visitas del ciclo nacen sin agendar" y no tienen `calendar.event` que
 mover. Reagendar una poliza no es este problema —es *agendar* lo que nunca tuvo
 fecha— asi que se rechaza con un motivo propio en vez de moverse a medias.
 """
+from markupsafe import Markup
+
 from odoo import api, fields, models
+from odoo.tools.misc import format_datetime
 
 # Horas minimas de antelacion, en las DOS puntas: para poder mover la cita
 # actual, y para el horario nuevo que se elija. Editable sin desplegar.
@@ -250,7 +253,7 @@ class CalendarEvent(models.Model):
             # `_visar_sync_fsm_tasks` solo escribe fechas y tecnicos. Sin esto el
             # cliente ya tiene horario nuevo y el tecnico no ve el servicio.
             self._visar_reschedule_tasks()._visar_back_to_scheduled()
-        self._visar_log_reschedule(anterior)
+        self._visar_log_reschedule(anterior, autorizada=autorizada)
         return True, None
 
     def _visar_reschedule_tasks(self):
@@ -294,14 +297,42 @@ class CalendarEvent(models.Model):
         if vals:
             tareas.sudo().write(vals)
 
-    def _visar_log_reschedule(self, anterior):
-        """Deja rastro en el chatter. Nunca lanza: una nota no bloquea un cambio."""
+    def _visar_fecha_local(self, valor):
+        """"martes 22 de septiembre, 16:00", en la zona de la cita. O "sin fecha"."""
+        if not valor:
+            return "sin fecha"
+        tz = (self.appointment_type_id.appointment_tz
+              or self.env['ir.config_parameter'].sudo().get_param(
+                  'visar.agent.timezone')
+              or 'America/Monterrey')
+        return format_datetime(self.env, valor, tz=tz,
+                               dt_format="EEEE d 'de' MMMM, HH:mm",
+                               lang_code='es_MX')
+
+    def _visar_log_reschedule(self, anterior, autorizada=False):
+        """Deja rastro en la CITA y en el SERVICIO EXTERNO. Nunca lanza.
+
+        Hasta el 15-sep la nota solo iba a la cita del calendario, y en UTC
+        crudo ("Antes: 2026-09-22 22:00:00"). Quien sigue un servicio lo mira en
+        su tarea de campo, y ahi solo constaba que el TECNICO pidio reagendar,
+        no cuando el cliente eligio el horario nuevo. Visar lo echo de menos
+        probando la reagenda por incidencia.
+
+        Como nota interna (`mt_note`): es rastro para el staff, y un comentario
+        normal notificaria a los seguidores de la cita, que incluyen al cliente.
+        """
         self.ensure_one()
-        try:
-            self.sudo().message_post(body=(
-                "Cita reagendada por el cliente desde WhatsApp.<br/>"
-                "Antes: %s<br/>Ahora: %s<br/>Cambios usados: %s de %s."
-                % (anterior or "sin fecha", self.start,
-                   self.visar_reschedule_count, self._visar_reschedule_max())))
-        except Exception:  # noqa: BLE001 - la nota es rastro, no el trabajo
-            pass
+        cuerpo = Markup(
+            "El cliente <b>reagendó el servicio</b> desde WhatsApp.<br/>"
+            "Antes: %s<br/>Ahora: %s<br/>Cambios usados: %s de %s."
+        ) % (self._visar_fecha_local(anterior), self._visar_fecha_local(self.start),
+             self.visar_reschedule_count, self._visar_reschedule_max())
+        if autorizada:
+            cuerpo += Markup("<br/>Venía de una incidencia: el servicio vuelve a "
+                             "<b>Programado</b>.")
+        for registro in (self, *self._visar_reschedule_tasks()):
+            try:
+                registro.sudo().message_post(body=cuerpo,
+                                             subtype_xmlid='mail.mt_note')
+            except Exception:  # noqa: BLE001 - la nota es rastro, no el trabajo
+                pass

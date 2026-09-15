@@ -355,6 +355,47 @@ class TestReagendaPorIncidencia(TestAgentReschedule):
         # Y sigue siendo UNA tarea, no dos.
         self.assertEqual(len(pedido.order_line[0].task_id), 1)
 
+    def test_el_servicio_externo_dice_cuando_reagendo_el_cliente(self):
+        """Visar, 15-sep: en la tarea solo constaba que el tecnico pidio
+        reagendar, no cuando el cliente eligio el horario nuevo. La nota iba a la
+        cita del calendario, y en UTC crudo."""
+        evento, pedido = self._autorizada(dentro_de_horas=-2)
+        tarea = self.env['project.task'].create({
+            'name': 'Tarea con incidencia', 'project_id': self.project.id,
+            'planned_date_begin': evento.start, 'date_deadline': evento.stop,
+        })
+        pedido.order_line[0].task_id = tarea.id
+
+        nuevo = fields.Datetime.add(fields.Datetime.now(), hours=96)
+        ok, motivo = evento._visar_reschedule(
+            nuevo, fields.Datetime.add(nuevo, hours=1))
+        self.assertTrue(ok, motivo)
+
+        notas = tarea.message_ids.filtered(
+            lambda m: 'reagendó el servicio' in (m.body or ''))
+        self.assertEqual(len(notas), 1, "una nota en el servicio externo")
+        cuerpo = notas.body
+        self.assertIn('desde WhatsApp', cuerpo)
+        self.assertIn('incidencia', cuerpo)
+        self.assertNotIn('&lt;br', cuerpo, "el HTML no sale escapado")
+        self.assertNotIn(fields.Datetime.to_string(nuevo), cuerpo,
+                         "la hora va en la zona del cliente, no en UTC crudo")
+        self.assertTrue(notas.subtype_id == self.env.ref('mail.mt_note'),
+                        "nota interna: no avisa a los seguidores")
+        self.assertTrue(evento.message_ids.filtered(
+            lambda m: 'reagendó el servicio' in (m.body or '')),
+            "y la cita la sigue teniendo")
+
+    def test_la_lista_dice_cual_cita_autorizo_visar(self):
+        """El boton "Elegir nuevo horario" encuentra la cita por aqui cuando la
+        conversacion ya caduco (la invitacion vale 24 h; la conversacion, 3)."""
+        autorizada, _pedido = self._autorizada(dentro_de_horas=-2)
+        normal, _otro = self._cita(dentro_de_horas=72)
+        servicios = self.Tools._agent_partner_services(self.partner, 'all')
+        por_cita = {s['event_id']: s for s in servicios}
+        self.assertTrue(por_cita[autorizada.id]['reschedule_granted'])
+        self.assertFalse(por_cita[normal.id]['reschedule_granted'])
+
     def test_una_tarea_completada_no_se_reabre(self):
         """Mover la cita no puede resucitar un servicio que ya se presto."""
         evento, pedido = self._autorizada(dentro_de_horas=-2)

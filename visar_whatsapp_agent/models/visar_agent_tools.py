@@ -898,6 +898,11 @@ class VisarAgentTools(models.AbstractModel):
                 'event_id': event.id if event else None,
                 'can_reschedule': bool(event) and bloqueo is None,
                 'reschedule_reason': bloqueo,
+                # Visar AUTORIZO mover esta cita (incidencia del tecnico). Es lo
+                # que deja al boton "Elegir nuevo horario" encontrar la cita
+                # aunque la conversacion ya haya caducado: la invitacion vale
+                # 24 h y la conversacion 3.
+                'reschedule_granted': bool(event and event.visar_reschedule_granted_at),
                 '_sort': date or fields.Datetime.end_of(now, 'year'),
             })
 
