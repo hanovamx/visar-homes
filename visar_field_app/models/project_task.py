@@ -165,6 +165,35 @@ class ProjectTask(models.Model):
     # corregir algo, el técnico pulsa "Habilitar edición": eso sella este marcador
     # y desbloquea la captura. Se re-bloquea al guardar (cada edición exige volver
     # a habilitarla) o al sacar la tarea de la etapa Completado.
+    # ------------------------------------------------------------------
+    # "Hoja de trabajo — Completada" dice la verdad (REQ-005)
+    # ------------------------------------------------------------------
+    #
+    # El indicador verde de la ficha FSM es NATIVO y se enciende con
+    # `worksheet_count`, que solo cuenta si EXISTE el registro de la hoja. La app
+    # crea ese registro en cuanto la hoja se puede capturar —al pulsar "Comenzar
+    # servicio"—, porque necesita un id propio para sembrar las tarjetas de área
+    # obligatoria. Resultado: un servicio que apenas empezaba aparecía con su hoja
+    # "Completada", y coordinación leía eso como trabajo terminado.
+    #
+    # Aquí "hay hoja" pasa a significar "hay hoja GUARDADA y validada", que es el
+    # sello `visar_worksheet_saved_at` (lo pone "Guardar hoja de trabajo", NO el
+    # borrador: ver `/visar/field/task/<id>/worksheet/save`). Se arregla en el
+    # cómputo y no en la vista a propósito: el mismo conteo alimenta el indicador
+    # de la ficha, los botones nativos de firmar/enviar reporte —que se ofrecían
+    # sobre una hoja vacía— y la sección de hoja de trabajo del portal del
+    # cliente. Corregir solo la vista habría dejado mintiendo a los otros dos.
+    #
+    # El botón sin marcar sigue abriendo la hoja en curso: `open_fsm_worksheet`
+    # busca el registro por su cuenta y no se guía por este conteo.
+
+    @api.depends('visar_worksheet_saved_at')
+    def _compute_worksheet_count(self):
+        super()._compute_worksheet_count()
+        for task in self:
+            if not task.visar_worksheet_saved_at:
+                task.worksheet_count = 0
+
     visar_worksheet_reopened_at = fields.Datetime(
         string="Edición de hoja habilitada en", readonly=True, copy=False,
         help="Momento en que un técnico habilitó la edición de la hoja de trabajo "
