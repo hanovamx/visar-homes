@@ -50,11 +50,16 @@ class TestPoliza(TransactionCase):
             'visar_fsm_project_id': project.id, 'taxes_id': [(6, 0, [])],
         })
 
+    def _lista_sin_reglas(self):
+        return self.env['product.pricelist'].create({'name': 'Lista test póliza'})
+
     def _make_poliza(self, products, start=date(2026, 1, 1), plan=None):
         lines = [(0, 0, {'product_id': p.product_variant_id.id, 'product_uom_qty': 1})
                  for p in products]
+        # Lista explícita: desde REQ-004 no hay default y sin lista no se confirma.
         order = self.env['sale.order'].create({
             'partner_id': self.partner.id, 'plan_id': (plan or self.plan).id,
+            'pricelist_id': self._lista_sin_reglas().id,
             'start_date': start, 'order_line': lines})
         # El cobro adelantado vive en el PEDIDO, no en la factura: el carrito web
         # añade la línea antes de pagar, y estos tests reproducen ese mismo estado.

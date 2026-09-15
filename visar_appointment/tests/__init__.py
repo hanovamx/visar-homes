@@ -7,3 +7,4 @@ from . import test_agent_vocabulario
 from . import test_travel_feasibility
 from . import test_reschedule_capacity
 from . import test_pago_factura
+from . import test_lista_de_precios_default

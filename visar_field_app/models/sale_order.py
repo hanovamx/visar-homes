@@ -57,6 +57,15 @@ class SaleOrder(models.Model):
         help="Empleado que vendió esta cotización. No necesita usuario de Odoo. "
              "Es independiente del campo Vendedor (usuario), que sigue igual.")
 
+    def _visar_requiere_lista_de_precios(self):
+        """El upsell de campo no exige lista de precios para confirmarse (REQ-004).
+
+        Lo confirma el técnico desde la app, en casa del cliente, y hoy los
+        productos de upsell no tienen precio por zona: bloquearlo ahí dejaría la
+        venta a medias sin que nadie de oficina lo vea.
+        """
+        return super()._visar_requiere_lista_de_precios() and not self.visar_upsell_task_id
+
     @api.depends('visar_upsell_order_ids')
     def _compute_visar_upsell_order_count(self):
         counts = dict(self.env['sale.order']._read_group(

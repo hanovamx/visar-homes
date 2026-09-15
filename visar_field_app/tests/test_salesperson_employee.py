@@ -27,10 +27,12 @@ class TestVendedorEmpleado(TransactionCase):
         cls.cliente = cls.env['res.partner'].create({'name': 'Cliente Cotización'})
         cls.producto = cls.env['product.product'].create({
             'name': 'Producto de prueba', 'type': 'consu', 'list_price': 100.0})
+        cls.lista = cls.env['product.pricelist'].create({'name': 'Lista vendedor-empleado'})
 
     def _cotizacion(self, env=None, **valores):
         return (env or self.env)['sale.order'].create(dict({
             'partner_id': self.cliente.id,
+            'pricelist_id': self.lista.id,
             'order_line': [(0, 0, {'product_id': self.producto.id,
                                    'product_uom_qty': 1})],
         }, **valores))

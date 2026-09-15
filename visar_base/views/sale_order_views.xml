@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- REQ-004: "Actualizar precios" siempre a mano, con aviso.
+
+         Odoo solo muestra el botón justo después de cambiar la lista en el
+         formulario (`show_update_pricelist` no se guarda): si se guarda la
+         cotización antes de pulsarlo, desaparece y las líneas se quedan con el
+         precio sin lista. Aquí queda visible mientras la cotización tenga lista y
+         líneas, y el aviso dice lo que el nativo calla: también quita descuentos. -->
+    <record id="view_order_form_visar_pricelist" model="ir.ui.view">
+        <field name="name">sale.order.form.visar.pricelist</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='action_update_prices']" position="attributes">
+                <attribute name="invisible">state in ['sale', 'cancel'] or not pricelist_id or not order_line</attribute>
+                <attribute name="string">Actualizar precios</attribute>
+                <attribute name="confirm">Se van a recalcular los precios unitarios de TODAS las líneas con la lista de precios seleccionada. Los descuentos y precios capturados a mano se reemplazan. ¿Continuar?</attribute>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

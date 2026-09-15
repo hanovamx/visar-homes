@@ -71,8 +71,11 @@ class TestFsmGrouping(TransactionCase):
                          'product_uom_qty': 1}) for p in products]
         lines += [(0, 0, {'product_id': a.product_variant_id.id,
                           'product_uom_qty': 1}) for a in addons]
+        # Lista explícita: desde REQ-004 no hay default y sin lista no se confirma.
         order = self.env['sale.order'].create({
-            'partner_id': self.partner.id, 'order_line': lines})
+            'partner_id': self.partner.id, 'order_line': lines,
+            'pricelist_id': self.env['product.pricelist'].create(
+                {'name': 'Lista test FSM'}).id})
         order.action_confirm()
         return order
 
