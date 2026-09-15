@@ -141,6 +141,14 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
+**Vendedor (empleado) en la cotización — 15-sep 21:50** (visar_field_app 19.0.1.29.0,
+`d710c9b`, `deploy-vendedor-empleado-15sep.sh`). `sale.order.visar_salesperson_employee_id`,
+Many2one a `hr.employee`, **opcional**, en *Otra información* debajo de Vendedor. `user_id` no
+se toca (lo usan `sale_commission` y las reglas de "solo mis documentos"). Un vendedor sin
+permisos de RH puede elegir empleados por el fallback público de `hr.employee` (probado).
+Opcional porque las cotizaciones del agente y del agendado web se confirman solas al pagar.
+Pendiente aparte: que alimente comisiones.
+
 **"No me interesa" cierra el recontacto — 15-sep, noche** (visar_whatsapp_agent
 19.0.1.21.0 + runtime `9bbc1f0`, `deploy-declino-15sep.sh`). El motivo `declino`
 existía y nadie lo mandaba, y `agent_drop_followup` no tocaba leads ya *Enviado* ni
