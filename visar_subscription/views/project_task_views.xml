@@ -12,8 +12,21 @@
                 <field name="visar_source_invoice_id"
                        invisible="not visar_source_invoice_id"
                        readonly="1"/>
-                <field name="visar_is_warranty"
+                <!-- El tipo sustituye al booleano de garantía como lo que se edita:
+                     el booleano sigue existiendo, derivado, para el resto del código. -->
+                <field name="visar_visit_kind"
                        invisible="not visar_subscription_order_id"/>
+                <field name="visar_visit_seq"
+                       invisible="not visar_subscription_order_id or visar_visit_total &lt;= 1"
+                       readonly="1"/>
+                <field name="visar_visit_total" invisible="1"/>
+                <field name="visar_visit_due_date"
+                       invisible="not visar_subscription_order_id
+                                  or visar_visit_kind != 'preventiva'"/>
+                <field name="visar_visit_due_out_of_term"
+                       invisible="not visar_visit_due_out_of_term"
+                       readonly="1"/>
+                <field name="visar_visit_due_manual" invisible="1"/>
             </xpath>
         </field>
     </record>

@@ -7,6 +7,12 @@ from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
+# Etiquetas del guión que significan "ya tiene plaga". Parámetro del sistema porque
+# son textos de una pregunta que se edita desde la interfaz: ver
+# `_visar_detect_corrective_start`.
+CORRECTIVE_HINTS_PARAM = 'visar.poliza.pistas_correctivo'
+DEFAULT_CORRECTIVE_HINTS = "correctivo,plaga activa"
+
 
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
@@ -29,6 +35,18 @@ class SaleOrder(models.Model):
              "se puede ajustar aquí sin tocar el plan. No afecta el precio ni el "
              "calendario de facturación.\n\n"
              "0 = derivar el nº de visitas de los periodos cobrados por adelantado.",
+    )
+    visar_corrective_start = fields.Boolean(
+        string="Arranque correctivo",
+        compute='_compute_visar_corrective_start', store=True, readonly=False,
+        copy=False,
+        help="La póliza se contrató con plaga activa, así que las primeras semanas "
+             "admiten visitas CORRECTIVAS de refuerzo hasta erradicarla, incluidas en "
+             "el precio y sin consumir las visitas de la serie.\n\n"
+             "Se deduce una sola vez del guión de calificación de la cita "
+             "(«¿Tienes plaga o es preventivo?») y se puede corregir a mano: quien va "
+             "al domicilio a veces encuentra otra cosa de la que el cliente contó por "
+             "teléfono.",
     )
     # Siniestralidad (Fase 5): consumo de garantía para ajustar renovación.
     visar_service_visit_count = fields.Integer(
@@ -79,6 +97,140 @@ class SaleOrder(models.Model):
         for order in self:
             order.visar_included_visits = (
                 order.plan_id.visar_included_visits if order.plan_id else 0)
+
+    @api.depends('order_line.calendar_event_id')
+    def _compute_visar_corrective_start(self):
+        """Deduce del guión de calificación si se contrató con plaga activa.
+
+        Es compute con `readonly=False` por lo mismo que `visar_included_visits`: en
+        el flujo web la orden es el carrito y se escribe desde controladores donde los
+        onchange no corren, y lo deducido tiene que poder corregirse a mano sin que el
+        siguiente recálculo lo pise.
+        """
+        for order in self:
+            order.visar_corrective_start = order._visar_detect_corrective_start()
+
+    def _visar_detect_corrective_start(self):
+        """¿Dijo el cliente que ya tenía plaga al contratar?
+
+        El par preventivo/correctivo NO es un campo en ninguna parte: vive como
+        RESPUESTA del guión en la cita (`appointment.answer.input`), en texto y con dos
+        vocabularios distintos según la pregunta por la que se haya pasado ("Correctivo
+        (plaga activa)" en la actual, "Plaga activa" en la vieja). Por eso se lee una
+        sola vez, aquí, y de aquí en adelante manda el campo de la póliza.
+
+        Las pistas viven en un parámetro del sistema porque son ETIQUETAS: se editan
+        desde la interfaz de Odoo, y el día que alguien reescriba una, esto no puede
+        ser un despliegue.
+        """
+        self.ensure_one()
+        if not self.is_subscription:
+            return False
+        # `appointment` no es dependencia de este módulo: la póliza existe igual sin
+        # citas (alta manual desde Ventas), y así el grafo de módulos no cambia.
+        if 'appointment.answer.input' not in self.env:
+            return False
+        eventos = self.order_line.mapped('calendar_event_id')
+        if not eventos:
+            return self.visar_corrective_start
+        pistas = self._visar_corrective_hints()
+        if not pistas:
+            return False
+        respuestas = self.env['appointment.answer.input'].sudo().search(
+            [('calendar_event_id', 'in', eventos.ids)])
+        for respuesta in respuestas:
+            texto = ' '.join(filter(None, [
+                respuesta.value_text_box or '',
+                respuesta.value_answer_id.name or '',
+            ])).lower()
+            if any(pista in texto for pista in pistas):
+                return True
+        return False
+
+    def _visar_corrective_hints(self):
+        param = self.env['ir.config_parameter'].sudo().get_param(
+            CORRECTIVE_HINTS_PARAM, DEFAULT_CORRECTIVE_HINTS)
+        return [pista.strip().lower() for pista in (param or '').split(',')
+                if pista.strip()]
+
+    # ------------------------------------------------------------------
+    # Fechas propuestas: para cuándo le toca cada visita pendiente
+    # ------------------------------------------------------------------
+    def _visar_schedule_visit_due_dates(self):
+        """Repropone la serie preventiva de cada póliza. Idempotente.
+
+        Reglas, todas decididas con Visar (15-sep-2026):
+
+        * **El ancla es la fecha REAL de la visita anterior**, no la factura ni el
+          pago. El cliente eligió el día 20 al contratar y espera que le toque cerca
+          del 20, no el día que su banco liquidó el cargo.
+        * **Se recorre de una en una**: cada visita se propone desde la anterior, así
+          que agendar una tarde mueve la siguiente y no el contrato entero de golpe.
+        * **Correctivas y garantías no entran**: son adicionales, no consumen las
+          visitas que el cliente compró y no recorren la serie. Una póliza correctiva
+          con tres refuerzos el primer mes no queda tres meses adelantada.
+        * **Lo que no cabe en la vigencia se marca, no se fecha.** Proponer enero para
+          una póliza que termina en diciembre es inventar; marcarlo deja ver cuántas
+          visitas acumuladas hay, que es justo lo que falta decidir.
+        * **Una fecha escrita a mano manda** sobre la propuesta y ancla a las
+          siguientes.
+
+        Sin ancla (ninguna visita agendada todavía) no se propone nada: la serie no
+        tiene de dónde colgar, y la lista lo enseña como tal en vez de inventarse un
+        origen.
+
+        **Una serie por servicio, no por póliza.** Se agrupa por la línea representante,
+        que es la misma que usa la consolidación: una póliza combo que va en una sola
+        vuelta comparte representante y por tanto serie, pero una que NO se consolidó
+        (12 podas y 6 fumigaciones al año, el caso que el guardia de
+        `_visar_visit_groups` deja aparte) tiene dos series de verdad. Mezclarlas en una
+        sola cadena proponía 22 meses seguidos a un contrato de un año.
+        """
+        for order in self:
+            interval = order.plan_id.visar_visit_interval_months if order.plan_id else 0
+            visitas = order.visar_visit_ids.filtered(
+                lambda t: t.visar_visit_kind == 'preventiva'
+                and t.state != '1_canceled'
+            ).sorted('id')
+            series = {}
+            for visita in visitas:
+                series.setdefault(visita.visar_source_line_id.id, []).append(visita)
+            for cadena in series.values():
+                order._visar_walk_visit_series(cadena, interval)
+
+    def _visar_walk_visit_series(self, visitas, interval):
+        """Recorre UNA serie: cada pendiente cuelga de la fecha real de la anterior."""
+        self.ensure_one()
+        ancla = None
+        for visita in visitas:
+            real = fields.Date.to_date(visita.planned_date_begin)
+            if real:
+                # Ya agendada: ancla a las siguientes y no necesita propuesta. El
+                # `max` importa cuando una visita de más adelante en la lista se
+                # agendó ANTES que las anteriores: sin él la serie retrocede y dos
+                # visitas acaban propuestas para el mismo mes.
+                ancla = max(ancla, real) if ancla else real
+                vals = {'visar_visit_due_date': False,
+                        'visar_visit_due_out_of_term': False}
+            elif visita.visar_visit_due_manual and visita.visar_visit_due_date:
+                ancla, vals = visita.visar_visit_due_date, {}
+            elif not interval or ancla is None:
+                vals = {'visar_visit_due_date': False,
+                        'visar_visit_due_out_of_term': False}
+            else:
+                ancla = ancla + relativedelta(months=interval)
+                fuera = bool(self.end_date and ancla > self.end_date)
+                vals = {'visar_visit_due_date': False if fuera else ancla,
+                        'visar_visit_due_out_of_term': fuera}
+            cambios = {campo: valor for campo, valor in vals.items()
+                       if visita[campo] != valor}
+            if cambios:
+                visita.with_context(visar_poliza_due_sync=True).write(cambios)
+
+    def action_visar_recompute_visit_due_dates(self):
+        """Botón del pedido: recalcular las fechas propuestas de la póliza."""
+        self._visar_schedule_visit_due_dates()
+        return True
 
     @api.depends('visar_visit_ids', 'visar_visit_ids.visar_is_warranty')
     def _compute_visar_siniestralidad(self):
@@ -390,6 +542,8 @@ class SaleOrder(models.Model):
                     lines, project, invoice, seq=seq + 1, total=n))
             if is_first:
                 self._visar_enrich_first_visit(lines)
+        # Con el lote ya creado y la primera visita fechada, la serie tiene ancla.
+        self._visar_schedule_visit_due_dates()
 
     def _visar_enrich_first_visit(self, lines):
         """La PRIMERA visita del grupo hereda fecha y técnicos de la cita reservada.
@@ -431,11 +585,19 @@ class SaleOrder(models.Model):
             return ' + '.join(groups.mapped('name'))
         return ' + '.join(dict.fromkeys(lines.mapped('product_id.name')))
 
-    def _visar_visit_vals(self, lines, project, invoice, warranty=False, seq=0, total=0):
-        """Valores de UNA visita. `lines` es el grupo que atiende (una o varias)."""
+    def _visar_visit_vals(self, lines, project, invoice, warranty=False, seq=0, total=0,
+                          kind=None):
+        """Valores de UNA visita. `lines` es el grupo que atiende (una o varias).
+
+        `kind` manda cuando se pasa; `warranty` se conserva porque es lo que llaman el
+        botón de garantía y el generador de periodos desde antes de los tipos.
+        """
         self.ensure_one()
+        kind = kind or ('garantia' if warranty else 'preventiva')
+        adicional = kind != 'preventiva'
         period = invoice.invoice_date if invoice else fields.Date.context_today(self)
-        label = _("Garantía") if warranty else _("Visita")
+        label = {'garantia': _("Garantía"),
+                 'correctiva': _("Refuerzo")}.get(kind, _("Visita"))
         name = _("%(label)s póliza %(period)s — %(product)s",
                  label=label, period=period,
                  product=self._visar_visit_service_label(lines))
@@ -449,12 +611,17 @@ class SaleOrder(models.Model):
             'partner_id': self.partner_id.id,
             'company_id': self.company_id.id,
             'visar_subscription_order_id': self.id,
-            'visar_source_invoice_id': False if warranty else (invoice.id if invoice else False),
+            'visar_source_invoice_id': False if adicional else (invoice.id if invoice else False),
             # El m2o guarda la línea REPRESENTANTE (compatibilidad con vistas y datos
             # anteriores); el conjunto real de líneas atendidas va en el m2m.
-            'visar_source_line_id': False if warranty else lines[:1].id,
-            'visar_source_line_ids': False if warranty else [(6, 0, lines.ids)],
-            'visar_is_warranty': warranty,
+            'visar_source_line_id': False if adicional else lines[:1].id,
+            'visar_source_line_ids': False if adicional else [(6, 0, lines.ids)],
+            # El tipo manda; `visar_is_warranty` se deriva de él. Una visita adicional
+            # (refuerzo o garantía) no lleva número: no es parte de la serie que el
+            # cliente compró, y numerarla le haría creer que le quedan menos.
+            'visar_visit_kind': kind,
+            'visar_visit_seq': 0 if adicional else seq,
+            'visar_visit_total': 0 if adicional else total,
         }
 
     # ------------------------------------------------------------------
@@ -499,6 +666,39 @@ class SaleOrder(models.Model):
         task = self.env['project.task'].create(
             self._visar_visit_vals(line, tmpl.visar_fsm_project_id, invoice=False, warranty=True)
         )
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'project.task',
+            'res_id': task.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def action_visar_add_corrective_visit(self):
+        """Crea una visita CORRECTIVA de refuerzo, incluida en el precio de la póliza.
+
+        Cuando se contrata con plaga activa hacen falta varias visitas seguidas para
+        erradicarla, y cuántas lo dice el técnico al ver el domicilio, no el plan. Sin
+        un tipo propio solo había dos formas de registrarlas y las dos mienten: como
+        garantía inflan la siniestralidad (que se usa para subir el precio en la
+        renovación) aunque no haya fallado nada, y como visita normal le consumen al
+        cliente una de las que pagó.
+
+        No exige `visar_corrective_start`: la póliza pudo venderse como preventiva y el
+        técnico encontrar plaga en la primera visita. Lo que el campo hace es avisar en
+        la póliza de que este camino es el esperado.
+        """
+        self.ensure_one()
+        if self.subscription_state != '3_progress':
+            raise UserError(_(
+                "La póliza no está activa (%s); no se le pueden añadir refuerzos.",
+                self.subscription_state or '—'))
+        line = self._visar_visit_lines()[:1]
+        if not line:
+            return False
+        tmpl = line.product_id.product_tmpl_id
+        task = self.env['project.task'].create(self._visar_visit_vals(
+            line, tmpl.visar_fsm_project_id, invoice=False, kind='correctiva'))
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'project.task',

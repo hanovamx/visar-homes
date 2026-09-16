@@ -15,18 +15,30 @@
                         class="oe_stat_button" icon="fa-shield"
                         invisible="not is_subscription"
                         string="Visita de garantía"/>
+                <!-- Refuerzo: visita correctiva incluida, que NO consume la serie ni
+                     cuenta como siniestralidad. -->
+                <button name="action_visar_add_corrective_visit" type="object"
+                        class="oe_stat_button" icon="fa-bolt"
+                        invisible="not visar_is_poliza"
+                        string="Visita de refuerzo"/>
             </xpath>
             <!-- Visitas incluidas: junto al plan recurrente, editable por póliza.
                  Se ancla en el div nombrado que sale_subscription inserta antes de la
                  lista de precios; ese módulo aplica su vista antes que esta. -->
             <xpath expr="//div[@name='plan_block']" position="after">
                 <field name="visar_included_visits" invisible="not is_subscription"/>
+                <field name="visar_corrective_start" invisible="not is_subscription"/>
             </xpath>
             <!-- Fase 4: previsualizar descuento de combo antes de confirmar -->
             <xpath expr="//header" position="inside">
                 <button name="action_visar_apply_combo_discount" type="object"
                         string="Aplicar descuento combo"
                         invisible="not visar_is_poliza or state not in ('draft', 'sent')"/>
+                <!-- La serie se repropone sola al agendar una visita; el botón es para
+                     después de corregir a mano fechas, tipos o la vigencia. -->
+                <button name="action_visar_recompute_visit_due_dates" type="object"
+                        string="Recalcular fechas propuestas"
+                        invisible="not visar_is_poliza or state != 'sale'"/>
             </xpath>
             <!-- Fase 3: bloquear cambio de dirección de servicio en pólizas confirmadas -->
             <field name="partner_shipping_id" position="attributes">

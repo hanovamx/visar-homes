@@ -256,6 +256,119 @@ Los tests cubren, entre otros, los dos fallos que costarían dinero en silencio:
 no se clasifica como parcial — si el anticipo saliera de las líneas facturables, no se
 crearía factura, no habría visitas y el dinero quedaría sin aplicar, sin ningún error).
 
+## Las visitas que nadie agenda (paso 1, 16-sep-2026, v19.0.1.6.0)
+
+De una póliza **solo la primera visita nace con fecha**: la que el cliente eligió en el
+wizard. Las demás nacen sin agendar y, hasta esta versión, **nada ni nadie las agendaba**:
+no había recordatorio, ni asignación automática, ni pantalla donde verlas. En una copia
+exacta de producción del 16-sep había **150 visitas abiertas sin fecha** y **ninguna
+visita posterior a la primera había recibido fecha jamás** — el caso más grave del corpus
+de clientes es exactamente este (tres visitas sin rendir que nadie rastreaba tras la
+salida de un empleado).
+
+El paso 1 **no le escribe a ningún cliente**. Hace visible lo que se le debe a cada uno y
+deja el dato que necesita el paso 2 (la invitación por WhatsApp para que el cliente elija
+día, con el motor de horarios que ya existe).
+
+### Una póliza no genera un solo tipo de visita
+
+`project.task.visar_visit_kind`:
+
+| tipo | qué es | cuenta en la serie | siniestralidad |
+|---|---|---|---|
+| **preventiva** | las visitas que el cliente compró, numeradas | sí | no |
+| **correctiva** | refuerzos para erradicar una plaga activa, incluidos en el precio | **no** | **no** |
+| **garantía** | reincidencia dentro de los 30 días | no | **sí** |
+
+La correctiva es nueva y no es un lujo: una póliza correctiva necesita **varias visitas
+el primer mes**, cuántas lo dice el técnico al ver el domicilio. Sin un tipo propio solo
+había dos formas de registrarlas y las dos mienten: como garantía **inflan
+`visar_warranty_rate`** (con la que se ajusta el precio en la renovación) aunque no haya
+fallado nada, y como visita normal **le consumen al cliente una de las que pagó**.
+
+`visar_is_warranty` no desaparece —lo usan el botón del pedido, la siniestralidad y las
+búsquedas— pero pasa a **derivarse** del tipo (compute con inverse, almacenado), para que
+no haya dos campos que puedan contradecirse. La migración llena el tipo en **pre-migrate**:
+si el ORM cargara el cómputo con el tipo vacío, escribiría `False` en todas y Visar
+perdería de golpe qué visitas fueron de garantía.
+
+Botón nuevo en el pedido: **Visita de refuerzo** (`action_visar_add_corrective_visit`), al
+lado del de garantía. No exige que la póliza sea correctiva: se pudo vender como
+preventiva y el técnico encontrar plaga.
+
+### La fecha propuesta
+
+`visar_visit_due_date` contesta *para cuándo le toca*, mientras no haya fecha agendada.
+Reglas, decididas con Visar el 15-sep:
+
+- **El ancla es la fecha REAL de la visita anterior**, no la factura ni el pago. El
+  cliente que eligió el día 20 espera que le toque cerca del 20, no el día que su banco
+  liquidó el cargo.
+- **Una visita al mes** por defecto, en todos los planes, desde
+  `sale.subscription.plan.visar_visit_interval_months` (0 = este plan no propone fechas).
+  No es una constante en Python: es un campo del plan, editable sin desplegar.
+- **Se recorre de una en una**: agendar una visita tarde mueve la siguiente, no el
+  contrato entero de golpe.
+- **Correctivas y garantías no entran ni recorren la serie.** Una póliza con tres
+  refuerzos el primer mes no queda tres meses adelantada.
+- **Una serie por servicio, no por póliza.** Se agrupa por la línea representante, la
+  misma que usa la consolidación: una póliza combo que va en una sola vuelta comparte
+  serie, pero las 12 podas y 6 fumigaciones que el guardia de `_visar_visit_groups` deja
+  aparte son **dos series de verdad**. Mezclarlas proponía 22 meses seguidos a un contrato
+  de un año (salió en la copia de producción, no en un test).
+- **La serie no retrocede.** Si una visita de más adelante se agenda antes de que le
+  toque, el ancla avanza con `max`: sin eso dos visitas acababan propuestas para el mismo
+  mes (también salió en la copia de producción).
+- **Lo que no cabe en la vigencia se marca, no se fecha**
+  (`visar_visit_due_out_of_term`). Proponer enero para una póliza que terminó en diciembre
+  es inventar. Son las **visitas acumuladas**: por decisión de negocio **no caducan por
+  ahora**, y cuando caduquen será una ventana configurable, no un despliegue.
+- **Sin ancla no se propone nada.** Si ninguna visita de la póliza tiene fecha real, la
+  serie no tiene de dónde colgar y la pantalla lo enseña como tal.
+- **Una fecha escrita a mano manda** (`visar_visit_due_manual`) y ancla a las siguientes:
+  el recálculo no la pisa.
+
+El recálculo **no es un compute con `depends`**: dependería de las OTRAS visitas de la
+misma póliza (una cadena, no un campo) y cualquier escritura en el lote recalcularía el
+contrato entero. Se llama desde donde la serie cambia de verdad — se agenda una visita,
+cambia su tipo, nace otra — y desde el botón *Recalcular fechas propuestas* del pedido.
+
+> **Trampa de Odoo:** `planned_date_begin` **se descarta sin avisar** si se escribe sin su
+> fecha de fin. Los tests tienen que escribir las dos (`_agendar`), y costó una ronda de
+> fallos entenderlo.
+
+### Arranque correctivo: de dónde sale
+
+El par preventivo/correctivo **no es un campo en ninguna parte**: vive como respuesta del
+guión en la cita (`appointment.answer.input`), en texto y con dos vocabularios según la
+pregunta por la que se pasó ("Correctivo (plaga activa)" en la actual, "Plaga activa" en
+la vieja). En producción, de las **25 pólizas con respuesta, las 25 son correctivas**.
+
+`sale.order.visar_corrective_start` lo lee **una sola vez** y de ahí en adelante manda el
+campo, editable: quien va al domicilio a veces encuentra otra cosa de la que el cliente
+contó por teléfono. Las pistas de texto viven en el parámetro
+`visar.poliza.pistas_correctivo` porque son **etiquetas** que se editan desde la interfaz.
+El módulo **no depende de `appointment`** (una póliza existe igual sin cita): se comprueba
+`'appointment.answer.input' in self.env`.
+
+### La pantalla
+
+*Field Service → Planning → **Visitas de póliza por agendar*** (gerentes de FSM):
+preventivas abiertas sin fecha, con cliente, póliza, «N de M», fecha propuesta, días de
+retraso y fin de la póliza. Vencidas en rojo, las de la semana en ámbar, fuera de vigencia
+en gris. Filtros: vencidas, próximos 30 días, sin fecha propuesta, fuera de vigencia;
+agrupable por cliente, póliza y mes.
+
+### Lo que falta (negocio, no código)
+
+1. **¿Cuántas visitas debe Suscripción Mensual?** Cobra 3 meses por adelantado y genera
+   **1 visita por factura**, así que o el cliente recibe menos de lo que pagó o el campo
+   de visitas incluidas está mal. **59 pedidos** con ese plan.
+2. **El margen** de días con el que el cliente puede pactar otra fecha para una
+   correctiva (el paso 2 lo necesita).
+3. **Quién marca el tipo**: técnico en la app de campo, oficina, o por defecto según la
+   póliza.
+
 ---
 
 ## Cómo se ofrece en el chat (3-sep-2026)

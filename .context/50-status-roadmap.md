@@ -1,5 +1,21 @@
 # Estado y roadmap
 
+> **16-sep-2026 00:10 — paso 1 del rezago de pólizas: EN `visar-test` Y EN UNA COPIA DE
+> PRODUCCIÓN, SIN DESPLEGAR.** `visar_subscription` **19.0.1.6.0**: las visitas de
+> póliza estrenan **tipo** (preventiva / correctiva / garantía), **número de visita** en
+> un campo y **fecha propuesta**, con la pantalla *Field Service → Planning → Visitas de
+> póliza por agendar*. Nada de esto le escribe a ningún cliente: es solo ver lo que se
+> le debe a cada uno. 39 pruebas del módulo y 456 de todos los módulos en `visar-test`
+> (los 2 de `TestBookingDedupe` de siempre). En una copia exacta de `visar-db`
+> (`visar-agenda-clone`) la migración numeró 191 visitas, conservó las 10 de garantía y
+> dejó la pantalla con **150 filas: 63 con fecha propuesta, 41 fuera de vigencia y 46 sin
+> ancla**; 4 ya vencidas. ⚠️ El código vive en un `git worktree` fuera de `/opt`
+> (`/var/tmp/visar-wt/poliza-agenda`) precisamente para que el árbol de producción no lo
+> tenga en disco antes del `-u`. Falta decidir con Visar: **cuántas visitas debe
+> Suscripción Mensual** (cobra 3 meses por adelantado y genera 1 visita por factura, 59
+> pedidos), el **margen de días** para que el cliente pacte otra fecha en una correctiva,
+> y **quién marca el tipo** de visita. Detalle en `35-polizas.md`.
+>
 > **15-sep-2026 00:39 — en `visar-db`: visar_appointment 19.0.2.21.0 y
 > visar_whatsapp_agent 19.0.1.20.0**, leídas de la BD después del `-u`. Dos
 > despliegues, los dos por feedback de Visar probando en vivo (detalle en

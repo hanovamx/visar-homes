@@ -37,6 +37,27 @@ class SaleSubscriptionPlan(models.Model):
              "adelantado (comportamiento por defecto: 1 visita por periodo facturado).",
     )
 
+    visar_visit_interval_months = fields.Integer(
+        string="Meses entre visitas",
+        default=1,
+        help="Separación entre las visitas PREVENTIVAS de la póliza, para proponer "
+             "fecha a las que todavía no están agendadas. La serie se ancla en la "
+             "fecha REAL de la primera visita (la que el cliente eligió al contratar), "
+             "no en la factura ni en el pago.\n\n"
+             "1 = una visita al mes, que es lo normal en todos los planes. Las visitas "
+             "correctivas y las de garantía no entran en la serie ni la recorren: son "
+             "adicionales y no consumen las visitas del cliente.\n\n"
+             "0 = no proponer fechas para este plan.",
+    )
+
+    @api.constrains('visar_visit_interval_months')
+    def _check_visar_visit_interval_months(self):
+        for plan in self:
+            if plan.visar_visit_interval_months < 0:
+                raise ValidationError(_(
+                    "Los meses entre visitas del plan '%s' no pueden ser negativos.",
+                    plan.display_name))
+
     @api.constrains('visar_included_visits')
     def _check_visar_included_visits(self):
         for plan in self:
