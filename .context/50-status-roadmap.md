@@ -157,6 +157,35 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
+**Lista de precios: sin default y obligatoria al confirmar (REQ-004) — 17-sep 21:17**
+(visar_base 19.0.1.13.0, visar_appointment 19.0.2.22.0, `de2299c`, `deploy-req004-005-15sep.sh`).
+`property_product_pricelist` NO se guarda: Odoo la calcula y sin una propia ponía la primera
+lista activa sin grupo de países — "VISAR Zona A" (sequence 11) — así que toda cotización nacía
+con el precio de otra zona; reordenar las listas no lo arregla. Fuera del sitio web solo se
+muestra la lista ELEGIDA (en el sitio web no se toca: la tienda y el wizard la necesitan, y ahí
+la zona del CP pone la correcta). `_confirmation_error_message` la exige al confirmar, con hook
+`_visar_requiere_lista_de_precios`; el upsell de campo queda exento y un **pago en línea confirma
+igual** y deja nota (el nativo llama `action_confirm` sin atrapar errores: bloquear ahí dejaría al
+cliente cobrado y sin pedido, REQ-002). "Actualizar precios" queda visible mientras haya lista y
+líneas, con aviso de que reemplaza descuentos. **Odoo no deja cambiar la lista de un pedido
+confirmado**: las 6 pólizas activas sin lista se quedan así, con nota en su chatter diciendo qué
+lista les toca al renovar. Efecto: toda alta manual (pólizas incluidas) exige elegir lista.
+
+**"Hoja de trabajo — Completada" dice la verdad (REQ-005) — 17-sep 21:17**
+(visar_field_app 19.0.1.31.0, `51262c9`). El indicador es NATIVO y se enciende con
+`worksheet_count`, que solo mira si EXISTE el registro; la app lo crea al pulsar "Comenzar
+servicio" (necesita id para sembrar las áreas obligatorias), así que un servicio recién empezado
+salía con su hoja completada. Ahora el conteo exige el sello `visar_worksheet_saved_at`, que solo
+escribe "Guardar hoja de trabajo" (el borrador no). Se arregló en el CÓMPUTO y no en la vista
+porque el mismo conteo alimenta los botones nativos de firmar/enviar reporte y la hoja del
+**portal del cliente**. En producción 12 tareas dejaban el verde; a las 3 ya cerradas con hoja
+llena se les puso el sello a mano (nota en su chatter), las otras 9 están en ejecución. Hacia
+adelante no se repite: la ruta de cierre de la app exige la hoja guardada.
+
+**Visto y no corregido:** en cada arranque de Odoo el log repite
+`Missing model x_labor_de_jardineria` (desde el 15-sep, 2 líneas por arranque). Huele a resto de
+un modelo de Studio borrado; no rompe nada visible.
+
 **Vendedor (empleado) en la cotización — 15-sep 21:50** (visar_field_app 19.0.1.29.0,
 `d710c9b`, `deploy-vendedor-empleado-15sep.sh`). `sale.order.visar_salesperson_employee_id`,
 Many2one a `hr.employee`, **opcional**, en *Otra información* debajo de Vendedor. `user_id` no
