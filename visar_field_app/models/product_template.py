@@ -20,13 +20,25 @@ class ProductTemplate(models.Model):
     def _visar_upsell_domain(self):
         """Dominio del catálogo ofrecible en campo.
 
+        NO se filtra por TIPO: un producto de servicio (una poda que el técnico
+        detecta en sitio) se vende en campo igual que una malla. Lo único que se
+        exige es que se pueda COBRAR ahí mismo, que es lo que el flujo promete.
+
         `recurring_invoice` se excluye SIEMPRE, aunque alguien marque el flag por
         error: un producto de suscripción vendido como extra puntual dejaría al
         cliente con un cobro recurrente que nadie pidió. Es el mismo criterio que
         aplica Odoo nativo en `industry_fsm_sale_subscription`.
+
+        `invoice_policy='order'` por la misma razón, medida en `visar-test`
+        (17-sep-2026): un producto que factura por ENTREGA (o por horas
+        capturadas) confirma su pedido y se queda en "Nada que facturar", así que
+        `_visar_upsell_confirm` no emite factura y el técnico se queda sin liga de
+        pago, con el cobro a medias delante del cliente. Los dos productos de
+        upsell que existen hoy ya facturan por pedido.
         """
         return [
             ('visar_upsell_ok', '=', True),
             ('sale_ok', '=', True),
             ('recurring_invoice', '=', False),
+            ('invoice_policy', '=', 'order'),
         ]
