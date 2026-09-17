@@ -205,17 +205,37 @@ class ProjectTask(models.Model):
 
     # --- Upsell en campo ---
     visar_upsell_order_id = fields.Many2one(
-        'sale.order', string="Pedido de adicionales", readonly=True, copy=False,
-        help="Pedido SEPARADO con los productos que el técnico vendió durante la "
-             "visita. El pedido (o póliza) que originó el servicio no se toca.")
+        'sale.order', string="Pedido de los adicionales", readonly=True, copy=False,
+        help="Pedido donde quedaron los productos que el técnico vendió durante la "
+             "visita. Normalmente es el MISMO pedido que originó el servicio; en "
+             "pólizas (y cuando ese pedido no se puede tocar) es un pedido aparte.")
+    # Las líneas SON el adicional: desde el 17-sep-2026 pueden estar dentro del
+    # pedido original, mezcladas con las del servicio contratado, así que el marcador
+    # por línea es lo único que las identifica.
+    visar_upsell_line_ids = fields.One2many(
+        'sale.order.line', 'visar_upsell_task_id',
+        string="Adicionales vendidos en sitio", readonly=True)
     # Monto del upsell EN LA TARJETA del servicio: es lo que hace que el vínculo se
     # vea sin abrir nada. El botón inteligente lo pinta con `widget="monetary"` y no
     # con `statinfo`: ese widget llama al formateador SIN los datos del registro, así
     # que a un campo monetario le quita el símbolo de moneda.
+    # Ya NO es el total del pedido: ahora el pedido incluye el servicio contratado.
     visar_upsell_amount_total = fields.Monetary(
         string="Vendido en sitio", currency_field='currency_id',
-        related='visar_upsell_order_id.amount_total', readonly=True,
+        compute='_compute_visar_upsell_amount_total', readonly=True,
         export_string_translation=False)
+    # El sello del cobro en efectivo vive en la TAREA y no en el pedido: el pedido
+    # original puede acumular los adicionales de varias visitas (y de varios
+    # técnicos), así que "quién recibió el efectivo" solo tiene sentido por visita.
+    # Los 10 adicionales anteriores al 17-sep-2026 lo tienen en su pedido aparte;
+    # `_visar_upsell_is_paid` lee los dos.
+    visar_upsell_cash_at = fields.Datetime(
+        string="Adicionales cobrados en efectivo", readonly=True, copy=False,
+        help="Momento en que el técnico declaró haber recibido en sitio el pago de "
+             "los adicionales. No sustituye la conciliación contable.")
+    visar_upsell_cash_by_id = fields.Many2one(
+        'hr.employee', string="Efectivo de adicionales recibido por",
+        readonly=True, copy=False)
 
     # ==================================================================
     # Flujo en sitio: etapas nativas + timesheet + reagenda (Req 2)
@@ -977,33 +997,41 @@ class ProjectTask(models.Model):
     # ==================================================================
     # Upsell en campo: catálogo, carrito, cobro
     # ==================================================================
-    # POR QUÉ UN PEDIDO APARTE Y NO LAS LÍNEAS DEL PEDIDO DE LA TAREA
+    # DÓNDE ATERRIZA EL ADICIONAL (decisión de negocio, 17-sep-2026)
     #
-    # El comportamiento NATIVO (`industry_fsm_sale._fsm_ensure_sale_order`) cuelga
-    # los materiales del `sale_order_id` de la tarea. Aquí eso rompe dos cosas:
+    # La línea del adicional va DENTRO del pedido original del servicio. Antes se
+    # creaba un pedido nuevo por visita; se cambió porque administración necesita ver
+    # la venta completa del cliente en un solo documento.
     #
-    #   1. Pólizas. En una visita de suscripción ese pedido ES la suscripción, así
-    #      que la línea entraría al ciclo de facturación recurrente: el cliente
-    #      terminaría pagando el extra cada mes. El puente nativo
-    #      (`industry_fsm_sale_subscription`) solo filtra productos recurrentes del
-    #      catálogo — no impide que la línea aterrice en la suscripción.
-    #   2. Cobro por la diferencia. El criterio del requerimiento es cobrar ÚNICA-
-    #      MENTE lo agregado. Con un pedido propio el total ES el monto a cobrar,
-    #      sin depender de saldos ni de lo ya facturado del servicio original.
+    # Lo que se midió antes de cambiarlo, para no repetir la discusión:
     #
-    # El vínculo con el servicio se guarda por TRES vías, porque "pedido aparte" no
-    # puede significar "venta huérfana" — administración tiene que poder ir del
-    # servicio a lo vendido y de la venta original a todo lo que sus visitas
-    # generaron:
+    #   * Los 10 adicionales vendidos hasta esa fecha tenían el pedido original
+    #     SIEMPRE confirmado (`state='sale'`) y pagado en línea completo. Aun así
+    #     Odoo admite la línea nueva: pasó en producción en S00264, confirmado y ya
+    #     facturado, y Odoo dejó solo esa línea "por facturar" sin tocar la factura
+    #     anterior. No hace falta nota de crédito, ni reabrir, ni factura forzada.
+    #   * Una línea NO recurrente agregada a una suscripción activa se cobra UNA vez,
+    #     no cada ciclo (medido en `visar-test`, tres ciclos seguidos). El miedo
+    #     original —"el cliente pagaría el extra cada mes"— era infundado. Pero se
+    #     cobra en la SIGUIENTE factura del ciclo, que puede caer dentro de un año,
+    #     y el técnico necesita cobrar en la puerta: por eso las PÓLIZAS conservan el
+    #     pedido aparte. Los cuatro casos que caen ahí están en `_visar_upsell_destino`.
     #
-    #   * cabecera ↔ cabecera — `visar_upsell_order_id` / `sale.order.
-    #     visar_upsell_task_id`, más `visar_upsell_source_order_id` hacia el pedido
-    #     (o póliza) que originó el servicio;
-    #   * línea → tarea — cada línea del pedido de adicionales lleva `task_id`, que
-    #     es el MISMO campo con el que el FSM nativo cuelga los materiales de una
-    #     tarea (`industry_fsm_sale.product_product`). Así el servicio externo lista
-    #     los adicionales entre sus líneas atendidas en vez de ignorarlos;
-    #   * documento — `origin` con el nombre del servicio (texto, para el cliente).
+    # La factura del cobro en sitio se limita a las líneas del adicional
+    # (`sale.order._get_invoiceable_lines` + `visar_upsell_solo_lineas`): el pedido
+    # original suele llegar pagado pero sin facturar, y facturarlo completo delante
+    # del cliente le cobraría de nuevo el servicio.
+    #
+    # El vínculo con el servicio queda por TRES vías:
+    #
+    #   * línea → visita — `sale.order.line.visar_upsell_task_id` (+ el técnico y la
+    #     hora en la línea): es lo que distingue el adicional de lo ya comprado, y la
+    #     base de la comisión del técnico;
+    #   * línea → tarea — `task_id`, el MISMO campo con el que el FSM nativo cuelga
+    #     los materiales de una tarea, para que el servicio externo liste el
+    #     adicional entre sus líneas atendidas;
+    #   * visita → pedido — `project.task.visar_upsell_order_id` apunta al pedido que
+    #     sostiene las líneas (el original, o el aparte de una póliza).
     def _visar_upsell_zone(self):
         """Zona Visar del servicio, resuelta por el CP del cliente.
 
@@ -1049,20 +1077,80 @@ class ProjectTask(models.Model):
             })
         return catalog
 
-    def _visar_upsell_order(self, employee=None, create=False):
-        """Pedido de adicionales del servicio. Con `create=True` lo crea si falta.
+    # Contexto con el que se tocan las líneas: sin él Odoo publica en el chatter del
+    # pedido un "Extra line with …" en inglés por cada línea nueva, y el FSM nativo
+    # suma otro mensaje por cada cambio de cantidad. La nota la ponemos nosotros, en
+    # español y con el técnico y el servicio dentro.
+    _VISAR_UPSELL_LINE_CTX = {
+        'sale_no_log_for_new_lines': True,
+        'fsm_no_message_post': True,
+    }
 
-        Se crea en BORRADOR: mientras el técnico arma el carrito nada se confirma,
-        y si se arrepiente el pedido se puede vaciar sin dejar rastro contable.
+    @api.depends('visar_upsell_line_ids.price_total',
+                 'visar_upsell_line_ids.product_uom_qty',
+                 'visar_upsell_order_id.order_line.price_total',
+                 'visar_upsell_order_id.order_line.product_uom_qty')
+    def _compute_visar_upsell_amount_total(self):
+        """Lo vendido en sitio en ESTA visita, con impuesto incluido.
+
+        `price_total` y no `price_subtotal`: los precios de Visar están capturados
+        IVA incluido, así que el subtotal no es lo que el técnico le dijo al cliente.
+        """
+        for task in self:
+            task.visar_upsell_amount_total = sum(
+                task._visar_upsell_lines().mapped('price_total'))
+
+    def _visar_upsell_destino(self):
+        """Pedido en el que SÍ pueden entrar los adicionales, o vacío.
+
+        Vacío significa "hay que crear un pedido aparte", y pasa en cuatro casos:
+
+          * PÓLIZAS. La línea no se repetiría cada mes (medido), pero se cobraría en
+            la siguiente factura del ciclo —puede ser dentro de un año— y el técnico
+            se quedaría sin cobrar en la puerta. Decisión de negocio: pedido aparte.
+          * Pedido sin confirmar o cancelado. Confirmarlo desde la app sería confirmar
+            la venta del servicio sin que nadie de oficina lo autorice (y REQ-004
+            exige lista de precios para confirmar).
+          * Pedido BLOQUEADO. Es la señal explícita de "esto ya no se toca"; el FSM
+            nativo también se niega a agregar material a un pedido bloqueado.
+          * Cliente o compañía distintos. La línea se factura al cliente del PEDIDO:
+            si no es el de la visita, el extra le llegaría a otra persona.
+        """
+        self.ensure_one()
+        vacio = self.env['sale.order'].sudo().browse()
+        order = self.sale_order_id.sudo()
+        if not order or order.state != 'sale' or order.locked:
+            return vacio
+        # `subscription_state` solo existe con `sale_subscription` instalado; el
+        # módulo no se declara como dependencia porque el upsell funciona sin él.
+        if 'subscription_state' in order._fields and order.subscription_state:
+            return vacio
+        if order.visar_upsell_task_id:
+            return vacio  # ya es un pedido de adicionales (de otra visita)
+        if order.partner_id != self.partner_id:
+            return vacio
+        if self.company_id and order.company_id != self.company_id:
+            return vacio
+        return order
+
+    def _visar_upsell_order(self, employee=None, create=False):
+        """Pedido que sostiene los adicionales. Con `create=True` lo resuelve.
+
+        Con destino en el pedido original no hay nada que crear: se apunta ahí. El
+        pedido APARTE se sigue creando en BORRADOR (pólizas y servicios cuyo pedido
+        no se puede tocar), para que el técnico arme el carrito sin dejar rastro
+        contable si se arrepiente.
         """
         self.ensure_one()
         order = self.visar_upsell_order_id.sudo()
         if order.exists():
             return order
-        if not create:
+        if not create or not self.partner_id:
             return self.env['sale.order'].sudo().browse()
-        if not self.partner_id:
-            return self.env['sale.order'].sudo().browse()
+        destino = self._visar_upsell_destino()
+        if destino:
+            self.sudo().visar_upsell_order_id = destino
+            return destino
         pricelist = self._visar_upsell_pricelist()
         order = self.env['sale.order'].sudo().create({
             'partner_id': self.partner_id.id,
@@ -1076,86 +1164,185 @@ class ProjectTask(models.Model):
         self.sudo().visar_upsell_order_id = order
         return order
 
-    def _visar_upsell_add(self, employee, product_id, quantity=1):
-        """Agrega (o acumula) una línea al carrito de adicionales.
+    def _visar_upsell_es_pedido_aparte(self):
+        """¿Los adicionales viven en un pedido propio (póliza, histórico) o dentro
+        del pedido original del servicio?"""
+        self.ensure_one()
+        order = self.visar_upsell_order_id
+        return bool(order) and order.visar_upsell_task_id.id == self.id
 
-        Solo acepta productos del catálogo de campo: un POST con cualquier otro
-        id se ignora en silencio. La app es pública (PIN), así que el dominio se
-        vuelve a validar aquí y no solo al pintar la pantalla.
+    def _visar_upsell_lines(self):
+        """Líneas que SON el adicional de esta visita, con cantidad viva.
+
+        Cantidad 0 = línea que el técnico quitó después de que el pedido ya estaba
+        confirmado: Odoo prohíbe borrar líneas de un pedido confirmado ("Set the
+        quantity to 0 instead"), así que se quedan en el documento con su marcador,
+        como constancia, pero fuera del carrito.
         """
         self.ensure_one()
-        allowed = {p['id'] for p in self._visar_upsell_catalog()}
-        if product_id not in allowed:
+        lines = self.visar_upsell_line_ids.sudo()
+        if not lines and self._visar_upsell_es_pedido_aparte():
+            # Los 10 adicionales vendidos antes del 17-sep-2026 no llevan marcador
+            # por línea: negocio decidió no tocar el histórico (ya tienen factura
+            # emitida). En un pedido aparte TODAS las líneas son el adicional.
+            lines = self.visar_upsell_order_id.sudo().order_line
+        return lines.filtered(
+            lambda line: not line.display_type and line.product_uom_qty > 0)
+
+    def _visar_upsell_currency(self):
+        """Moneda con la que se pinta el cobro en la app."""
+        self.ensure_one()
+        order = self._visar_upsell_order()
+        return (order.currency_id or self.sale_order_id.currency_id
+                or (self.company_id or self.env.company).currency_id)
+
+    def _visar_upsell_add(self, employee, product_id, quantity=1):
+        """Agrega (o acumula) una línea de adicional en el pedido que corresponda.
+
+        Solo acepta productos del catálogo de campo: un POST con cualquier otro id
+        se ignora en silencio. La app es pública (PIN), así que el dominio se vuelve
+        a validar aquí y no solo al pintar la pantalla.
+
+        El precio se fija EXPLÍCITO al del catálogo, con descuento 0: el catálogo
+        cotiza con la lista de la ZONA del servicio y el pedido original puede traer
+        otra lista, pero lo que el técnico le dijo al cliente es lo que se cobra.
+        """
+        self.ensure_one()
+        catalogo = {p['id']: p['price'] for p in self._visar_upsell_catalog()}
+        if product_id not in catalogo:
             return False
         quantity = max(int(quantity or 1), 1)
+        if self._visar_upsell_state() not in ('vacio', 'borrador'):
+            return False  # ya se generó el cobro: el carrito está cerrado
         order = self._visar_upsell_order(employee=employee, create=True)
         if not order:
             return False
-        if order.state != 'draft':
-            return False  # ya se generó el cobro: el carrito está cerrado
-        line = order.order_line.filtered(
+        # Se buscan solo las líneas MARCADAS: en el pedido original puede existir ya
+        # el mismo producto como parte del servicio contratado (pasó en S00264), y
+        # sumarle cantidad ahí sería cobrarle al cliente algo que no se vendió hoy.
+        linea = self.visar_upsell_line_ids.sudo().filtered(
             lambda l: l.product_id.id == product_id and not l.display_type)[:1]
-        if line:
-            line.product_uom_qty += quantity
+        if not linea and self._visar_upsell_es_pedido_aparte():
+            linea = order.order_line.filtered(
+                lambda l: l.product_id.id == product_id and not l.display_type)[:1]
+        if linea:
+            linea.with_context(**self._VISAR_UPSELL_LINE_CTX).write({
+                'product_uom_qty': linea.product_uom_qty + quantity,
+            })
         else:
             # `task_id` es el enlace línea→servicio del FSM nativo (el mismo que usa
-            # `action_fsm_view_material` para los materiales). Sin él la venta queda
-            # colgando solo de la cabecera y el servicio externo no la lista.
-            order.write({'order_line': [(0, 0, {
-                'product_id': product_id,
-                'product_uom_qty': quantity,
-                'task_id': self.id,
-            })]})
+            # `action_fsm_view_material`). Sin él la venta queda colgando solo de la
+            # cabecera y el servicio externo no la lista.
+            self.env['sale.order.line'].sudo().with_context(
+                **self._VISAR_UPSELL_LINE_CTX).create({
+                    'order_id': order.id,
+                    'product_id': product_id,
+                    'product_uom_qty': quantity,
+                    'price_unit': catalogo[product_id],
+                    'discount': 0.0,
+                    'task_id': self.id,
+                    'visar_upsell_task_id': self.id,
+                    'visar_upsell_employee_id': employee.id if employee else False,
+                    'visar_upsell_at': fields.Datetime.now(),
+                })
+        self._visar_upsell_log(order, employee, product_id, quantity)
         return True
 
-    def _visar_upsell_remove(self, line_id):
-        """Quita una línea del carrito (solo en borrador y solo de ESTE pedido)."""
+    def _visar_upsell_log(self, order, employee, product_id, quantity):
+        """Nota en el pedido: qué se vendió en la puerta, quién y en qué servicio.
+
+        Solo cuando la línea entra a un pedido ya confirmado (el original). En un
+        pedido aparte en borrador no hay nada que avisar: el documento entero es el
+        adicional y nadie más lo está mirando todavía.
+        """
         self.ensure_one()
-        order = self._visar_upsell_order()
-        if not order or order.state != 'draft':
-            return False
-        line = order.order_line.filtered(lambda l: l.id == int(line_id))
+        if not order or order.state == 'draft':
+            return
+        product = self.env['product.product'].sudo().browse(product_id)
+        order.message_post(body=Markup(
+            "<p>Adicional vendido en sitio: <b>%s</b> × %s.<br/>"
+            "Servicio <b>%s</b>, vendido por <b>%s</b>. "
+            "Se factura aparte del servicio contratado.</p>"
+        ) % (product.display_name or '', quantity, self.name or '',
+             (employee.name if employee else "el técnico")))
+
+    def _visar_upsell_remove(self, line_id):
+        """Quita una línea del carrito. Solo del carrito de ESTE servicio y solo
+        mientras no esté facturada."""
+        self.ensure_one()
+        line = self._visar_upsell_lines().filtered(lambda l: l.id == int(line_id))
         if not line:
             return False
-        line.unlink()
-        # Carrito vacío = como si nunca hubiera existido, para que la pantalla
-        # vuelva al estado inicial en vez de quedarse con un pedido fantasma.
-        if not order.order_line:
-            self.sudo().visar_upsell_order_id = False
-            order.unlink()
+        if line.invoice_lines or line.qty_invoiced:
+            return False  # ya facturada: quitarla aquí mentiría
+        order = line.order_id
+        if order.state == 'draft' and self._visar_upsell_es_pedido_aparte():
+            line.unlink()
+            # Carrito vacío = como si nunca hubiera existido, para que la pantalla
+            # vuelva al estado inicial en vez de quedarse con un pedido fantasma.
+            if not order.order_line:
+                self.sudo().visar_upsell_order_id = False
+                order.unlink()
+            return True
+        # Pedido confirmado: Odoo no permite borrar la línea ("Set the quantity to 0
+        # instead"), y es lo que hace también el catálogo de materiales del FSM. La
+        # línea se queda en 0 con su marcador: el documento conserva que se ofreció
+        # y se canceló en sitio, y el carrito la ignora por cantidad.
+        producto = line.product_id.display_name
+        line.with_context(**self._VISAR_UPSELL_LINE_CTX).write({
+            'product_uom_qty': 0.0,
+        })
+        order.message_post(body=Markup(
+            "<p>Adicional cancelado en sitio: <b>%s</b> (cantidad en 0). "
+            "Servicio <b>%s</b>.</p>"
+        ) % (producto or '', self.name or ''))
         return True
 
     def _visar_upsell_confirm(self, employee):
-        """Confirma el pedido de adicionales y emite su factura.
+        """Cierra el adicional y emite su factura, SOLO por lo vendido en sitio.
 
         Se factura de una vez porque el enlace de pago nativo cobra contra un
-        documento, y porque el objetivo del requerimiento es cerrar el cobro en
-        sitio "sin pasar por administración". Los productos de upsell facturan por
-        pedido (`invoice_policy='order'`), así que no hace falta entregar nada
-        primero. Idempotente: repetir el POST no duplica facturas.
+        documento, y porque el objetivo es cerrar el cobro en sitio "sin pasar por
+        administración". Los productos de upsell facturan por pedido
+        (`invoice_policy='order'`), así que no hace falta entregar nada primero.
+        Idempotente: repetir el POST no duplica facturas.
         """
         self.ensure_one()
         order = self._visar_upsell_order()
-        if not order or not order.order_line:
+        lines = self._visar_upsell_lines()
+        if not order or not lines:
             return False
-        if employee and not order.visar_upsell_employee_id:
+        if (self._visar_upsell_es_pedido_aparte() and employee
+                and not order.visar_upsell_employee_id):
             order.visar_upsell_employee_id = employee.id
         if order.state == 'draft':
-            order.action_confirm()
-        invoice = self._visar_upsell_invoice()
-        if not invoice and order.invoice_status == 'to invoice':
-            invoice = order._create_invoices()
-            invoice.action_post()
+            order.action_confirm()  # solo ocurre en el pedido aparte
+        if self._visar_upsell_invoice():
+            return order
+        por_facturar = self._visar_upsell_lines().filtered(
+            lambda l: l.qty_to_invoice > 0)
+        if por_facturar:
+            # El contexto es lo que impide facturar el servicio contratado junto con
+            # el adicional (ver `sale.order._get_invoiceable_lines`).
+            invoice = order.with_context(
+                visar_upsell_solo_lineas=por_facturar.ids)._create_invoices()
+            if invoice:
+                invoice.action_post()
         return order
 
     def _visar_upsell_invoice(self):
-        """Factura de cliente POSTEADA del pedido de adicionales (o vacío)."""
+        """Factura POSTEADA que cobra los adicionales de esta visita (o vacío).
+
+        Se llega a ella por las LÍNEAS y no por el pedido: el pedido original puede
+        tener además la factura del servicio contratado, que no es esta.
+        """
         self.ensure_one()
-        order = self._visar_upsell_order()
-        if not order:
+        lines = self._visar_upsell_lines()
+        if not lines:
             return self.env['account.move'].sudo().browse()
-        return order.invoice_ids.filtered(
-            lambda m: m.move_type == 'out_invoice' and m.state == 'posted')[:1]
+        moves = lines.sudo().invoice_lines.move_id.filtered(
+            lambda m: m.move_type == 'out_invoice' and m.state == 'posted')
+        return moves.sorted('id')[:1]
 
     def _visar_upsell_payment_link(self):
         """Enlace de pago nativo por el monto pendiente de los adicionales.
@@ -1164,10 +1351,15 @@ class ProjectTask(models.Model):
         token de acceso, el monto pendiente y la ruta correcta cuando Odoo los
         cambie. Devuelve '' si no hay nada que cobrar o si no hay proveedor de
         pago habilitado (hoy: falta configurar la pasarela — ver README).
+
+        El ancla es la FACTURA del adicional. Nunca el pedido original: su pendiente
+        incluiría el servicio contratado, y el técnico terminaría cobrándolo dos
+        veces en la puerta.
         """
         self.ensure_one()
-        invoice = self._visar_upsell_invoice()
-        record = invoice or self._visar_upsell_order()
+        record = self._visar_upsell_invoice()
+        if not record and self._visar_upsell_es_pedido_aparte():
+            record = self._visar_upsell_order()
         if not record:
             return ''
         if not self._visar_upsell_providers():
@@ -1196,15 +1388,15 @@ class ProjectTask(models.Model):
         """
         self.ensure_one()
         Provider = self.env['payment.provider'].sudo()
-        order = self._visar_upsell_order()
-        if not order:
+        if not self._visar_upsell_lines():
             return Provider.browse()
         company = self.company_id or self.env.company
+        currency = self._visar_upsell_currency()
         providers = Provider._get_compatible_providers(
             company.id,
             self.partner_id.id,
-            order.amount_total or 0.0,
-            currency_id=order.currency_id.id or None,
+            self.visar_upsell_amount_total or 0.0,
+            currency_id=currency.id or None,
         )
         return providers.filtered(lambda p: p.state == 'enabled')
 
@@ -1220,31 +1412,69 @@ class ProjectTask(models.Model):
         order = self._visar_upsell_confirm(employee)
         if not order:
             return False
-        if not order.visar_upsell_cash_at:
-            order.write({
+        if not self.visar_upsell_cash_at:
+            self.sudo().write({
                 'visar_upsell_cash_at': fields.Datetime.now(),
                 'visar_upsell_cash_by_id': employee.id if employee else False,
             })
             order.message_post(body=Markup(
-                "<p>Pago de adicionales recibido en sitio por <b>%s</b>.</p>"
-            ) % (employee.name if employee else "el técnico"))
+                "<p>Pago de los adicionales del servicio <b>%s</b> recibido en sitio "
+                "por <b>%s</b>.</p>"
+            ) % (self.name or '', (employee.name if employee else "el técnico")))
         return True
+
+    def _visar_upsell_is_paid(self):
+        """¿El cobro de los adicionales de esta visita ya está resuelto?
+
+        Dos caminos, porque en campo pasan los dos: en efectivo (sello del técnico)
+        o en línea (transacción liquidada / factura pagada). En un pedido aparte se
+        delega al pedido, que es como quedó el histórico.
+        """
+        self.ensure_one()
+        if self.visar_upsell_cash_at:
+            return True
+        if self._visar_upsell_es_pedido_aparte():
+            return self.visar_upsell_order_id.sudo()._visar_upsell_is_paid()
+        invoice = self._visar_upsell_invoice()
+        if not invoice:
+            return False
+        if invoice.payment_state in ('paid', 'in_payment'):
+            return True
+        return any(t.state in ('done', 'authorized')
+                   for t in invoice.sudo().transaction_ids)
+
+    def _visar_upsell_cash_info(self):
+        """Sello del cobro en efectivo: (fecha, nombre de quien lo recibió).
+
+        Vive en la tarea desde el 17-sep-2026; los adicionales anteriores lo tienen
+        en su pedido aparte, y el PDF de un servicio viejo tiene que seguir diciendo
+        quién recibió el dinero.
+        """
+        self.ensure_one()
+        if self.visar_upsell_cash_at:
+            return self.visar_upsell_cash_at, self.visar_upsell_cash_by_id.name
+        order = self.visar_upsell_order_id
+        if self._visar_upsell_es_pedido_aparte() and order.visar_upsell_cash_at:
+            return order.visar_upsell_cash_at, order.visar_upsell_cash_by_id.name
+        return False, ''
 
     def _visar_upsell_state(self):
         """Estado del upsell para elegir qué pinta la app.
 
-        'vacio' | 'borrador' (carrito editable) | 'por_cobrar' (confirmado, sin
+        'vacio' | 'borrador' (carrito editable) | 'por_cobrar' (cobro generado, sin
         pago) | 'pagado'.
         """
         self.ensure_one()
-        order = self._visar_upsell_order()
-        if not order or not order.order_line:
+        if not self._visar_upsell_lines():
             return 'vacio'
-        if order.state == 'draft':
-            return 'borrador'
-        if order._visar_upsell_is_paid():
+        if self._visar_upsell_is_paid():
             return 'pagado'
-        return 'por_cobrar'
+        if self._visar_upsell_invoice():
+            return 'por_cobrar'
+        if (self._visar_upsell_es_pedido_aparte()
+                and self.visar_upsell_order_id.state != 'draft'):
+            return 'por_cobrar'  # confirmado sin factura: el carrito ya se cerró
+        return 'borrador'
 
     def action_visar_view_upsell_order(self):
         """Botón inteligente del servicio externo → pedido de adicionales."""
@@ -1274,19 +1504,20 @@ class ProjectTask(models.Model):
         if self._visar_upsell_state() in ('vacio', 'borrador'):
             return None
         order = self._visar_upsell_order()
-        lines = order.order_line.filtered(lambda l: not l.display_type)
+        lines = self._visar_upsell_lines()
         if not lines:
             return None
-        currency = order.currency_id or self.env.company.currency_id
+        currency = self._visar_upsell_currency()
 
         def money(amount):
             return formatLang(self.env, amount, currency_obj=currency)
 
         # Importes CON impuesto (`price_total`, no `price_subtotal`): los precios de
         # upsell están capturados IVA incluido, así que con el subtotal la fila no
-        # cuadraba —"Precio $350.00 / Importe $301.72"— y el total de abajo
-        # (`amount_total`, que sí lleva impuesto) tampoco era la suma de la columna.
-        # El cliente FIRMA este documento y lo que le importa es lo que pagó.
+        # cuadraba —"Precio $350.00 / Importe $301.72"— y el total de abajo tampoco
+        # era la suma de la columna. El cliente FIRMA este documento y lo que le
+        # importa es lo que pagó. El total es el de las LÍNEAS del adicional: el del
+        # pedido incluiría el servicio contratado.
         rows = [[
             {'kind': 'scalar', 'text': line.product_id.display_name or line.name},
             {'kind': 'scalar', 'text': formatLang(self.env, line.product_uom_qty)},
@@ -1297,7 +1528,7 @@ class ProjectTask(models.Model):
             {'kind': 'scalar', 'text': "Total"},
             {'kind': 'scalar', 'text': ''},
             {'kind': 'scalar', 'text': ''},
-            {'kind': 'scalar', 'text': money(order.amount_total)},
+            {'kind': 'scalar', 'text': money(self.visar_upsell_amount_total)},
         ])
         fields_ = [{
             'kind': 'table',
@@ -1308,13 +1539,16 @@ class ProjectTask(models.Model):
         # Cómo quedó el cobro: es lo que el cliente reclama después ("ya le pagué al
         # técnico"). El sello de efectivo lo pone el técnico en la app; el resto sale
         # del estado real del pedido.
-        if order.visar_upsell_cash_at:
-            paid_by = order.visar_upsell_cash_by_id.name or "el técnico"
-            note = "Pagado en sitio (efectivo o transferencia), recibido por %s." % paid_by
+        cash_at, cash_by = self._visar_upsell_cash_info()
+        invoice = self._visar_upsell_invoice()
+        if cash_at:
+            note = ("Pagado en sitio (efectivo o transferencia), recibido por %s."
+                    % (cash_by or "el técnico"))
         elif self._visar_upsell_state() == 'pagado':
             note = "Pagado en línea."
         else:
-            note = "Pendiente de pago. Se cobra contra el pedido %s." % (order.name or '')
+            note = ("Pendiente de pago. Se cobra contra %s."
+                    % (invoice.name if invoice else (order.name or 'el pedido')))
         fields_.append({'kind': 'scalar', 'label': "Estado del cobro", 'text': note})
         return {'title': "PRODUCTOS ADICIONALES VENDIDOS EN SITIO", 'fields': fields_}
 

@@ -157,6 +157,47 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
+**El adicional va en el pedido del servicio, no en uno nuevo (REQ-007) — 17-sep 23:15**
+(visar_field_app 19.0.1.34.0). Antes cada upsell abría un pedido aparte ligado al original por
+`visar_upsell_source_order_id` (S00282→S00264, S00239→S00238, …); administración veía la venta
+partida en dos documentos. Ahora la línea entra al pedido original con marcador propio en la
+LÍNEA (`sale.order.line.visar_upsell_task_id` + técnico + hora): `task_id` no basta, las líneas
+del servicio contratado también lo llevan.
+
+Lo que se midió antes de decidir, para no rediscutirlo:
+
+- Los 10 adicionales vendidos hasta hoy tenían el pedido original **siempre confirmado** y
+  **pagado en línea completo**; solo 2 de 9 estaban facturados. Odoo **sí** admite la línea nueva
+  en un pedido confirmado e incluso facturado: pasó en producción en **S00264** (línea agregada a
+  mano el 8-sep sobre INV/2026/00132 ya emitida) y dejó solo esa línea "por facturar". **No hace
+  falta nota de crédito, ni reabrir, ni factura forzada.**
+- Una línea **no recurrente** agregada a una suscripción activa se cobra **una sola vez**, no cada
+  ciclo (medido en `visar-test`, tres ciclos). El motivo que justificó el pedido aparte era falso.
+  Pero se cobra en la **siguiente** factura del ciclo (puede ser dentro de un año) y el técnico
+  necesita cobrar en la puerta: **las pólizas conservan el pedido aparte** (decisión de negocio).
+
+La factura del cobro en sitio se limita a las líneas del adicional
+(`sale.order._get_invoiceable_lines` + contexto `visar_upsell_solo_lineas`): el pedido original
+casi siempre llega pagado **pero sin facturar**, y facturarlo completo delante del cliente le
+cobraría de nuevo el servicio. El enlace de pago cuelga de esa factura, nunca del pedido. El sello
+de efectivo se mudó del pedido a la **tarea** (un pedido puede acumular varias visitas). Los 10
+adicionales históricos **no se tocan**: `_visar_upsell_lines` los lee por pedido aparte. El precio
+se fija explícito al del catálogo (lista de la ZONA) con descuento 0, porque el pedido original
+puede traer otra lista. Verificado end-to-end en `visar-test` con la app real: pedido S02184 pasó
+de $8,280 a $8,380, factura INV/2026/00128 por **solo $100**, la línea del servicio sigue por
+facturar y el PDF firmado totaliza $100.
+
+**Servicios vendibles en campo (REQ-006) — 17-sep 21:59** (visar_field_app 19.0.1.33.0,
+`c784f54`/`4ae2b8a`, `deploy-upsell-17sep.sh`). El catálogo **nunca** filtró por tipo: ofrecer una
+poda detectada en sitio es dato maestro, no código — se marca `visar_upsell_ok` en la ficha del
+producto (Ventas ▸ Productos, fila de casillas). Lo que sí se exigió por código es poder COBRARLO
+ahí mismo: `invoice_policy='order'` (facturar por entrega deja el pedido en "Nada que facturar" y
+al técnico sin liga de pago) y, con REQ-007, `service_tracking='no'` (un producto que genera tarea
+abriría un servicio nuevo sin fecha ni técnico en cuanto la línea toca el pedido confirmado).
+**Bug corregido:** la casilla se había insertado entre `sale_ok` y su `<label>`, y la ficha salía
+con 4 casillas y 3 textos. Pendiente de negocio: decidir qué servicios se marcan (los cinco
+especializados son los candidatos).
+
 **Lista de precios: sin default y obligatoria al confirmar (REQ-004) — 17-sep 21:17**
 (visar_base 19.0.1.13.0, visar_appointment 19.0.2.22.0, `de2299c`, `deploy-req004-005-15sep.sh`).
 `property_product_pricelist` NO se guarda: Odoo la calcula y sin una propia ponía la primera

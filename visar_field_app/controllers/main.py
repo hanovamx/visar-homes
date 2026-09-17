@@ -2051,14 +2051,24 @@ class VisarFieldApp(http.Controller):
         return self._task_flow_state(task) == 'en_ejecucion'
 
     def _upsell_render_values(self, task):
-        """Valores comunes de la tarjeta de adicionales (detalle y pantalla de cobro)."""
-        order = task._visar_upsell_order()
+        """Valores comunes de la tarjeta de adicionales (detalle y pantalla de cobro).
+
+        El total y las líneas salen del SERVICIO, no del pedido: desde el 17-sep-2026
+        el adicional vive dentro del pedido original y el total de ese pedido incluye
+        el servicio contratado (lo que el cliente ya pagó al agendar).
+        """
         zone = task._visar_upsell_zone()
+        cash_at, cash_by = task._visar_upsell_cash_info()
         return {
             'upsell_state': task._visar_upsell_state(),
-            'upsell_order': order,
-            'upsell_lines': (order.order_line.filtered(lambda l: not l.display_type)
-                             if order else []),
+            'upsell_order': task._visar_upsell_order(),
+            'upsell_lines': task._visar_upsell_lines(),
+            'upsell_total': task.visar_upsell_amount_total,
+            'upsell_currency': task._visar_upsell_currency(),
+            'upsell_invoice': task._visar_upsell_invoice(),
+            'upsell_aparte': task._visar_upsell_es_pedido_aparte(),
+            'upsell_cash_at': cash_at,
+            'upsell_cash_by': cash_by,
             'upsell_zone': zone.name if zone else '',
             'upsell_available': self._upsell_available(task),
         }
@@ -2078,7 +2088,7 @@ class VisarFieldApp(http.Controller):
             'task': task,
             'catalog': task._visar_upsell_catalog(),
             'upsell_zone': zone.name if zone else '',
-            'currency': task._visar_upsell_order().currency_id or request.env.company.currency_id,
+            'currency': task._visar_upsell_currency(),
         })
 
     @http.route('/visar/field/task/<int:task_id>/upsell/add', type='http',
@@ -2151,16 +2161,15 @@ class VisarFieldApp(http.Controller):
         if not task or task._visar_upsell_state() == 'vacio':
             return request.redirect('/visar/field/task/%s' % task_id)
         link = task._visar_upsell_payment_link()
-        order = task._visar_upsell_order()
         values = self._upsell_render_values(task)
         values.update({
             'employee': employee,
             'task': task,
             'payment_link': link,
             'has_providers': bool(task._visar_upsell_providers()),
-            'invoice': task._visar_upsell_invoice(),
+            'invoice': values['upsell_invoice'],
             'wa_link': self._upsell_whatsapp_url(task, link),
-            'currency': order.currency_id,
+            'currency': values['upsell_currency'],
             'status_url': '/visar/field/task/%s/upsell/status' % task.id,
             'sent': kw.get('sent'),
         })
@@ -2219,12 +2228,12 @@ class VisarFieldApp(http.Controller):
         _display, digits = task._visar_client_phone()
         if not digits:
             return ''
-        order = task._visar_upsell_order()
+        currency = task._visar_upsell_currency()
         text = (
             "Hola %s, le comparto el enlace para pagar los productos adicionales "
             "de su servicio de hoy (%s): %s" % (
                 task.partner_id.name or '',
-                order.currency_id.format(order.amount_total) if order else '',
+                currency.format(task.visar_upsell_amount_total) if currency else '',
                 link)
         )
         return 'https://wa.me/%s?%s' % (digits, urlencode({'text': text}))

@@ -61,18 +61,20 @@ class TestUpsellDeServicios(TransactionCase):
         self.assertEqual(factura.amount_total, 350.0)
 
     def test_vender_un_servicio_no_abre_otro_servicio_externo(self):
-        """Un producto de servicio con proyecto crearía una tarea al confirmar. No
-        pasa porque la línea del upsell ya nace ligada a ESTE servicio."""
+        """Un producto que genera tarea crearía un servicio NUEVO —sin fecha, sin
+        técnico y sin agendar— en cuanto la línea toca un pedido confirmado. Desde
+        que el adicional entra al pedido original, esos productos no se ofrecen:
+        vender otra visita es una venta, se agenda."""
         tarea = self._tarea()
         servicio = self._servicio(service_tracking='task_global_project',
                                   project_id=self.proyecto.id)
         antes = self.env['project.task'].search_count([])
 
-        tarea._visar_upsell_add(self.empleado, servicio.product_variant_id.id, 1)
-        tarea._visar_upsell_confirm(self.empleado)
+        self.assertFalse(self._en_catalogo(tarea, servicio))
+        self.assertFalse(tarea._visar_upsell_add(
+            self.empleado, servicio.product_variant_id.id, 1))
 
         self.assertEqual(self.env['project.task'].search_count([]), antes)
-        self.assertEqual(tarea._visar_upsell_order().order_line.task_id, tarea)
 
     def test_lo_que_no_se_puede_cobrar_en_sitio_no_se_ofrece(self):
         """Factura por entrega: el pedido se confirma y no hay nada que facturar."""

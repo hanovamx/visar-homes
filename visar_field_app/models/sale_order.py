@@ -5,10 +5,13 @@ from odoo import api, fields, models
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
 
-    # --- Pedido de adicionales vendidos en campo ---
-    # Vive SEPARADO del pedido/póliza que originó el servicio (ver la nota larga en
-    # `project.task._visar_upsell_order`). Estos campos son la trazabilidad: de qué
-    # servicio salió y qué técnico lo vendió (comisiones).
+    # --- Pedido de adicionales vendidos en campo (pedido APARTE) ---
+    # Desde el 17-sep-2026 el adicional normal NO llega aquí: se agrega como línea
+    # del pedido original del servicio (ver `project.task._visar_upsell_destino`).
+    # Estos campos de cabecera siguen vivos para los dos casos en que el pedido
+    # aparte sigue siendo la única salida —pólizas y servicios sin pedido original
+    # utilizable— y para los 10 adicionales vendidos antes de esa fecha, que por
+    # decisión de negocio se quedaron como estaban (ya tienen su factura emitida).
     visar_upsell_task_id = fields.Many2one(
         'project.task', string="Servicio de origen (upsell)", readonly=True,
         copy=False, index='btree_not_null',
@@ -56,6 +59,27 @@ class SaleOrder(models.Model):
         tracking=True,
         help="Empleado que vendió esta cotización. No necesita usuario de Odoo. "
              "Es independiente del campo Vendedor (usuario), que sigue igual.")
+
+    def _get_invoiceable_lines(self, final=False):
+        """Permite facturar SOLO las líneas del adicional vendido en campo.
+
+        El adicional vive en el pedido ORIGINAL del servicio, y ese pedido casi
+        siempre llega a la visita pagado en línea pero TODAVÍA SIN FACTURAR (7 de
+        los 9 casos medidos en producción el 17-sep-2026). Facturar el pedido
+        completo desde la app le pondría al cliente, en la puerta, una factura por
+        el servicio que ya pagó, y el enlace de pago cobraría el total en vez del
+        extra. Con este contexto la factura se limita a las líneas que el técnico
+        acaba de vender; el resto del pedido sigue "por facturar" para
+        administración, igual que antes de que el técnico llegara.
+
+        Es un filtro sobre el resultado nativo, nunca un reemplazo: lo que Odoo no
+        considere facturable (cantidad 0, anticipos, secciones) sigue fuera.
+        """
+        lines = super()._get_invoiceable_lines(final=final)
+        solo = self.env.context.get('visar_upsell_solo_lineas')
+        if solo:
+            lines = lines.filtered(lambda line: line.id in solo)
+        return lines
 
     def _visar_requiere_lista_de_precios(self):
         """El upsell de campo no exige lista de precios para confirmarse (REQ-004).

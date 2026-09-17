@@ -35,10 +35,18 @@ class ProductTemplate(models.Model):
         `_visar_upsell_confirm` no emite factura y el técnico se queda sin liga de
         pago, con el cobro a medias delante del cliente. Los dos productos de
         upsell que existen hoy ya facturan por pedido.
+
+        `service_tracking='no'` desde que el adicional entra al pedido ORIGINAL del
+        servicio: un producto que genera tarea o proyecto (hoy "Visita de valoración
+        técnica", "Fumigación interior + exterior") crearía un servicio NUEVO en
+        cuanto la línea toca un pedido confirmado —sin fecha, sin técnico y sin que
+        nadie lo haya agendado— solo porque el técnico lo agregó en la puerta.
+        Vender otra visita es una venta, no un adicional: se agenda.
         """
         return [
             ('visar_upsell_ok', '=', True),
             ('sale_ok', '=', True),
             ('recurring_invoice', '=', False),
             ('invoice_policy', '=', 'order'),
+            ('service_tracking', '=', 'no'),
         ]

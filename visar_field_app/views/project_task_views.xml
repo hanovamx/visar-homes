@@ -24,11 +24,11 @@
                         <span class="o_stat_text">(PDF)</span>
                     </div>
                 </button>
-                <!-- Adicionales vendidos en sitio. El pedido vive APARTE del que
-                     originó el servicio (ver la nota en `_visar_upsell_order`), así
-                     que este botón es la vía por la que administración lo encuentra:
-                     sin él, la venta solo asomaba en un campo dentro de una pestaña.
-                     Muestra el monto porque es el dato por el que se pregunta. -->
+                <!-- Adicionales vendidos en sitio. Desde el 17-sep-2026 las líneas
+                     entran al pedido del propio servicio (ver la nota en
+                     `_visar_upsell_destino`), así que este botón lleva al documento
+                     donde quedaron y el monto de al lado es lo vendido EN ESTA
+                     VISITA, no el total del pedido. -->
                 <button name="action_visar_view_upsell_order"
                         type="object"
                         class="oe_stat_button"
@@ -113,6 +113,12 @@
                         </group>
                         <group string="Venta en campo (upsell)">
                             <field name="visar_upsell_order_id" readonly="1"/>
+                            <field name="visar_upsell_amount_total" readonly="1"
+                                   invisible="not visar_upsell_order_id"/>
+                            <field name="visar_upsell_cash_at" readonly="1"
+                                   invisible="not visar_upsell_cash_at"/>
+                            <field name="visar_upsell_cash_by_id" readonly="1"
+                                   invisible="not visar_upsell_cash_at"/>
                         </group>
                     </group>
                 </page>

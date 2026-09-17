@@ -4,11 +4,14 @@
     <!-- ================================================================
          Trazabilidad del upsell en el pedido de venta.
 
-         El pedido de adicionales vive APARTE del que originó el servicio (el porqué,
-         en `project.task._visar_upsell_order`: en una póliza la línea entraría al
-         ciclo recurrente, y el cobro en sitio dejaría de ser solo el extra). Eso hace
-         que sin estas vistas la venta parezca huérfana: aquí se cierra el circuito en
-         los dos sentidos y se le da a comisiones un eje por el que agrupar.
+         Desde el 17-sep-2026 el adicional entra como LÍNEA de este mismo pedido
+         (el porqué, en `project.task._visar_upsell_destino`). Las columnas opcionales
+         de la lista de líneas son lo que distingue "esto lo vendió el técnico en la
+         puerta" de lo que el cliente ya había comprado.
+
+         Los campos de cabecera y el botón de abajo siguen sirviendo a los dos casos
+         que conservan pedido aparte —pólizas y pedidos que no se pueden tocar— y a
+         los 10 adicionales vendidos antes de esa fecha.
          ================================================================ -->
     <record id="view_order_form_visar_upsell" model="ir.ui.view">
         <field name="name">sale.order.form.visar.upsell</field>
@@ -76,7 +79,8 @@
             <filter name="my_sale_orders_filter" position="after">
                 <separator/>
                 <filter name="visar_upsell" string="Venta en campo (adicionales)"
-                        domain="[('visar_upsell_task_id', '!=', False)]"/>
+                        domain="['|', ('visar_upsell_task_id', '!=', False),
+                                 ('order_line.visar_upsell_task_id', '!=', False)]"/>
                 <filter name="visar_upsell_cash" string="Cobrado en efectivo en sitio"
                         domain="[('visar_upsell_cash_at', '!=', False)]"/>
             </filter>
@@ -103,6 +107,24 @@
                 <field name="visar_salesperson_employee_id" optional="hide"/>
                 <field name="visar_upsell_employee_id" optional="hide"/>
                 <field name="visar_upsell_task_id" optional="hide"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- Lista de LÍNEAS de pedido (Ventas ▸ Informes y el selector de columnas):
+         quién vendió cada línea en campo y cuándo. Es lo único que separa el
+         adicional del servicio contratado ahora que comparten documento, y es el eje
+         por el que se calculará la comisión del técnico. Ocultas por defecto
+         (`optional="hide"`): quien no trabaja upsell no ve columnas nuevas. -->
+    <record id="view_order_line_tree_visar_upsell" model="ir.ui.view">
+        <field name="name">sale.order.line.list.visar.upsell</field>
+        <field name="model">sale.order.line</field>
+        <field name="inherit_id" ref="sale.view_order_line_tree"/>
+        <field name="arch" type="xml">
+            <field name="salesman_id" position="after">
+                <field name="visar_upsell_employee_id" optional="hide"/>
+                <field name="visar_upsell_task_id" optional="hide"/>
+                <field name="visar_upsell_at" optional="hide"/>
             </field>
         </field>
     </record>
