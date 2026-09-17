@@ -87,3 +87,36 @@ class TestUpsellDeServicios(TransactionCase):
         tarea = self._tarea()
         poliza = self._servicio(name='Poliza mensual', recurring_invoice=True)
         self.assertFalse(self._en_catalogo(tarea, poliza))
+
+
+@tagged('post_install', '-at_install')
+class TestCasillaEnLaFicha(TransactionCase):
+    """Cada casilla de la fila de opciones con SU texto.
+
+    El campo se insertaba detrás de `sale_ok`, que comparte `span` con su
+    `<label for="sale_ok"/>`. Colarse en medio dejaba la fila con cuatro casillas
+    y tres textos: "Ventas" se leía sobre la casilla de upsell y la de Ventas
+    quedaba muda. Visto en producción el 17-sep-2026.
+    """
+
+    def _fila(self):
+        from lxml import etree
+        arch = etree.fromstring(
+            self.env['product.template'].get_view(view_type='form')['arch'])
+        return arch.xpath("//div[@name='options']")[0]
+
+    def test_cada_casilla_lleva_su_etiqueta(self):
+        for span in self._fila().xpath('./span'):
+            campos = [f.get('name') for f in span.xpath('./field')]
+            etiquetas = [l.get('for') for l in span.xpath('./label')]
+            self.assertEqual(len(campos), 1, "una casilla por bloque: %s" % campos)
+            self.assertEqual(etiquetas, campos,
+                             "la etiqueta tiene que ser la de SU casilla")
+
+    def test_la_casilla_de_campo_esta_en_la_fila_y_con_su_texto(self):
+        fila = self._fila()
+        propio = fila.xpath("./span[field/@name='visar_upsell_ok']")
+        self.assertTrue(propio, "la casilla sigue en la fila de opciones")
+        self.assertEqual(propio[0].xpath('./label/@for'), ['visar_upsell_ok'])
+        self.assertIn('not sale_ok', propio[0].get('invisible') or '',
+                      "solo se ofrece si el producto se puede vender")
