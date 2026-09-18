@@ -46,7 +46,7 @@ pagan igual) se captura en la ficha del plan, sin tocar código.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Sales/Commission',
-    'version': '19.0.1.0.0',
+    'version': '19.0.1.0.1',
     'license': 'LGPL-3',
     # visar_field_app trae los dos campos que sostienen la atribución:
     # sale.order.visar_salesperson_employee_id y

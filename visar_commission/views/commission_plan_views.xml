@@ -110,9 +110,14 @@
                         <page string="Periodos" name="periodos">
                             <field name="period_ids">
                                 <list editable="bottom" create="false" delete="false">
-                                    <field name="name"/>
-                                    <field name="date_from"/>
-                                    <field name="date_to"/>
+                                    <!-- force_save: los tres son de solo lectura y los
+                                         genera el onchange en el navegador. Sin esto el
+                                         cliente no los manda al guardar y el plan nuevo no
+                                         se guarda ("Falta el valor requerido para el campo
+                                         'Periodo'", 18-sep-2026). -->
+                                    <field name="name" force_save="1"/>
+                                    <field name="date_from" force_save="1"/>
+                                    <field name="date_to" force_save="1"/>
                                     <field name="target_amount"
                                            column_invisible="parent.mode != 'meta'"/>
                                     <field name="payment_date"/>
