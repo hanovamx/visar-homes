@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================================
+         Plan de comisión. Misma forma que el plan nativo de Odoo (vigencia,
+         estado aprobable, pestañas de empleados / logros / periodos) para que
+         quien ya conoce ese módulo no tenga que aprender otro. La diferencia
+         está en la pestaña de empleados: ahí van empleados, no usuarios.
+         ================================================================ -->
+    <record id="view_commission_plan_form" model="ir.ui.view">
+        <field name="name">visar.commission.plan.form</field>
+        <field name="model">visar.commission.plan</field>
+        <field name="arch" type="xml">
+            <form string="Plan de comisión">
+                <header>
+                    <button name="action_approve" type="object" string="Aprobar"
+                            class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_calcular" type="object" string="Calcular comisiones"
+                            class="oe_highlight" invisible="state != 'approved'"/>
+                    <button name="action_draft" type="object" string="Volver a borrador"
+                            invisible="state not in ['approved', 'cancel']"/>
+                    <button name="action_done" type="object" string="Terminar"
+                            invisible="state != 'approved'"/>
+                    <button name="action_cancel" type="object" string="Cancelar"
+                            invisible="state in ['cancel', 'done']"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,approved,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_ver_lineas" type="object"
+                                class="oe_stat_button" icon="fa-money"
+                                invisible="line_count == 0">
+                            <field name="line_count" widget="statinfo"
+                                   string="Comisiones"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Comisión de vendedores 2026"/></h1>
+                    </div>
+
+                    <!-- El aviso es deliberado: hoy la regla de comisión NO está
+                         definida por negocio, y un plan sin reglas calcularía
+                         cero sin decir por qué. Así se ve al abrir la ficha. -->
+                    <div class="alert alert-warning" role="alert"
+                         invisible="not falta_configurar">
+                        <b>Falta definir la regla de comisión.</b>
+                        Para que el plan calcule algo necesita, como mínimo, un
+                        empleado y una regla en <i>Reglas de comisión</i>
+                        (y la tabla de comisión si va por metas). Mientras eso no
+                        esté, el plan no se puede aprobar.
+                    </div>
+
+                    <group>
+                        <group string="Vigencia">
+                            <field name="date_from"/>
+                            <field name="date_to"/>
+                            <field name="periodicity"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="falta_configurar" invisible="1"/>
+                        </group>
+                        <group string="Cómo se paga">
+                            <field name="mode" widget="radio"/>
+                            <field name="tax_base"/>
+                            <field name="commission_amount" invisible="mode != 'meta'"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Empleados" name="empleados">
+                            <field name="employee_ids">
+                                <list editable="bottom">
+                                    <field name="employee_id"
+                                           options="{'no_create': True}"/>
+                                    <field name="date_from"/>
+                                    <field name="date_to"/>
+                                </list>
+                            </field>
+                            <p class="text-muted">
+                                El empleado no necesita usuario de Odoo. Deja
+                                <i>Hasta</i> vacío si sigue en el plan.
+                            </p>
+                        </page>
+
+                        <page string="Reglas de comisión" name="reglas">
+                            <field name="rule_ids">
+                                <list editable="bottom">
+                                    <field name="origen"/>
+                                    <field name="base"/>
+                                    <field name="product_categ_id"
+                                           options="{'no_create': True}"/>
+                                    <field name="product_id"
+                                           options="{'no_create': True}"/>
+                                    <field name="rate" widget="percentage"/>
+                                </list>
+                            </field>
+                            <p class="text-muted">
+                                Una regla por combinación que se pague distinto.
+                                Las categorías de producto ya están armadas con el
+                                vocabulario del negocio (Servicios Core, Servicios
+                                Especializados, Upsell, Pólizas y Suscripciones),
+                                así que "5% en core y 8% en especializados" son dos
+                                reglas. Sin producto ni categoría, la regla aplica
+                                a todo.
+                            </p>
+                        </page>
+
+                        <page string="Periodos" name="periodos">
+                            <field name="period_ids">
+                                <list editable="bottom" create="false" delete="false">
+                                    <field name="name"/>
+                                    <field name="date_from"/>
+                                    <field name="date_to"/>
+                                    <field name="target_amount"
+                                           column_invisible="parent.mode != 'meta'"/>
+                                    <field name="payment_date"/>
+                                    <field name="achieved_total" sum="Logrado"/>
+                                    <field name="commission_total" sum="Comisión"/>
+                                    <field name="state" widget="badge"
+                                           decoration-success="state == 'pagado'"
+                                           decoration-info="state == 'cerrado'"/>
+                                    <field name="currency_id" column_invisible="True"/>
+                                    <button name="action_calcular" type="object"
+                                            icon="fa-refresh" title="Calcular"
+                                            invisible="state != 'abierto'"/>
+                                    <button name="action_cerrar" type="object"
+                                            icon="fa-lock" title="Cerrar el periodo"
+                                            invisible="state != 'abierto'"/>
+                                    <button name="action_reabrir" type="object"
+                                            icon="fa-unlock" title="Reabrir"
+                                            invisible="state != 'cerrado'"/>
+                                    <button name="action_marcar_pagado" type="object"
+                                            icon="fa-check" title="Marcar como pagado"
+                                            invisible="state != 'cerrado'"/>
+                                </list>
+                            </field>
+                            <p class="text-muted">
+                                Los periodos se generan solos según la
+                                periodicidad. Cerrar un periodo congela sus cifras:
+                                a partir de ahí, editar un pedido viejo ya no
+                                cambia una comisión autorizada.
+                            </p>
+                        </page>
+
+                        <page string="Tabla de comisión" name="tabla"
+                              invisible="mode != 'meta'">
+                            <field name="curve_ids">
+                                <list editable="bottom">
+                                    <field name="target_rate" widget="percentage"/>
+                                    <field name="amount"/>
+                                    <field name="currency_id" column_invisible="True"/>
+                                </list>
+                            </field>
+                            <p class="text-muted">
+                                Cuánto se paga según el porcentaje de la meta que
+                                se alcanzó. Entre dos escalones se interpola; por
+                                encima del último, se mantiene ese último importe.
+                            </p>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_commission_plan_list" model="ir.ui.view">
+        <field name="name">visar.commission.plan.list</field>
+        <field name="model">visar.commission.plan</field>
+        <field name="arch" type="xml">
+            <list string="Planes de comisión">
+                <field name="name"/>
+                <field name="date_from"/>
+                <field name="date_to"/>
+                <field name="periodicity"/>
+                <field name="mode"/>
+                <field name="employee_count" string="Empleados"/>
+                <field name="rule_count" string="Reglas"/>
+                <field name="state" widget="badge"
+                        decoration-success="state == 'approved'"
+                        decoration-muted="state in ['done', 'cancel']"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_commission_plan_search" model="ir.ui.view">
+        <field name="name">visar.commission.plan.search</field>
+        <field name="model">visar.commission.plan</field>
+        <field name="arch" type="xml">
+            <search string="Planes de comisión">
+                <field name="name"/>
+                <field name="employee_ids"/>
+                <filter name="aprobados" string="Aprobados"
+                        domain="[('state', '=', 'approved')]"/>
+                <filter name="borradores" string="En borrador"
+                        domain="[('state', '=', 'draft')]"/>
+                <separator/>
+                <filter name="por_definir" string="Falta definir la regla"
+                        domain="[('rule_ids', '=', False)]"/>
+                <group>
+                    <filter name="group_state" string="Estado"
+                            context="{'group_by': 'state'}"/>
+                    <filter name="group_periodicity" string="Periodicidad"
+                            context="{'group_by': 'periodicity'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_commission_plan" model="ir.actions.act_window">
+        <field name="name">Planes de comisión</field>
+        <field name="res_model">visar.commission.plan</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Crea el primer plan de comisión</p>
+            <p>
+                Un plan define a quién se le paga comisión, sobre qué y cada
+                cuándo. Los empleados no necesitan usuario de Odoo.
+            </p>
+        </field>
+    </record>
+
+</odoo>

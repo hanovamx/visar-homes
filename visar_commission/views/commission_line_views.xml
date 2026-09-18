@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================================
+         El reporte: una fila por empleado y periodo. Equivale a
+         `sale.commission.report` del nativo, pero es una tabla de verdad y no
+         una vista SQL: a ~200 pedidos confirmados al año no hace falta el SQL
+         de 700 líneas del nativo, y guardar el resultado es lo que permite
+         CERRAR un periodo para que lo pagado no se recalcule.
+         ================================================================ -->
+    <record id="view_commission_line_list" model="ir.ui.view">
+        <field name="name">visar.commission.line.list</field>
+        <field name="model">visar.commission.line</field>
+        <field name="arch" type="xml">
+            <list string="Comisiones" create="false">
+                <field name="employee_id"/>
+                <field name="plan_id"/>
+                <field name="period_id"/>
+                <field name="date_to" optional="hide"/>
+                <field name="payment_date" optional="show"/>
+                <field name="base_amount" sum="Vendido"/>
+                <field name="adjustment_amount" sum="Ajustes" optional="hide"/>
+                <field name="target_amount" optional="hide"/>
+                <field name="target_rate" widget="percentage" optional="hide"/>
+                <field name="commission_amount" sum="Comisión"/>
+                <field name="state" widget="badge"
+                        decoration-success="state == 'pagado'"
+                        decoration-info="state == 'cerrado'"/>
+                <field name="currency_id" column_invisible="True"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_commission_line_form" model="ir.ui.view">
+        <field name="name">visar.commission.line.form</field>
+        <field name="model">visar.commission.line</field>
+        <field name="arch" type="xml">
+            <form string="Comisión" create="false" edit="false">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_ver_ventas" type="object"
+                                class="oe_stat_button" icon="fa-list">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Ver las</span>
+                                <span class="o_stat_text">ventas</span>
+                            </div>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="employee_id" readonly="1"/></h1>
+                        <h3><field name="period_id" readonly="1"/></h3>
+                    </div>
+                    <group>
+                        <group string="Lo que vendió">
+                            <field name="base_amount"/>
+                            <field name="adjustment_amount"/>
+                            <field name="achieved_amount"/>
+                        </group>
+                        <group string="Lo que se le paga">
+                            <field name="target_amount" invisible="not target_amount"/>
+                            <field name="target_rate" widget="percentage"
+                                   invisible="not target_amount"/>
+                            <field name="commission_amount"/>
+                            <field name="payment_date"/>
+                            <field name="state"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="De dónde sale" name="detalle">
+                            <field name="detail_ids">
+                                <list create="false" delete="false">
+                                    <field name="origen"/>
+                                    <field name="base"/>
+                                    <field name="rule_id"/>
+                                    <field name="base_amount" sum="Medido"/>
+                                    <field name="rate" widget="percentage"/>
+                                    <field name="commission_amount" sum="Aporta"/>
+                                    <field name="sale_line_count" string="Líneas"/>
+                                    <field name="currency_id" column_invisible="True"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_commission_line_search" model="ir.ui.view">
+        <field name="name">visar.commission.line.search</field>
+        <field name="model">visar.commission.line</field>
+        <field name="arch" type="xml">
+            <search string="Comisiones">
+                <field name="employee_id"/>
+                <field name="plan_id"/>
+                <field name="period_id"/>
+                <filter name="por_pagar" string="Por pagar"
+                        domain="[('state', '!=', 'pagado')]"/>
+                <filter name="pagadas" string="Pagadas"
+                        domain="[('state', '=', 'pagado')]"/>
+                <separator/>
+                <filter name="con_comision" string="Con comisión"
+                        domain="[('commission_amount', '!=', 0)]"/>
+                <separator/>
+                <filter name="este_anio" string="Este año"
+                        domain="[('date_from', '&gt;=', context_today().strftime('%Y-01-01'))]"/>
+                <group>
+                    <filter name="group_employee" string="Empleado"
+                            context="{'group_by': 'employee_id'}"/>
+                    <filter name="group_period" string="Periodo"
+                            context="{'group_by': 'period_id'}"/>
+                    <filter name="group_plan" string="Plan"
+                            context="{'group_by': 'plan_id'}"/>
+                    <filter name="group_payment" string="Fecha de pago"
+                            context="{'group_by': 'payment_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_commission_line" model="ir.actions.act_window">
+        <field name="name">Comisiones por empleado</field>
+        <field name="res_model">visar.commission.line</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_group_employee': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Todavía no hay comisiones calculadas</p>
+            <p>
+                Se generan desde el plan, con el botón <b>Calcular comisiones</b>.
+                Un plan en borrador no calcula nada.
+            </p>
+        </field>
+    </record>
+
+</odoo>

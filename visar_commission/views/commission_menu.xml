@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Menú propio dentro de Ventas, al lado del de Odoo. Se llama distinto a
+         propósito: el nativo ("Comisiones") sigue existiendo y calcula por
+         usuario, este calcula por empleado. Dos menús con el mismo nombre serían
+         una trampa para quien administre esto. -->
+    <menuitem id="menu_visar_commission_root"
+              name="Comisiones (empleados)"
+              parent="sale.sale_menu_root"
+              sequence="36"/>
+
+    <menuitem id="menu_visar_commission_line"
+              name="Comisiones por empleado"
+              action="action_commission_line"
+              parent="menu_visar_commission_root"
+              sequence="10"/>
+
+    <menuitem id="menu_visar_commission_plan"
+              name="Planes de comisión"
+              action="action_commission_plan"
+              parent="menu_visar_commission_root"
+              groups="sales_team.group_sale_manager"
+              sequence="20"/>
+
+    <menuitem id="menu_visar_commission_adjustment"
+              name="Ajustes"
+              action="action_commission_adjustment"
+              parent="menu_visar_commission_root"
+              groups="sales_team.group_sale_manager"
+              sequence="30"/>
+
+</odoo>

@@ -157,6 +157,31 @@ de la cita, entre ellos el cliente). Y el agente usaba dos estimadores distintos
 ruta: el de información lo conduce el modelo con el prompt, el de agendar es el paso de
 Odoo. Visar creía que eran el mismo, y deberían serlo.
 
+**Comisiones por empleado: estructura lista, regla pendiente — 18-sep 00:05**
+(módulo nuevo `visar_commission` 19.0.1.0.0, 31 pruebas). Copia la estructura del
+Enterprise `sale_commission` —plan con vigencia y estado, periodos autogenerados,
+logros con filtro por producto/categoría y tasa, modos "tasa directa" y "meta con
+tabla", ajustes manuales y reporte por persona— pero con **`hr.employee`** en vez de
+`res.users`, que es donde el nativo se cierra: su lista de vendedores exige un
+usuario interno y su dominio `share = False` descarta hasta los de portal.
+
+Agrega lo que el nativo no hace y Visar necesita: base **"cobrado"** (por REQ-002:
+7 de 9 pedidos con venta en campo estaban pagados y sin facturar), atribución por
+**línea** (el upsell del técnico vive dentro del pedido del servicio desde
+REQ-007), **cerrar** un periodo para que lo pagado no se recalcule, periodicidad
+**quincenal** y elegir si se comisiona con o sin IVA.
+
+**La regla sigue sin definirse y el módulo no la inventa**: no trae plan sembrado,
+el aviso de la ficha lo dice y `action_approve` se niega sin empleados ni reglas.
+Todo lo pendiente es configuración, no código. Medido en la copia de producción:
+Pedro Martínez vendió $3,405.15 en campo en 2026 → 10% = $340.52 sobre lo vendido,
+$280.18 sobre lo cobrado. **$60 de diferencia según la base** que elija negocio.
+Detalle y preguntas abiertas: `.context/36-comisiones-por-empleado.md`.
+
+**Visto de paso:** el plan nativo "Upsell" que ya existe en producción le atribuye
+todo a `admin` ($800.69 de comisión en junio) porque `sale_order.user_id` es admin
+en esos pedidos. No se tocó.
+
 **El adicional va en el pedido del servicio, no en uno nuevo (REQ-007) — 17-sep 23:15**
 (visar_field_app 19.0.1.34.0). Antes cada upsell abría un pedido aparte ligado al original por
 `visar_upsell_source_order_id` (S00282→S00264, S00239→S00238, …); administración veía la venta

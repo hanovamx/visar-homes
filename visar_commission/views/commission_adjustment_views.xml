@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Ajustes manuales: el bono, la corrección del mes pasado, el descuento
+         acordado. Suman al LOGRO del periodo en el que caen por su fecha, así que
+         en un plan por metas también mueven el porcentaje alcanzado (igual que
+         los "achievements" manuales del nativo). -->
+    <record id="view_commission_adjustment_list" model="ir.ui.view">
+        <field name="name">visar.commission.adjustment.list</field>
+        <field name="model">visar.commission.adjustment</field>
+        <field name="arch" type="xml">
+            <list string="Ajustes de comisión" editable="bottom">
+                <field name="date"/>
+                <field name="plan_employee_id" string="Empleado del plan"
+                       options="{'no_create': True}"/>
+                <field name="plan_id" optional="hide"/>
+                <field name="note"/>
+                <field name="amount" sum="Total"/>
+                <field name="currency_id" column_invisible="True"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_commission_adjustment_search" model="ir.ui.view">
+        <field name="name">visar.commission.adjustment.search</field>
+        <field name="model">visar.commission.adjustment</field>
+        <field name="arch" type="xml">
+            <search string="Ajustes">
+                <field name="employee_id"/>
+                <field name="note"/>
+                <field name="plan_id"/>
+                <filter name="suman" string="Suman" domain="[('amount', '&gt;', 0)]"/>
+                <filter name="restan" string="Restan" domain="[('amount', '&lt;', 0)]"/>
+                <group>
+                    <filter name="group_employee" string="Empleado"
+                            context="{'group_by': 'employee_id'}"/>
+                    <filter name="group_plan" string="Plan"
+                            context="{'group_by': 'plan_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_commission_adjustment" model="ir.actions.act_window">
+        <field name="name">Ajustes de comisión</field>
+        <field name="res_model">visar.commission.adjustment</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Sin ajustes registrados</p>
+            <p>
+                Un ajuste es lo que no sale de una venta: un bono, una corrección
+                de un periodo anterior o un descuento acordado. Entra al periodo
+                que corresponda a su fecha, y solo si el periodo sigue abierto.
+            </p>
+        </field>
+    </record>
+
+</odoo>

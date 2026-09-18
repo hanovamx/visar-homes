@@ -1,0 +1,21 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_plan_salesman,visar.commission.plan lectura,model_visar_commission_plan,sales_team.group_sale_salesman,1,0,0,0
+access_plan_manager,visar.commission.plan gestion,model_visar_commission_plan,sales_team.group_sale_manager,1,1,1,1
+access_plan_employee_salesman,visar.commission.plan.employee lectura,model_visar_commission_plan_employee,sales_team.group_sale_salesman,1,0,0,0
+access_plan_employee_manager,visar.commission.plan.employee gestion,model_visar_commission_plan_employee,sales_team.group_sale_manager,1,1,1,1
+access_rule_salesman,visar.commission.rule lectura,model_visar_commission_rule,sales_team.group_sale_salesman,1,0,0,0
+access_rule_manager,visar.commission.rule gestion,model_visar_commission_rule,sales_team.group_sale_manager,1,1,1,1
+access_period_salesman,visar.commission.period lectura,model_visar_commission_period,sales_team.group_sale_salesman,1,0,0,0
+access_period_manager,visar.commission.period gestion,model_visar_commission_period,sales_team.group_sale_manager,1,1,1,1
+access_curve_salesman,visar.commission.curve lectura,model_visar_commission_curve,sales_team.group_sale_salesman,1,0,0,0
+access_curve_manager,visar.commission.curve gestion,model_visar_commission_curve,sales_team.group_sale_manager,1,1,1,1
+access_adjustment_salesman,visar.commission.adjustment lectura,model_visar_commission_adjustment,sales_team.group_sale_salesman,1,0,0,0
+access_adjustment_manager,visar.commission.adjustment gestion,model_visar_commission_adjustment,sales_team.group_sale_manager,1,1,1,1
+access_line_salesman,visar.commission.line lectura,model_visar_commission_line,sales_team.group_sale_salesman,1,0,0,0
+access_line_manager,visar.commission.line gestion,model_visar_commission_line,sales_team.group_sale_manager,1,1,1,1
+access_line_rule_salesman,visar.commission.line.rule lectura,model_visar_commission_line_rule,sales_team.group_sale_salesman,1,0,0,0
+access_line_rule_manager,visar.commission.line.rule gestion,model_visar_commission_line_rule,sales_team.group_sale_manager,1,1,1,1
+access_plan_hr,visar.commission.plan RH,model_visar_commission_plan,hr.group_hr_manager,1,1,1,1
+access_line_hr,visar.commission.line RH,model_visar_commission_line,hr.group_hr_manager,1,1,1,1
+access_line_rule_hr,visar.commission.line.rule RH,model_visar_commission_line_rule,hr.group_hr_manager,1,0,0,0
+access_period_hr,visar.commission.period RH,model_visar_commission_period,hr.group_hr_manager,1,1,1,1
