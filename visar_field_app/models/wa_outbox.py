@@ -26,6 +26,7 @@ TEMPLATE_KEYS = [
     ('arrived', "Técnico llegó"),
     ('reschedule', "Reagendar (cliente no llegó)"),
     ('reschedule_offer', "Reagendar — el cliente elige horario"),
+    ('upsell_payment', "Liga de pago de lo vendido en la visita"),
 ]
 
 # `reschedule_offer` no es un texto más: el cliente tiene que poder CONTESTARLO.
@@ -49,6 +50,9 @@ TTL_MINUTES = {
     # Lo mismo que el pasivo: el cliente se quedó sin servicio hoy y la
     # invitación a elegir horario sigue siendo verdad mañana por la mañana.
     'reschedule_offer': 24 * 60,
+    # La liga sigue cobrando días después: si el cliente no pagó en la puerta,
+    # recibirla por la tarde todavía le sirve.
+    'upsell_payment': 24 * 60,
 }
 DEFAULT_TTL_MINUTES = 30
 

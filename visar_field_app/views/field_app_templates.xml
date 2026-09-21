@@ -693,7 +693,7 @@
                     <div class="card p-2 mb-2">
                         <!-- "Eliminar" solo en borrador: una vez generado el cobro la
                              línea ya está facturada y quitarla aquí mentiría. -->
-                        <form t-if="editable"
+                        <form t-if="editable and not line.visar_valuation_credit"
                               t-att-action="'/visar/field/task/%s/upsell/remove' % task.id"
                               method="post" class="m-0 d-flex justify-content-end">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
@@ -707,8 +707,12 @@
                                 <t t-esc="int(line.product_uom_qty)"/>×
                             </span>
                             <div class="flex-grow-1 min-w-0">
-                                <strong t-esc="line.product_id.display_name"/>
-                                <div class="small text-muted">
+                                <!-- El descuento de la valoración se nombra por su
+                                     descripción ("Descuento por visita de valoración
+                                     (S00300)"): el producto a secas solo diría
+                                     "Descuento". -->
+                                <strong t-esc="line.name if line.visar_valuation_credit else line.product_id.display_name"/>
+                                <div t-if="not line.visar_valuation_credit" class="small text-muted">
                                     <span t-out="line.price_unit"
                                           t-options="{'widget': 'monetary', 'display_currency': upsell_currency}"/>
                                     c/u
@@ -746,6 +750,7 @@
                     </form>
                 </t>
                 <t t-else="">
+                    <t t-call="visar_field_app.upsell_service_tasks"/>
                     <div class="small text-muted mb-2">
                         <t t-if="upsell_invoice">Factura <t t-esc="upsell_invoice.name"/></t>
                         <t t-else="">Pedido <t t-esc="upsell_order.name"/></t>
@@ -758,6 +763,19 @@
                        class="btn btn-link w-100">Ver el cobro</a>
                 </t>
             </t>
+        </div>
+    </template>
+
+    <!-- Servicios vendidos en la visita que ya son su propia visita. El técnico
+         tiene que llenar y firmar su hoja además de la de esta visita. -->
+    <template id="upsell_service_tasks" name="Visar Campo - Servicios creados en sitio">
+        <div t-if="upsell_service_tasks" class="alert alert-primary py-2 small">
+            <b>Servicio creado en esta visita.</b> Llene y firme también su hoja:
+            <div class="d-grid gap-2 mt-2">
+                <a t-foreach="upsell_service_tasks" t-as="svc"
+                   t-att-href="'/visar/field/task/%s' % svc.id"
+                   class="btn btn-primary w-100" t-esc="'Abrir hoja: %s' % svc.name"/>
+            </div>
         </div>
     </template>
 
@@ -782,7 +800,44 @@
                         va a vender.
                     </div>
 
-                    <div t-if="not catalog" class="alert alert-info">
+                    <!-- Servicio hecho en esta misma visita. Se cotiza por m² con el
+                         motor del agendado (la misma casa cuesta lo mismo por web,
+                         WhatsApp y aquí) y, al generar el cobro, nace como su propia
+                         visita con su hoja de trabajo. -->
+                    <div t-if="service_error" class="alert alert-warning py-2"
+                         t-esc="service_error"/>
+                    <form t-if="service_offers"
+                          t-att-action="'/visar/field/task/%s/upsell/add_service' % task.id"
+                          method="post" class="card p-3 mb-4 o_visar_upsell_service">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <h6 class="mb-1">Servicio en esta visita</h6>
+                        <p class="small text-muted mb-3">
+                            Para hacerlo hoy mismo. Capture los metros de lo que va a
+                            hacer; el precio sale del tabulador de la zona. Al generar el
+                            cobro se crea el servicio con su propia hoja de trabajo.
+                        </p>
+                        <div t-foreach="service_offers" t-as="offer" class="mb-2">
+                            <!-- Las dimensiones reales se llaman "Interior" y
+                                 "Exterior": sin el producto encima no se sabe de qué. -->
+                            <label class="form-label small mb-1" t-att-for="'m2-%s' % offer['id']">
+                                <span class="text-muted" t-esc="offer['product']"/> ·
+                                <b t-esc="offer['label']"/>
+                            </label>
+                            <div class="input-group">
+                                <input type="number" min="0" step="1" inputmode="numeric"
+                                       class="form-control" placeholder="0"
+                                       t-att-id="'m2-%s' % offer['id']"
+                                       t-att-name="'m2~%s' % offer['id']"/>
+                                <span class="input-group-text">m²</span>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 mt-2">
+                            Agregar servicio
+                        </button>
+                    </form>
+
+                    <h6 t-if="service_offers and catalog" class="mb-2">Productos</h6>
+                    <div t-if="not catalog and not service_offers" class="alert alert-info">
                         No hay productos habilitados para venta en campo. Pídale a
                         administración que marque "Vendible en campo (upsell)" en la
                         ficha de los productos.
@@ -904,6 +959,19 @@
                             </t>
                         </div>
 
+                        <t t-call="visar_field_app.upsell_service_tasks"/>
+
+                        <div t-if="is_test_payment" class="alert alert-danger py-2 small">
+                            <span class="badge text-bg-danger me-1">PRUEBA</span>
+                            El cobro en línea está en <b>modo de prueba</b>: el pago se
+                            marca como hecho <b>sin que entre dinero</b>. Solo para probar.
+                        </div>
+
+                        <div t-if="link_sent_at" class="alert alert-success py-2 small">
+                            La liga de pago se le envió al cliente por WhatsApp desde el
+                            número de Visar.
+                        </div>
+
                         <div t-if="not has_providers" class="alert alert-warning py-2 small">
                             <b>Pago en línea no disponible todavía.</b>
                             No hay pasarela de pago configurada, así que aún no se puede
@@ -930,9 +998,12 @@
 
                         <h6 class="mb-2">Otras formas de cobrar</h6>
                         <div class="d-grid gap-2 mb-3">
+                            <!-- Respaldo: la liga ya sale del número de Visar, pero si el
+                                 cliente no tiene abierta la conversación, desde el teléfono
+                                 del técnico llega seguro. -->
                             <a t-if="wa_link" t-att-href="wa_link" target="_blank" rel="noopener"
                                class="btn btn-outline-success btn-lg w-100">
-                                💬 Enviar enlace por WhatsApp
+                                💬 Enviar enlace desde mi WhatsApp
                             </a>
                             <form t-att-action="'/visar/field/task/%s/upsell/cash' % task.id"
                                   method="post" class="m-0 d-grid">

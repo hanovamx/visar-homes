@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import api, fields, models
+from odoo import Command, api, fields, models
 
 
 class SaleOrder(models.Model):
@@ -80,6 +80,27 @@ class SaleOrder(models.Model):
         if solo:
             lines = lines.filtered(lambda line: line.id in solo)
         return lines
+
+    def _prepare_invoice(self):
+        """La factura del adicional NO se lleva el pago en línea del pedido.
+
+        Odoo liga a toda factura nueva los pagos en línea del pedido que aún no se
+        concilian, y al publicarla los aplica (`sale/models/account_move.py`,
+        `_post`). Es lo correcto al facturar un pedido pagado; es un error con la
+        factura del adicional: el pedido original llega a la visita pagado en línea
+        pero SIN factura, así que ese pago —el de la valoración o el servicio que el
+        cliente agendó— se aplicaba a lo vendido hoy. Medido en una copia de
+        producción el 19-sep-2026 con S00284: factura del adicional por $100 marcada
+        "en pago" al instante y conciliada con PBNK1/2026/00142, el pago de la cita.
+
+        El técnico veía "Pagado" sin que el cliente pagara nada, y el pago de la cita
+        quedaba gastado en otra factura. Sin la liga, ese pago sigue esperando a la
+        factura de lo que de verdad pagó.
+        """
+        values = super()._prepare_invoice()
+        if self.env.context.get('visar_upsell_solo_lineas'):
+            values['transaction_ids'] = [Command.clear()]
+        return values
 
     def _visar_requiere_lista_de_precios(self):
         """El upsell de campo no exige lista de precios para confirmarse (REQ-004).

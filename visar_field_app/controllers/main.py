@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 import base64
+import io
 import json
 import logging
 from datetime import datetime, time, timedelta
 from urllib.parse import urlencode
 
 import pytz
+import qrcode
 import requests
+from PIL import Image
 from lxml import etree
 
 from odoo import fields, http
@@ -32,6 +35,21 @@ CLOSED_STATES = ('1_done', '1_canceled')
 SCOPE_TODAY = 'today'
 SCOPE_ALL = 'all'
 SCOPES = (SCOPE_TODAY, SCOPE_ALL)
+
+# Por qué no se pudo agregar un servicio en sitio, dicho como lo necesita el técnico
+# (qué hacer ahora), no como lo dice el código de error.
+UPSELL_SERVICE_ERRORS = {
+    'sin_m2': "Capture los metros cuadrados de lo que va a hacer.",
+    'sin_zona': "No se pudo ubicar la zona del cliente (código postal). Pida a "
+                "oficina que lo revise antes de vender un servicio.",
+    'sin_tramo': "Esos metros no entran en el tabulador. Oficina tiene que cotizarlo.",
+    'valoracion': "Esos metros necesitan cotización de oficina: no entran en el "
+                  "tabulador para vender en sitio.",
+    'sin_producto': "Ese servicio no tiene producto configurado. Avise a oficina.",
+    'sin_precio': "No se encontró precio para esa zona y esos metros. Avise a oficina.",
+    'sin_pedido': "No se pudo abrir el pedido de adicionales. Avise a oficina.",
+    'cerrado': "El cobro ya se generó: ya no se pueden agregar cosas en esta visita.",
+}
 
 # Campo de enlace de la worksheet dinámica hacia la tarea (res_model = project.task).
 WORKSHEET_LINK = 'x_project_task_id'
@@ -2071,6 +2089,9 @@ class VisarFieldApp(http.Controller):
             'upsell_cash_by': cash_by,
             'upsell_zone': zone.name if zone else '',
             'upsell_available': self._upsell_available(task),
+            # Servicios vendidos aquí que ya nacieron como su propia visita: el
+            # técnico tiene que llenar su hoja además de la de esta.
+            'upsell_service_tasks': task.sudo().visar_upsell_service_task_ids,
         }
 
     @http.route('/visar/field/task/<int:task_id>/upsell', type='http', auth='public',
@@ -2087,9 +2108,41 @@ class VisarFieldApp(http.Controller):
             'employee': employee,
             'task': task,
             'catalog': task._visar_upsell_catalog(),
+            'service_offers': task._visar_upsell_service_offers(),
+            'service_error': UPSELL_SERVICE_ERRORS.get(kw.get('serr') or ''),
             'upsell_zone': zone.name if zone else '',
             'currency': task._visar_upsell_currency(),
         })
+
+    @http.route('/visar/field/task/<int:task_id>/upsell/add_service', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_upsell_add_service(self, task_id, **post):
+        """Servicio hecho en esta misma visita, cotizado por m² con el motor del
+        agendado. El formulario manda `m2~<dimension_id>`; solo cuentan los > 0."""
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._upsell_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        m2_by_dimension = {}
+        for key, value in post.items():
+            if not key.startswith('m2~'):
+                continue
+            raw_id = key.split('~', 1)[1]
+            if not raw_id.isdigit():
+                continue
+            try:
+                m2 = float(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if m2 > 0:
+                m2_by_dimension[int(raw_id)] = m2
+        ok, error = task._visar_upsell_add_service(employee, m2_by_dimension)
+        if not ok:
+            return request.redirect(
+                '/visar/field/task/%s/upsell?serr=%s' % (task.id, error or 'sin_m2'))
+        return request.redirect('/visar/field/task/%s?upsell=added' % task.id)
 
     @http.route('/visar/field/task/<int:task_id>/upsell/add', type='http',
                 auth='public', website=True, methods=['POST'], csrf=True)
@@ -2172,6 +2225,8 @@ class VisarFieldApp(http.Controller):
             'currency': values['upsell_currency'],
             'status_url': '/visar/field/task/%s/upsell/status' % task.id,
             'sent': kw.get('sent'),
+            'is_test_payment': bool(link) and task._visar_upsell_is_test_payment(),
+            'link_sent_at': task.visar_upsell_link_sent_at,
         })
         return request.render('visar_field_app.field_upsell_pay', values)
 
@@ -2210,12 +2265,28 @@ class VisarFieldApp(http.Controller):
         link = task._visar_upsell_payment_link()
         if not link:
             return request.not_found()
-        png = request.env['ir.actions.report'].sudo().barcode(
-            'QR', link, width=UPSELL_QR_PX, height=UPSELL_QR_PX, barLevel='M')
-        return request.make_response(png, [
+        return request.make_response(self._upsell_qr_png(link), [
             ('Content-Type', 'image/png'),
             ('Cache-Control', 'no-store'),
         ])
+
+    @staticmethod
+    def _upsell_qr_png(link):
+        """PNG del QR con `qrcode` + PIL, que ya vienen con Odoo.
+
+        Antes se usaba `ir.actions.report.barcode`, que para PNG necesita el
+        renderizador de reportlab (`rlPyCairo` o `_rl_renderPM`), y el servidor no
+        tiene ninguno: la ruta respondía 500. Nadie lo vio porque la pantalla solo
+        pinta el QR cuando hay pasarela, y hasta el 19-sep-2026 nunca la hubo.
+        """
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2)
+        qr.add_data(link)
+        qr.make(fit=True)
+        imagen = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+        imagen = imagen.resize((UPSELL_QR_PX, UPSELL_QR_PX), Image.NEAREST)
+        buffer = io.BytesIO()
+        imagen.save(buffer, format='PNG')
+        return buffer.getvalue()
 
     @staticmethod
     def _upsell_whatsapp_url(task, link):

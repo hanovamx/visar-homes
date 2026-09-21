@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="res_config_settings_view_form_visar_field" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.visar.field</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="visar_base.res_config_settings_view_form_visar"/>
+        <field name="arch" type="xml">
+            <xpath expr="//app[@name='visar_base']" position="inside">
+                <block title="Venta en campo" name="visar_venta_campo">
+                    <setting string="Descuento por visita de valoración"
+                             help="Producto con el que se descuenta lo pagado por la visita de valoración cuando el técnico vende un servicio en esa misma visita. Una vez por pedido, solo contra servicios y nunca por más que el servicio. Sin producto no se descuenta.">
+                        <field name="visar_upsell_credit_product_id"/>
+                    </setting>
+                    <setting string="Permitir pagos de prueba en campo"
+                             help="Ofrece en la app el proveedor de pago en modo prueba (Demo). Un pago de prueba marca la factura como pagada SIN que entre dinero; la app lo marca como PRUEBA. Apagar antes de salir en vivo.">
+                        <field name="visar_upsell_allow_test_payment"/>
+                    </setting>
+                </block>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

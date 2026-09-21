@@ -468,7 +468,6 @@ class VisarAgentTools(models.AbstractModel):
         devolver (clarificacion, servicio inexistente, m2 faltantes o fuera de
         tabulador); en ese caso items viene vacio.
         """
-        Template = self.env['product.template']
         items = []
         for seg in segments:
             code = seg.get('service_code')
@@ -498,36 +497,32 @@ class VisarAgentTools(models.AbstractModel):
                     "No existe el servicio '%s'. Los codigos validos son: %s."
                     % (code, ", ".join(sorted(validos)) or "ninguno")
                 )}
-            if m2 <= 0:
+            # m² -> tramo vive en `visar.service.dimension._visar_quote_item`, que
+            # comparte con la venta en campo del técnico: la misma casa tiene que
+            # costar lo mismo por los dos canales. Aquí solo se traduce el error a
+            # lo que el modelo necesita leer.
+            item, error = dimension._visar_quote_item(m2)
+            if error == 'sin_m2':
                 return [], {
                     'message': "Faltan los metros cuadrados de %s."
                     % dimension._visar_wizard_label()
                 }
-
-            template = Template._visar_get_service_template_for_dimension(dimension)
-            if not template:
+            if error == 'sin_producto':
                 return [], {
                     'message': "El servicio '%s' no tiene producto configurado."
                     % dimension._visar_wizard_label()
                 }
-            tier = template._visar_tier_for_dimension_m2(dimension, m2)
-            if not tier:
+            if error == 'sin_tramo':
                 return [], {
                     'message': (
                         "Con %g m2 no aplica ningun tramo de %s; hace falta una "
                         "visita de valoracion." % (m2, dimension._visar_wizard_label())
                     )
                 }
-
-            items.append({
-                'dimension_id': dimension.id,
-                'tier_id': tier.id,
-                'tier_name': tier.name or self._agent_tier_label(tier),
-                'variant_id': None,   # lo resuelve por zona el motor de precios
-                'product_tmpl_id': template.id,
-                'is_valuation': tier.is_valuation,
-                'is_free': tier.is_free,
-            })
+            if not item['tier_name']:
+                tier = self.env['visar.service.tier'].browse(item['tier_id'])
+                item['tier_name'] = self._agent_tier_label(tier)
+            items.append(item)
         return items, None
 
     @api.model

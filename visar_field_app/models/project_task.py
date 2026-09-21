@@ -1114,7 +1114,8 @@ class ProjectTask(models.Model):
           * Pedido BLOQUEADO. Es la señal explícita de "esto ya no se toca"; el FSM
             nativo también se niega a agregar material a un pedido bloqueado.
           * Cliente o compañía distintos. La línea se factura al cliente del PEDIDO:
-            si no es el de la visita, el extra le llegaría a otra persona.
+            si no es el de la visita, el extra le llegaría a otra persona. "Cliente"
+            es el partner comercial: la dirección de servicio es un contacto hijo.
         """
         self.ensure_one()
         vacio = self.env['sale.order'].sudo().browse()
@@ -1127,7 +1128,14 @@ class ProjectTask(models.Model):
             return vacio
         if order.visar_upsell_task_id:
             return vacio  # ya es un pedido de adicionales (de otra visita)
-        if order.partner_id != self.partner_id:
+        # Se compara el CLIENTE (partner comercial), no el contacto exacto: el
+        # contacto de la visita es la DIRECCIÓN DE SERVICIO, un hijo del cliente del
+        # pedido. Comparando contactos, 73 de 80 visitas abiertas (18-sep-2026) caían
+        # al pedido aparte siendo el mismo cliente —S00318 fue una—, justo lo que
+        # este destino existe para evitar. Lo que protege la regla sigue intacto: la
+        # línea se factura al cliente del pedido, y es el mismo.
+        if (order.partner_id.commercial_partner_id
+                != self.partner_id.commercial_partner_id):
             return vacio
         if self.company_id and order.company_id != self.company_id:
             return vacio
@@ -1398,7 +1406,17 @@ class ProjectTask(models.Model):
             self.visar_upsell_amount_total or 0.0,
             currency_id=currency.id or None,
         )
-        return providers.filtered(lambda p: p.state == 'enabled')
+        estados = self._visar_upsell_provider_states()
+        return providers.filtered(lambda p: p.state in estados)
+
+    def _visar_upsell_provider_states(self):
+        """Estados de proveedor que la app acepta para cobrar en línea.
+
+        Solo 'enabled' por la razón de arriba. El ajuste "Permitir pagos de prueba en
+        campo" (`upsell_servicio.py`) añade 'test' para poder probar el flujo completo
+        con el proveedor Demo, y entonces la app lo marca como PRUEBA.
+        """
+        return ('enabled',)
 
     def _visar_upsell_register_cash(self, employee):
         """Sella que el técnico recibió el pago en efectivo/transferencia.

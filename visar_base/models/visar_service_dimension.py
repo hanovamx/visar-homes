@@ -49,3 +49,36 @@ class VisarServiceDimension(models.Model):
         """Nombre del campo POST para el tramo elegido."""
         self.ensure_one()
         return 'tier_%s' % self.id
+
+    def _visar_quote_item(self, m2):
+        """(item, error): la pieza de cotización de esta dimensión para `m2` metros.
+
+        `item` es el dict que consume el motor de precios del agendado
+        (`appointment.type._visar_build_sale_lines`). Vive aquí, y no en cada canal,
+        porque lo necesitan dos que no se conocen entre sí —el agente de WhatsApp y la
+        venta en campo del técnico— y el tramo equivocado cobra de menos en silencio
+        (ver el guardia de `_visar_combined_variant_for_tiers`). Una sola traducción
+        de m² a tramo es la garantía de que la misma casa cuesta lo mismo por
+        cualquier canal.
+
+        `error` ∈ {'sin_m2', 'sin_producto', 'sin_tramo'}; cada canal lo convierte
+        en el mensaje que le toque (al modelo, al técnico).
+        """
+        self.ensure_one()
+        if not m2 or m2 <= 0:
+            return None, 'sin_m2'
+        template = self.env['product.template']._visar_get_service_template_for_dimension(self)
+        if not template:
+            return None, 'sin_producto'
+        tier = template._visar_tier_for_dimension_m2(self, m2)
+        if not tier:
+            return None, 'sin_tramo'
+        return {
+            'dimension_id': self.id,
+            'tier_id': tier.id,
+            'tier_name': tier.name or '',
+            'variant_id': None,   # lo resuelve por zona el motor de precios
+            'product_tmpl_id': template.id,
+            'is_valuation': tier.is_valuation,
+            'is_free': tier.is_free,
+        }, None

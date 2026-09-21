@@ -1,5 +1,37 @@
 # Estado y roadmap
 
+> **21-sep-2026 — servicio vendido y hecho en la misma visita: PROBADO EN UNA COPIA DE
+> PRODUCCIÓN, SIN DESPLEGAR.** visar_field_app **19.0.1.35.0**, visar_whatsapp_agent
+> **19.0.1.22.0**, visar_base (método nuevo, sin columnas) y el runtime (clave
+> `upsell_payment`). El técnico en una **visita de valoración** captura los m² del servicio
+> que puede dejar hecho ahí mismo (fumigación interior/exterior, áreas verdes) y, al generar
+> el cobro, en la **misma orden de venta**: nace el servicio como su propia visita
+> ("S00284 - Fumigación interior o exterior (B, 1-250, 0 - 50)", con su hoja), ya **En
+> ejecución** en el paso de la hoja (sin "Voy en camino" ni "Confirmar llegada": el cliente
+> no recibe otra vez esos avisos); se emite una factura **solo por el extra**, con la
+> **valoración descontada**; y la liga de pago sale **del número de Visar** (más el botón de
+> respaldo desde el teléfono del técnico). Detalle en `25-field-app.md` §"Servicio vendido y
+> hecho en la visita".
+> **Decisiones de Visar (18-sep):** descuento = la línea de valoración del pedido, UNA vez por
+> pedido, solo contra servicios, nunca por más que el servicio, solo si la valoración está
+> pagada; precio del motor del agendado (el mismo que web y WhatsApp); pago Demo permitido
+> **bajo un ajuste** (*Ajustes → Visar → Venta en campo*), con marca **PRUEBA** en la app.
+> **Tres bugs de REQ-007 que salieron al medirlo en la copia, corregidos:** (1) el destino
+> comparaba el **contacto** y no el cliente: la visita usa la dirección de servicio (hijo del
+> cliente), así que **73 de 80** visitas abiertas caían al pedido aparte siendo el mismo
+> cliente (S00318 fue una); (2) la factura del extra **se llevaba el pago en línea de la
+> cita** (S00284: $100 "en pago" al instante contra PBNK1/2026/00142): el técnico veía
+> "Pagado" sin cobrar nada; (3) el QR de cobro respondía **500** (falta el renderizador PNG de
+> reportlab en el servidor; ahora `qrcode` + PIL).
+> **Probado:** 17 pruebas nuevas; runtime 690. En la copia con la app real por HTTP (PIN,
+> m², cargo, QR, liga) y **pagado con Demo desde el portal como el cliente**: la app pasó a
+> "Pagado". **Al desplegar:** runtime primero, `-u visar_base,visar_whatsapp_agent,
+> visar_field_app`, y en *Ajustes → Visar → Venta en campo* el producto de descuento
+> ("Descuento", plantilla 42) y el pago de prueba. ⚠️ **Apagar el pago de prueba antes de
+> salir en vivo.** Pendiente: plantilla de Meta para `upsell_payment` ({{1}} monto, {{2}}
+> liga) — hasta entonces la liga desde el número de Visar solo llega con la ventana de 24 h
+> abierta; el botón del técnico cubre el resto.
+>
 > **16-sep-2026 00:10 — paso 1 del rezago de pólizas: EN `visar-test` Y EN UNA COPIA DE
 > PRODUCCIÓN, SIN DESPLEGAR.** `visar_subscription` **19.0.1.6.0**: las visitas de
 > póliza estrenan **tipo** (preventiva / correctiva / garantía), **número de visita** en

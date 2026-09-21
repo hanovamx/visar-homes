@@ -1737,3 +1737,43 @@ maqueta (`html` y escalar) porque `x_comments` puede ser cualquiera de los dos s
 - Se revisó la maqueta con la **previsualización HTML** (CSS real del reporte), en color y en escala
   de grises. **No se ha renderizado un PDF real:** al hacer `-u`, comprobar en wkhtmltopdf que el
   panel de observaciones no se corte entre páginas y que los filos gruesos no se coman el ancho.
+
+
+## Servicio vendido y hecho en la visita (21-sep-2026, visar_field_app 19.0.1.35.0)
+
+**Caso:** el técnico va a una visita de valoración y puede dejar hecha ahí mismo la
+fumigación o el mantenimiento de áreas verdes, en vez de volver otro día. Código en
+`visar_field_app/models/upsell_servicio.py` (el módulo explica cada decisión).
+
+**Cómo se vende.** En *Agregar producto* aparece "Servicio en esta visita": un campo de m²
+por dimensión de servicio (`visar.service.dimension`) cuyo producto tiene "Vendible en
+campo". El precio sale de `appointment.type._visar_build_sale_lines` —el mismo motor que el
+agendado web y el agente—, y la traducción m² → tramo es
+`visar.service.dimension._visar_quote_item`, compartida con el agente. Sin zona (CP sin
+mapear) no se ofrece nada; m² en el tramo de "valoración" se rechazan (lo cotiza oficina).
+Por eso `visar_field_app` depende ahora de `visar_appointment`.
+
+**Qué pasa al generar el cobro.** La línea cuelga de la visita mientras se edita el carrito
+(un pedido confirmado crearía la tarea en cuanto nace la línea y dejaría servicios
+fantasma). Al cobrar se suelta y `_timesheet_service_generation` (con la consolidación de
+`visar_fsm`) crea el servicio con su nombre, proyecto y hoja de siempre. Luego:
+mismos técnicos, fecha de hoy, **En ejecución** con `visar_arrived_at` y
+`visar_service_start` sellados —la app lo abre directo en la hoja— y
+`visar_upsell_origin_task_id` apuntando a la visita. La pantalla de cobro y la tarjeta de la
+visita enseñan "Abrir hoja: …".
+
+**Descuento de la valoración** (`_visar_upsell_sync_valuation_credit`), línea marcada
+`visar_valuation_credit` con el producto del ajuste *Descuento por visita de valoración*:
+monto de la línea de valoración del pedido, una vez por pedido (cuenta también un descuento
+capturado a mano con ese producto), solo contra servicios, tope = precio del servicio, y
+solo si la valoración está pagada (factura pagada o pago en línea del pedido). Lleva el
+técnico, así su comisión se mide sobre lo que el cliente paga de más.
+
+**Liga de pago.** Aviso `upsell_payment` desde el número de Visar, una vez
+(`visar_upsell_link_sent_at`); el botón "Enviar enlace desde mi WhatsApp" queda de respaldo.
+La factura del extra **no** se liga al pago en línea del pedido
+(`sale.order._prepare_invoice` bajo `visar_upsell_solo_lineas`).
+
+**Pago de prueba.** `visar_field.upsell_permitir_pago_prueba` (ajuste "Permitir pagos de
+prueba en campo"): acepta proveedores en estado `test` y la app enseña PRUEBA. Apagar
+antes de salir en vivo.

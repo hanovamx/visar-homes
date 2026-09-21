@@ -88,6 +88,12 @@ ESPECIFICACION = {
         'variables': 1, 'header': 'none', 'quick_reply': False,
         'nota': "{{1}} fecha y hora que se soltó",
     },
+    'upsell_payment': {
+        'label': "Liga de pago del servicio adicional (venta en campo)",
+        'variables': 2, 'header': 'none', 'quick_reply': False,
+        'nota': "{{1}} monto a pagar · {{2}} liga de pago. Sale del número de "
+                "Visar cuando el técnico genera el cobro de lo vendido en la visita.",
+    },
 }
 
 # Se puede asignar una plantilla que Meta todavía revisa: así se deja lista y
