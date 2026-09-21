@@ -22,11 +22,13 @@
                         invisible="not visar_is_poliza"
                         string="Visita de refuerzo"/>
             </xpath>
-            <!-- Visitas incluidas: junto al plan recurrente, editable por póliza.
-                 Se ancla en el div nombrado que sale_subscription inserta antes de la
-                 lista de precios; ese módulo aplica su vista antes que esta. -->
+            <!-- Junto al plan recurrente. Se ancla en el div nombrado que
+                 sale_subscription inserta antes de la lista de precios; ese módulo
+                 aplica su vista antes que esta.
+                 "Visitas incluidas" ya NO se muestra en la póliza (pedido de Visar,
+                 21-sep-2026). El campo sigue existiendo y sigue mandando cuántas
+                 visitas genera cada factura; se configura en el PLAN. -->
             <xpath expr="//div[@name='plan_block']" position="after">
-                <field name="visar_included_visits" invisible="not is_subscription"/>
                 <field name="visar_corrective_start" invisible="not is_subscription"/>
             </xpath>
             <!-- Fase 4: previsualizar descuento de combo antes de confirmar -->
