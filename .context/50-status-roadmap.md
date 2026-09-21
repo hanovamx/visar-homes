@@ -4,7 +4,9 @@
 > `visar-db`** (leído de la BD: visar_field_app 19.0.1.35.0, visar_whatsapp_agent
 > 19.0.1.22.0; `deploy-upsell-servicio-21sep.sh`, backup
 > `/var/backups/visar-db_upsell-servicio_20260921-232453.sql.gz`). Todavía sin salida en vivo;
-> pago de prueba ENCENDIDO. visar_field_app **19.0.1.35.0**, visar_whatsapp_agent
+> pago de prueba ENCENDIDO. **23:35 — visar_field_app 19.0.1.36.0:** quitar un adicional del
+> carrito ya no deja "0× …" en el pedido; se borra si nunca se facturó ni se entregó
+> (la constancia queda en el chatter). Se limpiaron las 2 líneas en 0 de la prueba en S00284. visar_field_app **19.0.1.35.0**, visar_whatsapp_agent
 > **19.0.1.22.0**, visar_base (método nuevo, sin columnas) y el runtime (clave
 > `upsell_payment`). El técnico en una **visita de valoración** captura los m² del servicio
 > que puede dejar hecho ahí mismo (fumigación interior/exterior, áreas verdes) y, al generar
