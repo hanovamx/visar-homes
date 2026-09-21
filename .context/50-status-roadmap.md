@@ -1,7 +1,10 @@
 # Estado y roadmap
 
-> **21-sep-2026 — servicio vendido y hecho en la misma visita: PROBADO EN UNA COPIA DE
-> PRODUCCIÓN, SIN DESPLEGAR.** visar_field_app **19.0.1.35.0**, visar_whatsapp_agent
+> **21-sep-2026 23:26 — servicio vendido y hecho en la misma visita: DESPLEGADO en
+> `visar-db`** (leído de la BD: visar_field_app 19.0.1.35.0, visar_whatsapp_agent
+> 19.0.1.22.0; `deploy-upsell-servicio-21sep.sh`, backup
+> `/var/backups/visar-db_upsell-servicio_20260921-232453.sql.gz`). Todavía sin salida en vivo;
+> pago de prueba ENCENDIDO. visar_field_app **19.0.1.35.0**, visar_whatsapp_agent
 > **19.0.1.22.0**, visar_base (método nuevo, sin columnas) y el runtime (clave
 > `upsell_payment`). El técnico en una **visita de valoración** captura los m² del servicio
 > que puede dejar hecho ahí mismo (fumigación interior/exterior, áreas verdes) y, al generar
