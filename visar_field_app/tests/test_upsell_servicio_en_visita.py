@@ -258,6 +258,8 @@ class TestServicioEnVisita(TransactionCase):
             lambda l: l.product_id == self.poda_variante)
         self.assertTrue(tarea._visar_upsell_remove(servicio.id))
         self.assertFalse(tarea._visar_upsell_lines(), "sin servicio no queda descuento")
+        self.assertFalse(servicio.exists() or credito.exists(),
+                         "ni '0× servicio' ni '0× Descuento' en el pedido")
 
     # ------------------------------------------------------------------
     # Generar el cobro: servicio nuevo, factura, liga

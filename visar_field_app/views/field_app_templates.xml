@@ -276,9 +276,14 @@
                     <div t-if="task.visar_sale_order_id" class="card mb-3">
                         <div class="card-header py-2">Pedido <t t-esc="task.visar_sale_order_id.name"/></div>
                         <ul class="list-group list-group-flush">
-                            <li t-foreach="task.visar_sale_order_id.order_line.filtered(lambda l: not l.display_type)"
+                            <!-- Sin las líneas en 0: un adicional que el técnico quitó y
+                                 que ya no se pudo borrar (facturado o entregado) no es
+                                 algo que el cliente vaya a recibir. El descuento de la
+                                 valoración se nombra por su descripción. -->
+                            <li t-foreach="task.visar_sale_order_id.order_line.filtered(lambda l: not l.display_type and l.product_uom_qty > 0)"
                                 t-as="line" class="list-group-item py-1">
-                                <t t-esc="int(line.product_uom_qty)"/>× <t t-esc="line.product_id.name"/>
+                                <t t-esc="int(line.product_uom_qty)"/>×
+                                <t t-esc="line.name if line.visar_valuation_credit else line.product_id.name"/>
                             </li>
                         </ul>
                     </div>

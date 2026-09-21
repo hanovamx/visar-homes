@@ -4,6 +4,7 @@ import io
 import logging
 import math
 
+import psycopg2
 import pytz
 import requests
 from lxml import etree
@@ -21,6 +22,7 @@ except Exception:  # noqa: BLE001
     pass
 
 from odoo import api, fields, models
+from odoo.exceptions import UserError
 from odoo.tools import formatLang, html2plaintext
 
 from ..hooks import (
@@ -1292,19 +1294,45 @@ class ProjectTask(models.Model):
                 self.sudo().visar_upsell_order_id = False
                 order.unlink()
             return True
-        # Pedido confirmado: Odoo no permite borrar la línea ("Set the quantity to 0
-        # instead"), y es lo que hace también el catálogo de materiales del FSM. La
-        # línea se queda en 0 con su marcador: el documento conserva que se ofreció
-        # y se canceló en sitio, y el carrito la ignora por cantidad.
+        # Pedido confirmado: primero a 0 (es lo que ajusta o cancela la entrega de
+        # almacén de un producto físico) y luego se BORRA si nada depende de ella.
+        # Hasta el 21-sep-2026 se quedaba en 0 "como constancia", y la tarjeta
+        # "Pedido" de la app y la orden en el backend enseñaban "0× Fumigación …" y
+        # "0× Descuento" a quien solo había cambiado de opinión. La constancia es la
+        # nota de abajo en el chatter del pedido, que no se ve en la orden.
         producto = line.product_id.display_name
         line.with_context(**self._VISAR_UPSELL_LINE_CTX).write({
             'product_uom_qty': 0.0,
         })
+        quedo = self._visar_upsell_purge(line)
         order.message_post(body=Markup(
-            "<p>Adicional cancelado en sitio: <b>%s</b> (cantidad en 0). "
+            "<p>Adicional cancelado en sitio: <b>%s</b> (%s). "
             "Servicio <b>%s</b>.</p>"
-        ) % (producto or '', self.name or ''))
+        ) % (producto or '', "cantidad en 0" if quedo else "quitado del pedido",
+             self.name or ''))
         return True
+
+    def _visar_upsell_purge(self, lines):
+        """Borra del pedido las líneas de adicional quitadas antes de cobrarse.
+
+        Solo las que `sale.order.line._visar_upsell_borrable` deja (marcadas como
+        vendidas en campo, en 0, sin facturar y sin entrega hecha). Si Odoo se niega
+        por otra razón, la línea se queda en 0 como antes: no se pierde nada, solo
+        se ve. Devuelve las que no se pudieron borrar.
+        """
+        restantes = self.env['sale.order.line'].sudo().browse()
+        for line in lines.sudo():
+            if not line._visar_upsell_borrable():
+                restantes |= line
+                continue
+            try:
+                with self.env.cr.savepoint():
+                    line.unlink()
+            except (UserError, psycopg2.Error) as error:
+                _logger.info("No se pudo borrar la línea %s del adicional: %s",
+                             line.id, error)
+                restantes |= line
+        return restantes
 
     def _visar_upsell_confirm(self, employee):
         """Cierra el adicional y emite su factura, SOLO por lo vendido en sitio.

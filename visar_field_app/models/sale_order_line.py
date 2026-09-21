@@ -27,3 +27,24 @@ class SaleOrderLine(models.Model):
     visar_upsell_at = fields.Datetime(
         string="Vendido en sitio el", readonly=True, copy=False,
         help="Momento en que el técnico agregó esta línea desde la app de campo.")
+
+    def _visar_upsell_borrable(self):
+        """¿Se puede borrar esta línea de adicional que el técnico quitó?
+
+        Solo si la vendió la app (marcador), ya está en 0, nunca se facturó y no hay
+        entrega de almacén HECHA. Una factura o una salida de almacén son hechos que
+        otro documento ya cita; borrar la línea los dejaría colgando.
+        """
+        self.ensure_one()
+        if not self.visar_upsell_task_id or self.product_uom_qty:
+            return False
+        if self.invoice_lines or self.qty_invoiced:
+            return False
+        moves = self.move_ids if 'move_ids' in self._fields else self.env['stock.move']
+        return not any(move.state == 'done' for move in moves)
+
+    def _check_line_unlink(self):
+        """Odoo no deja borrar líneas de un pedido confirmado; las del adicional que
+        el técnico quitó antes de cobrarlas, sí (ver `_visar_upsell_borrable`)."""
+        bloqueadas = super()._check_line_unlink()
+        return bloqueadas.filtered(lambda line: not line._visar_upsell_borrable())

@@ -160,9 +160,10 @@ class TestAdicionalEnPedidoOriginal(CasoAdicional):
         self.assertNotEqual(adicional, original)
         self.assertEqual(adicional.product_uom_qty, 1.0)
 
-    def test_quitar_un_adicional_del_pedido_confirmado_lo_deja_en_cero(self):
-        """Odoo prohibe borrar lineas de un pedido confirmado; se dejan en 0 (es
-        lo que hace tambien el catalogo de materiales del FSM nativo)."""
+    def test_quitar_un_adicional_del_pedido_confirmado_lo_borra(self):
+        """Hasta el 21-sep-2026 se dejaba en 0 "como constancia", y la app y la
+        orden enseñaban "0× Estación". Sin factura ni entrega hecha se borra; la
+        constancia queda en el chatter del pedido."""
         pedido = self._pedido()
         tarea = self._tarea(pedido)
         self._vender(tarea)
@@ -170,10 +171,22 @@ class TestAdicionalEnPedidoOriginal(CasoAdicional):
 
         self.assertTrue(tarea._visar_upsell_remove(linea.id))
 
-        self.assertTrue(linea.exists(), "la linea se queda como constancia")
-        self.assertEqual(linea.product_uom_qty, 0.0)
+        self.assertFalse(linea.exists(), "no queda un '0×' en el pedido")
         self.assertEqual(tarea._visar_upsell_state(), 'vacio')
         self.assertEqual(pedido.amount_total, 700.0, "vuelve a valer lo contratado")
+        self.assertIn("quitado del pedido", pedido.message_ids[:1].body)
+
+    def test_una_linea_ya_facturada_no_se_borra(self):
+        """Una factura ya la cita: borrarla dejaría la factura colgando."""
+        pedido = self._pedido()
+        tarea = self._tarea(pedido)
+        self._vender(tarea)
+        linea = tarea._visar_upsell_lines()
+        tarea._visar_upsell_confirm(self.empleado)
+        self.assertFalse(linea._visar_upsell_borrable())
+        with self.assertRaises(Exception):
+            with self.env.cr.savepoint():
+                linea.unlink()
 
     def test_el_efectivo_se_sella_en_la_visita_y_no_en_el_pedido(self):
         """El pedido original puede acumular adicionales de varias visitas: 'quien

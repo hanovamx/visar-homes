@@ -281,6 +281,7 @@ class ProjectTask(models.Model):
                 vivos.unlink()
             elif vivos:
                 vivos.with_context(**ctx).write({'product_uom_qty': 0.0})
+                self._visar_upsell_purge(vivos)
             return
         vals = {
             'product_uom_qty': 1.0,
