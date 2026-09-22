@@ -8,7 +8,9 @@
             <xpath expr="//field[@name='billing_period_unit']" position="after">
                 <field name="visar_commitment_months"/>
                 <field name="visar_first_invoice_periods"/>
-                <field name="visar_included_visits"/>
+                <!-- "Visitas incluidas" se quitó el 22-sep-2026: las visitas salen de los
+                     meses pagados ÷ este número. -->
+                <field name="visar_visit_interval_months"/>
             </xpath>
         </field>
     </record>

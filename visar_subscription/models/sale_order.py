@@ -27,15 +27,6 @@ class SaleOrder(models.Model):
     visar_is_poliza = fields.Boolean(
         string="Es póliza (genera visitas)", compute='_compute_visar_is_poliza',
     )
-    visar_included_visits = fields.Integer(
-        string="Visitas incluidas",
-        compute='_compute_visar_included_visits', store=True, readonly=False,
-        copy=True,
-        help="Visitas que genera cada factura de esta póliza. Se hereda del plan y "
-             "se puede ajustar aquí sin tocar el plan. No afecta el precio ni el "
-             "calendario de facturación.\n\n"
-             "0 = derivar el nº de visitas de los periodos cobrados por adelantado.",
-    )
     visar_corrective_start = fields.Boolean(
         string="Arranque correctivo",
         compute='_compute_visar_corrective_start', store=True, readonly=False,
@@ -85,27 +76,14 @@ class SaleOrder(models.Model):
             l.product_id.product_tmpl_id.visar_generates_visit
             for l in self.order_line))
 
-    @api.depends('plan_id')
-    def _compute_visar_included_visits(self):
-        """Hereda las visitas incluidas del plan, dejándolas editables en la orden.
-
-        Es compute y no onchange a propósito: en el flujo web la orden es el carrito y
-        el plan se asigna con `write` desde el controlador y desde `_cart_add`, donde
-        los onchange no corren. Al ser `readonly=False`, un valor puesto a mano en la
-        póliza se respeta hasta que alguien cambie el plan.
-        """
-        for order in self:
-            order.visar_included_visits = (
-                order.plan_id.visar_included_visits if order.plan_id else 0)
-
     @api.depends('order_line.calendar_event_id')
     def _compute_visar_corrective_start(self):
         """Deduce del guión de calificación si se contrató con plaga activa.
 
-        Es compute con `readonly=False` por lo mismo que `visar_included_visits`: en
-        el flujo web la orden es el carrito y se escribe desde controladores donde los
-        onchange no corren, y lo deducido tiene que poder corregirse a mano sin que el
-        siguiente recálculo lo pise.
+        Es compute con `readonly=False` y no onchange: en el flujo web la orden es el
+        carrito y se escribe desde controladores donde los onchange no corren, y lo
+        deducido tiene que poder corregirse a mano sin que el siguiente recálculo lo
+        pise.
         """
         for order in self:
             order.visar_corrective_start = order._visar_detect_corrective_start()
@@ -445,18 +423,20 @@ class SaleOrder(models.Model):
     def _visar_visits_for_line(self, line, is_first):
         """Nº de visitas que esta factura genera para esta línea de servicio.
 
-        Con visitas incluidas > 0 el número lo fija la póliza y es el mismo en cada
-        factura: es lo que permite vender un plan anual de un solo pago con 12 visitas
-        sin cobrar 12 años. Con 0 se conserva el comportamiento histórico, donde las
-        visitas del primer ciclo se derivan de los periodos realmente cobrados por
-        adelantado.
+        Periodos que paga la factura × visitas por periodo del plan
+        (`sale.subscription.plan._visar_visits_per_period`: meses del periodo ÷ meses
+        entre visitas). En el primer cobro los periodos salen de las líneas de
+        anticipo realmente vendidas; después, uno por factura.
 
-        Se lee de la ORDEN y no del plan para respetar el ajuste manual por póliza.
+        Anual (12 meses, 1 de entrada) = 12; semestral = 6; mensual con 3 de entrada =
+        3 y luego 1. Hasta el 22-sep-2026 lo decidía "Visitas incluidas", una copia por
+        póliza que contaba por factura y no por mes pagado (ver el docstring de
+        `_visar_visits_per_period`).
         """
         self.ensure_one()
-        if self.visar_included_visits > 0:
-            return self.visar_included_visits
-        return self._visar_prepaid_periods_for_line(line) if is_first else 1
+        periodos = self._visar_prepaid_periods_for_line(line) if is_first else 1
+        por_periodo = self.plan_id._visar_visits_per_period() if self.plan_id else 1
+        return periodos * por_periodo
 
     def _visar_visit_lines(self):
         """Líneas de la póliza que generan visita y tienen proyecto FSM configurado."""

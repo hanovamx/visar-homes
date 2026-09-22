@@ -208,7 +208,9 @@ class VisarAgentTools(models.AbstractModel):
                 'name': plan.name,
                 'periodo_valor': plan.billing_period_value,
                 'periodo_unidad': plan.billing_period_unit,
-                'visitas_incluidas': plan.visar_included_visits,
+                # Visitas por periodo pagado (meses del periodo ÷ meses entre
+                # visitas). La clave se conserva: el runtime la pinta tal cual.
+                'visitas_incluidas': plan._visar_visits_per_period(),
                 'periodos_primer_cobro': plan.visar_first_invoice_periods,
             }
             for plan in plans if plan.id in con_tarifa

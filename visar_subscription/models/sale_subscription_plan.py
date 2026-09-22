@@ -24,19 +24,6 @@ class SaleSubscriptionPlan(models.Model):
              "bimestral/trimestral van en 1: su propio periodo ya cubre dos meses o "
              "más. En planes anuales NO pongas 2: cobraría dos años de entrada.",
     )
-    visar_included_visits = fields.Integer(
-        string="Visitas incluidas",
-        default=0,
-        help="Nº de visitas que incluye el plan por cada factura, independiente de "
-             "cuántos periodos se cobren por adelantado. No afecta el precio ni "
-             "genera cargos adicionales.\n\n"
-             "Es la forma de vender un plan anual de un SOLO pago con 12 visitas: "
-             "periodos cobrados por adelantado en 1 (una factura al año) y visitas "
-             "incluidas en 12.\n\n"
-             "0 = derivar el nº de visitas de los periodos realmente cobrados por "
-             "adelantado (comportamiento por defecto: 1 visita por periodo facturado).",
-    )
-
     visar_visit_interval_months = fields.Integer(
         string="Meses entre visitas",
         default=1,
@@ -47,7 +34,11 @@ class SaleSubscriptionPlan(models.Model):
              "1 = una visita al mes, que es lo normal en todos los planes. Las visitas "
              "correctivas y las de garantía no entran en la serie ni la recorren: son "
              "adicionales y no consumen las visitas del cliente.\n\n"
-             "0 = no proponer fechas para este plan.",
+             "0 = una visita por periodo pagado y sin fecha propuesta.\n\n"
+             "También decide CUÁNTAS visitas genera cada factura pagada: los meses "
+             "que cubre ÷ este número. Anual (12 meses) con 1 = 12 visitas; "
+             "semestral = 6; mensual = 1 por mes, y 3 en el primer cobro si se "
+             "cobran 3 meses de entrada.",
     )
 
     @api.constrains('visar_visit_interval_months')
@@ -58,10 +49,27 @@ class SaleSubscriptionPlan(models.Model):
                     "Los meses entre visitas del plan '%s' no pueden ser negativos.",
                     plan.display_name))
 
-    @api.constrains('visar_included_visits')
-    def _check_visar_included_visits(self):
-        for plan in self:
-            if plan.visar_included_visits < 0:
-                raise ValidationError(_(
-                    "Las visitas incluidas del plan '%s' no pueden ser negativas.",
-                    plan.display_name))
+    def _visar_period_months(self):
+        """Meses que cubre UN periodo de facturación del plan (0 si es menos de uno)."""
+        self.ensure_one()
+        valor = self.billing_period_value or 0
+        return {'month': valor, 'year': valor * 12}.get(self.billing_period_unit, 0)
+
+    def _visar_visits_per_period(self):
+        """Visitas que genera cada periodo pagado: meses del periodo ÷ meses entre
+        visitas, y al menos una.
+
+        Sustituye a "Visitas incluidas" (quitado el 22-sep-2026). Aquel campo contaba
+        visitas por FACTURA y no por mes pagado, y se leyó al revés: la Suscripción
+        Mensual lo tenía en 1 y cobra 3 meses de entrada, así que desde el 31-ago sus
+        clientes pagaban 3 meses y recibían UNA visita (S00285, S00286). Además era
+        una copia por póliza que no seguía al plan: 8 pólizas anuales y semestrales
+        activas se quedaron en 0 y recibían una visita por factura en vez de 12 o 6.
+        Derivarlo de lo que el cliente paga no deja nada que se pueda leer mal.
+        """
+        self.ensure_one()
+        meses = self._visar_period_months()
+        cada = self.visar_visit_interval_months
+        if meses <= 0 or cada <= 0:
+            return 1
+        return max(1, meses // cada)

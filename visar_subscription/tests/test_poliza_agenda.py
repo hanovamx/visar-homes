@@ -23,13 +23,12 @@ class TestPolizaAgenda(TransactionCase):
         company = cls.env.company
         cls.project = cls.env['project.project'].create({
             'name': 'FSM Agenda Test', 'is_fsm': True, 'company_id': company.id})
-        # Plan anual de un solo pago con 12 visitas: la forma más limpia de tener una
-        # serie larga en un solo ciclo, y el plan real que motivó `visar_included_visits`.
+        # Plan anual de un solo pago: 12 meses pagados = 12 visitas, la forma más limpia
+        # de tener una serie larga en un solo ciclo.
         cls.plan = cls.env['sale.subscription.plan'].create({
             'name': 'Plan Agenda Test',
             'billing_period_value': 1, 'billing_period_unit': 'year',
-            'visar_first_invoice_periods': 1, 'visar_commitment_months': 0,
-            'visar_included_visits': 12})
+            'visar_first_invoice_periods': 1, 'visar_commitment_months': 0})
         cls.service = cls.env['product.template'].create({
             'name': 'Servicio Agenda Test', 'type': 'service',
             'invoice_policy': 'order', 'list_price': 100.0,

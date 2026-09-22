@@ -28,22 +28,41 @@ migración `19.0.1.3.0` bajó a 1 los planes anuales que lo tenían mal, pero su
 `billing_period_unit = 'month' AND billing_period_value >= 12`: **no alcanza a un plan
 configurado como "1 año"** (`unit='year'`, `value=1`), que hay que revisar a mano.
 
-## Visitas incluidas (independientes del cobro)
+## Cuántas visitas genera cada factura (22-sep-2026)
 
-`sale.subscription.plan.visar_included_visits` declara **cuántas visitas incluye el plan
-por factura**, sin tocar precio, impuestos, totales ni el calendario de facturación. Se
-propaga a `sale.order.visar_included_visits`, que es editable por póliza (compute con
-`store=True, readonly=False`) para poder ajustarlo sin cambiar el plan.
+**Visitas = periodos que paga la factura × (meses del periodo ÷ "Meses entre visitas")**,
+y al menos una. Lo calculan `sale.subscription.plan._visar_visits_per_period` y
+`sale.order._visar_visits_for_line`; en el primer cobro los periodos salen de las líneas de
+anticipo realmente vendidas.
 
-Existe porque antes las dos cosas iban atadas: el nº de visitas se derivaba de los
-periodos cobrados por adelantado, así que la única forma de dar más visitas era cobrar
-más de entrada. Con esto se puede vender un **plan anual de un solo pago con 12 visitas**:
-periodos adelantados en 1, visitas incluidas en 12.
+| plan | periodo | cobro de entrada | visitas |
+|---|---|---|---|
+| Suscripción anual | 12 meses | 1 | 12 por factura |
+| Suscripción semestral | 6 meses | 1 | 6 por factura |
+| Suscripción Mensual | 1 mes | 3 | 3 en el primer cobro, luego 1 al mes |
 
-| valor | efecto |
-|---|---|
-| `0` (default) | comportamiento histórico: 1ª factura → tantas visitas como periodos pagados de entrada; siguientes → 1 |
-| `N > 0` | **cada** factura genera N visitas por línea de servicio, sin importar los periodos cobrados |
+"Meses entre visitas" (en el plan, junto a los periodos cobrados por adelantado) cambia el
+ritmo: un anual con 3 da 4 visitas. También alimenta la fecha propuesta del rezago de
+visitas (ver abajo) y lo que el agente de WhatsApp dice al ofrecer la póliza
+(`visitas_incluidas` = visitas por periodo).
+
+**Por qué se quitó "Visitas incluidas".** Existió del 10-ago al 22-sep-2026 para poder
+vender un anual de un solo pago con 12 visitas, pero tenía dos defectos, los dos medidos en
+producción:
+
+- **Contaba visitas por FACTURA, no por mes pagado, y se leyó al revés.** La Suscripción
+  Mensual lo tenía en 1 y cobra 3 meses de entrada: desde el 31-ago sus clientes pagaban 3
+  meses y recibían UNA visita (S00285, S00286), cuando antes recibían 3 (S00198, S00204).
+- **Era una copia por póliza que no seguía al plan.** 67 de 109 pólizas se quedaron en 0
+  (se crearon antes del campo); entre las activas, 5 anuales y 3 semestrales recibían una
+  visita por factura en vez de 12 o 6.
+
+Con la regla nueva las visitas salen de lo que el cliente paga y del plan vigente, así que
+ninguna de las dos cosas puede volver a pasar. Efecto en pólizas activas, en su siguiente
+factura: las 8 anuales/semestrales en 0 pasan a 12/6; S00042 (plan archivado "Fumigación
+Anual - Mensual", cobro anual) a 12; S00154 (bimestral archivado) a 2; las de "3 servicios"
+(plan archivado, contratos de un mes que ya recibieron sus 3 visitas) darían 1 si
+renovaran. Las columnas se borraron solas al actualizar el módulo.
 
 Las N visitas del lote nacen sin fecha (salvo la primera, que hereda la cita del wizard)
 y se numeran en el título — `Visita póliza 2026-08-10 — Fumigación (3/12)` — porque si no
