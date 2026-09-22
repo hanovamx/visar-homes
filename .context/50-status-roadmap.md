@@ -1,5 +1,14 @@
 # Estado y roadmap
 
+> **22-sep-2026 01:17 — varias rondas de adicionales en la misma visita: DESPLEGADO en
+> `visar-db`** (visar_field_app 19.0.1.37.0, visar_commission 19.0.1.0.2;
+> `deploy-rondas-adicionales-22sep.sh`, backup
+> `/var/backups/visar-db_rondas-adicionales_20260922-011710.sql.gz`). Pagado un cobro de
+> adicionales, la tarjeta ofrece "+ Agregar más (nuevo cobro)": otra factura en el mismo
+> pedido. Detalle en `25-field-app.md` §"Varias rondas". **S00316:** su pedido aparte S00318
+> (INV/2026/00172, $450 pagado en efectivo) se borró a mano el 22-sep 00:42; la factura
+> quedó sin pedido y la visita se cerró con una estación de $100 sin cobrar.
+>
 > **22-sep-2026 00:20 — pólizas: se quita "Visitas incluidas"; las visitas salen de los
 > meses pagados. DESPLEGADO en `visar-db`** (visar_subscription 19.0.1.8.0,
 > visar_whatsapp_agent 19.0.1.23.0; `deploy-sin-visitas-incluidas-22sep.sh`, backup
