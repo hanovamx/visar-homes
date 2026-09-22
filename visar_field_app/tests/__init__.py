@@ -7,3 +7,4 @@ from . import test_upsell_en_pedido_original
 from . import test_upsell_servicio_en_visita
 from . import test_upsell_rondas
 from . import test_cotizacion_manual
+from . import test_tratamientos_hojas

@@ -90,6 +90,24 @@ TIPO_SERVICIO = ["Corte de pasto", "Orilleo", "Poda de setos", "Aireación de su
                  "Aplicación de herbicida", "Fertilización", "Otro"]
 ESTADO_EQUIPO = ["Funcional", "Cabezal desgastado", "Cabezal roto", "Nylon bajo",
                  "Máquina requiere revisión"]
+# --- Tratamientos especializados ---
+TIPO_TERMITA = ["Subterránea", "De madera seca", "No identificada"]
+ESTRUCTURAS = ["Marcos de puerta o ventana", "Vigas o techo de madera",
+               "Pisos de madera", "Muebles", "Muros", "Jardín, tocones o cercas",
+               "Otro"]
+NIVEL_DANO = ["Leve", "Moderado", "Severo"]
+METODO_TERMITA = ["Barrera química perimetral", "Inyección a muro o madera",
+                  "Estaciones de cebo", "Aplicación localizada", "Otro"]
+EVIDENCIAS_CHINCHE = ["Insectos vivos", "Huevos", "Exuvias (pieles)",
+                      "Manchas de excremento", "Manchas de sangre",
+                      "Picaduras reportadas por el cliente", "Otro"]
+HABITACIONES = ["Recámara principal", "Recámara secundaria", "Sala", "Comedor",
+                "Cuarto de servicio", "Otro"]
+METODO_CHINCHE = ["Vapor", "Aspirado", "Químico residual", "Polvo desecante",
+                  "Otro"]
+# La franja, y no una hora exacta: la app solo sabe capturar fechas, y al cliente
+# se le promete una ventana igual que en el agendado.
+FRANJA = ["Mañana (9:00 - 13:00)", "Tarde (13:00 - 17:00)"]
 TIPO_INMUEBLE = ["Bodega", "Casa", "Departamento", "Local comercial", "Oficina", "Otro"]
 COMPLEJIDAD = ["Básica", "Intermedia", "Severa"]
 SERVICIOS_ID = ["Fumigación", "Jardinería", "Riego", "Diseño de jardín", "Termitas",
@@ -107,6 +125,11 @@ VISITA_NAME = "Visita de valoración técnica (App v2)"
 # individuales — de eso depende que todo lo que está indexado por nombre de campo
 # (condicionales, obligatoriedad, maquetas del reporte) siga sirviendo tal cual.
 COMBO_NAME = "Fumigación + Mantenimiento de áreas verdes (App v2)"
+# Tratamientos que se cotizan a mano (22-sep-2026). Hoja propia y proyecto propio:
+# no son fumigación —otro bicho, otro método, otra evidencia— y el tablero de
+# gestión se lee mejor separado.
+TERMITAS_NAME = "Tratamiento antitermita (App v2)"
+CHINCHES_NAME = "Tratamiento antichinches (App v2)"
 FUM_LINE = "x_visar_area_tratada_v2"
 JAR_LINE = "x_visar_labor_jardineria"
 VISITA_LINE = "x_visar_zona_evidencia"
@@ -115,7 +138,12 @@ VISITA_LINE = "x_visar_zona_evidencia"
 # línea de las plantillas individuales.
 FUM_LINE_COMBO = "x_visar_area_tratada_combo"
 JAR_LINE_COMBO = "x_visar_labor_combo"
+TERM_LINE = "x_visar_punto_termita"
+CHIN_LINE = "x_visar_zona_chinche"
 FACTOR_MODEL = "x_visar_factor_riesgo"
+ESTRUCTURA_MODEL = "x_visar_estructura_termita"
+EVIDENCIA_MODEL = "x_visar_evidencia_chinche"
+HABITACION_MODEL = "x_visar_habitacion_chinche"
 PLAGA_MODEL = "x_visar_plaga"
 SERVICIO_MODEL = "x_visar_servicio_identificado"
 
@@ -223,6 +251,114 @@ _FUM_BODY_CIERRE = """
       """
 
 
+# --- Tratamientos especializados (22-sep-2026) ------------------------------
+# El cierre es común a los dos: la visita de seguimiento se acuerda CON EL CLIENTE
+# delante, que es el único momento en que las dos partes están juntas. Con la fecha
+# puesta, Odoo crea la visita (ver `models/seguimiento.py`); sin ella, oficina la
+# agenda a mano.
+_SEG_BODY = """
+          <field name="x_requiere_seguimiento" help="La mayoría de estos tratamientos necesita una segunda visita para confirmar que la plaga no volvió."/>
+          <field name="x_fecha_seguimiento" help="Acuérdala con el cliente antes de irte: con la fecha puesta, la visita se crea sola y sin costo."/>
+          <field name="x_franja_seguimiento"/>"""
+
+_TERM_BODY_INSPECCION = """
+        <group>
+          <field name="x_tipo_termita" required="1" help="Subterránea: tubos de lodo, humedad. De madera seca: montículos de serrín."/>
+          <field name="x_estructuras_afectadas" widget="many2many_tags" required="1" help="Marca todo lo que tenga daño o actividad."/>
+          <field name="x_estructuras_otro"/>
+          <field name="x_nivel_dano" required="1"/>
+          <field name="x_humedad_detectada" help="La humedad es lo que trae de vuelta a la termita subterránea."/>
+          <field name="x_foto_inicial" widget="image" required="1" help="Foto del daño más representativo antes de tratar."/>
+          <field name="x_descripcion_zona" placeholder="Ej. Tubos de lodo en el marco de la puerta del patio"/>
+        </group>
+      """
+
+_TERM_BODY_EJECUCION = """
+        <group>
+          <field name="x_metodo_aplicacion" required="1"/>
+          <field name="x_metodo_otro"/>
+          <field name="x_foto_ejecucion" widget="image" required="1" help="Foto representativa del tratamiento aplicado."/>
+        </group>
+        <field name="x_puntos_tratados" help="Agrega cada punto tratado con su evidencia (mínimo uno).">
+          <list>
+            <field name="x_ubicacion"/>
+            <field name="x_perforaciones"/>
+          </list>
+          <form>
+            <group>
+              <field name="x_ubicacion" required="1" placeholder="Ej. Marco de puerta del patio, viga del techo"/>
+              <field name="x_perforaciones" placeholder="0" help="Cuántas perforaciones se hicieron en este punto (0 si no se perforó)."/>
+              <field name="x_foto_evidencia" widget="image" required="1"/>
+              <field name="x_observacion" placeholder="Ej. Madera hueca, se recomienda reemplazo"/>
+            </group>
+          </form>
+        </field>
+      """
+
+_TERM_BODY_CIERRE = """
+        <group>
+          <field name="x_indicaciones_cliente" required="1" placeholder="Ej. No lavar la zona tratada por 72 horas; revisar filtraciones del patio."/>
+          <field name="x_foto_final" widget="image"/>""" + _SEG_BODY + """
+          <field name="x_comments"/>
+        </group>
+      """
+
+_CHIN_BODY_INSPECCION = """
+        <group>
+          <field name="x_nivel_infestacion" required="1" help="Preventivo: sin evidencia viva. Moderado: evidencia en un cuarto. Alto: varios cuartos o insectos vivos a la vista."/>
+          <field name="x_habitaciones_afectadas" widget="many2many_tags" required="1"/>
+          <field name="x_habitaciones_otro"/>
+          <field name="x_evidencia_encontrada" widget="many2many_tags" required="1" help="Lo que de verdad viste, no lo que reportó el cliente (eso va en 'picaduras reportadas')."/>
+          <field name="x_evidencia_otro"/>
+          <field name="x_foto_inicial" widget="image" required="1"/>
+          <field name="x_descripcion_zona" placeholder="Ej. Manchas en costuras del colchón de la recámara principal"/>
+        </group>
+      """
+
+# La preparación del cliente se pregunta aparte y ANTES de ejecutar: si la casa no
+# se preparó, el tratamiento falla y el cliente lo reclama como garantía. Dejar
+# constancia de qué se encontró protege a las dos partes.
+_CHIN_BODY_PREPARACION = """
+        <group>
+          <field name="x_ropa_lavada" help="Ropa y blancos lavados a alta temperatura antes de la visita."/>
+          <field name="x_colchones_despejados" help="Colchones y bases sin ropa de cama."/>
+          <field name="x_desorden_retirado" help="Cajas, ropa y objetos bajo camas y muebles retirados."/>
+          <field name="x_prep_observacion" placeholder="Ej. El cliente no lavó la ropa; se le explicó el riesgo de reinfestación."/>
+        </group>
+      """
+
+_CHIN_BODY_EJECUCION = """
+        <group>
+          <field name="x_metodo_aplicacion" required="1"/>
+          <field name="x_metodo_otro"/>
+          <field name="x_foto_ejecucion" widget="image" required="1"/>
+        </group>
+        <field name="x_zonas_tratadas" help="Agrega cada zona o mueble tratado con su evidencia (mínimo uno).">
+          <list>
+            <field name="x_habitacion"/>
+            <field name="x_mueble"/>
+          </list>
+          <form>
+            <group>
+              <field name="x_habitacion" required="1"/>
+              <field name="x_habitacion_otro"/>
+              <field name="x_mueble" required="1" placeholder="Ej. Colchón, base de cama, sillón, rodapié"/>
+              <field name="x_foto_evidencia" widget="image" required="1"/>
+              <field name="x_observacion" placeholder="Ej. Costuras con huevos; se aplicó vapor y polvo"/>
+            </group>
+          </form>
+        </field>
+      """
+
+_CHIN_BODY_CIERRE = """
+        <group>
+          <field name="x_indicaciones_cliente" required="1" placeholder="Ej. No dormir fuera de la recámara tratada; no lavar el colchón por 7 días."/>
+          <field name="x_foto_final" widget="image"/>""" + _SEG_BODY + """
+          <field name="x_comments"/>
+        </group>
+      """
+
+
 def _arch(pages):
     """Arma el arch del formulario a partir de una lista de (título, cuerpo)."""
     body = ''.join('<page string="%s">%s</page>\n      ' % (title, content)
@@ -256,6 +392,19 @@ COMBO_ARCH = _arch([
     ("Áreas verdes — Inspección inicial", _JAR_BODY_INSPECCION),
     ("Áreas verdes — Ejecución", _JAR_BODY_EJECUCION),
     ("Cierre", _JAR_BODY_CIERRE),
+])
+
+TERMITAS_ARCH = _arch([
+    ("Inspección inicial", _TERM_BODY_INSPECCION),
+    ("Ejecución del tratamiento", _TERM_BODY_EJECUCION),
+    ("Cierre", _TERM_BODY_CIERRE),
+])
+
+CHINCHES_ARCH = _arch([
+    ("Inspección inicial", _CHIN_BODY_INSPECCION),
+    ("Preparación del cliente", _CHIN_BODY_PREPARACION),
+    ("Ejecución del tratamiento", _CHIN_BODY_EJECUCION),
+    ("Cierre", _CHIN_BODY_CIERRE),
 ])
 
 VISITA_ARCH = """<form create="false" duplicate="false">
@@ -616,6 +765,134 @@ def _seed_jardineria_fields(env, tmpl, line_model, line_label):
     _relabel_comments(env, ws, 'Observaciones finales del técnico')
 
 
+def _seed_seguimiento_fields(env, ws, wid):
+    """Los tres campos del acuerdo de seguimiento. Iguales en los dos tratamientos:
+    `models/seguimiento.py` los lee por nombre, sin saber de qué hoja vienen."""
+    _ensure_field(env, ws, wid, 'x_requiere_seguimiento', 'boolean',
+                  '¿Requiere visita de seguimiento?')
+    _ensure_field(env, ws, wid, 'x_fecha_seguimiento', 'date',
+                  'Fecha acordada con el cliente')
+    _ensure_field(env, ws, wid, 'x_franja_seguimiento', 'selection',
+                  'Horario acordado', selection=FRANJA)
+
+
+def _seed_termitas_fields(env, tmpl):
+    ws, wid = tmpl.model_id.model, tmpl.model_id.id
+    _ensure_tag(env, ESTRUCTURA_MODEL, "Estructura afectada — termitas (Visar)",
+                ESTRUCTURAS, prune=True)
+
+    line = _ensure_model(env, TERM_LINE, "Punto tratado (Termitas)", [
+        (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
+                'ttype': 'many2one', 'relation': ws, 'required': True,
+                'on_delete': 'cascade'}),
+        (0, 0, {'name': 'x_sequence', 'field_description': 'Secuencia',
+                'ttype': 'integer'}),
+    ])
+    _acls(env, TERM_LINE, line.id)
+    env.cr.flush()
+    lid = line.id
+    _ensure_field(env, TERM_LINE, lid, 'x_ubicacion', 'char', 'Ubicación del punto')
+    _ensure_field(env, TERM_LINE, lid, 'x_perforaciones', 'integer',
+                  'Perforaciones realizadas')
+    _ensure_field(env, TERM_LINE, lid, 'x_foto_evidencia', 'binary',
+                  'Fotos de evidencia')
+    _ensure_field(env, TERM_LINE, lid, 'x_observacion', 'char', 'Observación')
+
+    _ensure_field(env, ws, wid, 'x_tipo_termita', 'selection', 'Tipo de termita',
+                  selection=TIPO_TERMITA)
+    # Tabla de relación EXPLÍCITA y corta: la autogenerada se pasa del límite de
+    # identificador de Postgres y el m2m desaparece sin error (bug ya vivido).
+    _ensure_field(env, ws, wid, 'x_estructuras_afectadas', 'many2many',
+                  'Estructuras afectadas', relation=ESTRUCTURA_MODEL,
+                  relation_table='x_term_estruct_rel', column1='ws_id',
+                  column2='estructura_id')
+    _ensure_field(env, ws, wid, 'x_estructuras_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_nivel_dano', 'selection', 'Nivel de daño',
+                  selection=NIVEL_DANO)
+    _ensure_field(env, ws, wid, 'x_humedad_detectada', 'boolean',
+                  '¿Se detectó humedad o filtración?')
+    _ensure_field(env, ws, wid, 'x_foto_inicial', 'binary',
+                  'Fotos del daño antes de tratar')
+    _ensure_field(env, ws, wid, 'x_descripcion_zona', 'text',
+                  'Descripción de la zona afectada')
+    _ensure_field(env, ws, wid, 'x_metodo_aplicacion', 'selection',
+                  'Método aplicado', selection=METODO_TERMITA)
+    _ensure_field(env, ws, wid, 'x_metodo_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_foto_ejecucion', 'binary',
+                  'Fotos durante la ejecución')
+    _ensure_field(env, ws, wid, 'x_puntos_tratados', 'one2many',
+                  'Puntos tratados', relation=TERM_LINE,
+                  relation_field='x_worksheet_id')
+    _ensure_field(env, ws, wid, 'x_indicaciones_cliente', 'text',
+                  'Indicaciones que se le dieron al cliente')
+    _ensure_field(env, ws, wid, 'x_foto_final', 'binary', 'Fotos finales')
+    _seed_seguimiento_fields(env, ws, wid)
+    _relabel_comments(env, ws, "Observaciones finales del técnico")
+
+
+def _seed_chinches_fields(env, tmpl):
+    ws, wid = tmpl.model_id.model, tmpl.model_id.id
+    _ensure_tag(env, EVIDENCIA_MODEL, "Evidencia — chinches (Visar)",
+                EVIDENCIAS_CHINCHE, prune=True)
+    _ensure_tag(env, HABITACION_MODEL, "Habitación — chinches (Visar)",
+                HABITACIONES, prune=True)
+
+    line = _ensure_model(env, CHIN_LINE, "Zona tratada (Chinches)", [
+        (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
+                'ttype': 'many2one', 'relation': ws, 'required': True,
+                'on_delete': 'cascade'}),
+        (0, 0, {'name': 'x_sequence', 'field_description': 'Secuencia',
+                'ttype': 'integer'}),
+    ])
+    _acls(env, CHIN_LINE, line.id)
+    env.cr.flush()
+    lid = line.id
+    _ensure_field(env, CHIN_LINE, lid, 'x_habitacion', 'selection', 'Habitación',
+                  selection=HABITACIONES)
+    _ensure_field(env, CHIN_LINE, lid, 'x_habitacion_otro', 'char', OTRO)
+    _ensure_field(env, CHIN_LINE, lid, 'x_mueble', 'char', 'Mueble o zona tratada')
+    _ensure_field(env, CHIN_LINE, lid, 'x_foto_evidencia', 'binary',
+                  'Fotos de evidencia')
+    _ensure_field(env, CHIN_LINE, lid, 'x_observacion', 'char', 'Observación')
+
+    _ensure_field(env, ws, wid, 'x_nivel_infestacion', 'selection',
+                  'Nivel de infestación', selection=NIVEL)
+    _ensure_field(env, ws, wid, 'x_habitaciones_afectadas', 'many2many',
+                  'Habitaciones afectadas', relation=HABITACION_MODEL,
+                  relation_table='x_chin_hab_rel', column1='ws_id',
+                  column2='habitacion_id')
+    _ensure_field(env, ws, wid, 'x_habitaciones_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_evidencia_encontrada', 'many2many',
+                  'Evidencia encontrada', relation=EVIDENCIA_MODEL,
+                  relation_table='x_chin_evid_rel', column1='ws_id',
+                  column2='evidencia_id')
+    _ensure_field(env, ws, wid, 'x_evidencia_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_foto_inicial', 'binary',
+                  'Fotos de la evidencia encontrada')
+    _ensure_field(env, ws, wid, 'x_descripcion_zona', 'text',
+                  'Descripción de lo encontrado')
+    _ensure_field(env, ws, wid, 'x_ropa_lavada', 'boolean',
+                  'Ropa y blancos lavados')
+    _ensure_field(env, ws, wid, 'x_colchones_despejados', 'boolean',
+                  'Colchones y bases despejados')
+    _ensure_field(env, ws, wid, 'x_desorden_retirado', 'boolean',
+                  'Objetos retirados de camas y muebles')
+    _ensure_field(env, ws, wid, 'x_prep_observacion', 'char',
+                  'Observación sobre la preparación')
+    _ensure_field(env, ws, wid, 'x_metodo_aplicacion', 'selection',
+                  'Método aplicado', selection=METODO_CHINCHE)
+    _ensure_field(env, ws, wid, 'x_metodo_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_foto_ejecucion', 'binary',
+                  'Fotos durante la ejecución')
+    _ensure_field(env, ws, wid, 'x_zonas_tratadas', 'one2many', 'Zonas tratadas',
+                  relation=CHIN_LINE, relation_field='x_worksheet_id')
+    _ensure_field(env, ws, wid, 'x_indicaciones_cliente', 'text',
+                  'Indicaciones que se le dieron al cliente')
+    _ensure_field(env, ws, wid, 'x_foto_final', 'binary', 'Fotos finales')
+    _seed_seguimiento_fields(env, ws, wid)
+    _relabel_comments(env, ws, "Observaciones finales del técnico")
+
+
 def _finish_template(env, tmpl, arch, name):
     """Escribe el arch canónico y regenera el reporte QWeb de la plantilla."""
     _write_arch(env, tmpl.model_id.model, arch)
@@ -718,6 +995,18 @@ def _seed_visita(env):
     return tmpl
 
 
+def _seed_termitas(env):
+    tmpl = _get_template(env, TERMITAS_NAME)
+    _seed_termitas_fields(env, tmpl)
+    return _finish_template(env, tmpl, TERMITAS_ARCH, TERMITAS_NAME)
+
+
+def _seed_chinches(env):
+    tmpl = _get_template(env, CHINCHES_NAME)
+    _seed_chinches_fields(env, tmpl)
+    return _finish_template(env, tmpl, CHINCHES_ARCH, CHINCHES_NAME)
+
+
 def seed_worksheet_templates(env):
     """Crea/actualiza las plantillas de la App de Campo. Idempotente."""
     _seed_fumigacion(env)
@@ -725,6 +1014,7 @@ def seed_worksheet_templates(env):
     _seed_visita(env)
     combo = _seed_combo(env)
     wire_combined_project(env, combo)
+    wire_treatment_projects(env, _seed_termitas(env), _seed_chinches(env))
 
 
 # ======================================================================
@@ -774,6 +1064,64 @@ def wire_combined_project(env, combo_template=None):
         project.write({'worksheet_template_id': combo_template.id})
         _logger.info("Proyecto %s -> plantilla %s", project.name, COMBO_NAME)
     return project
+
+
+# ======================================================================
+# Proyectos de los tratamientos que se cotizan a mano
+# ======================================================================
+# Un proyecto por tratamiento (decisión de Visar, 22-sep-2026): son plagas
+# distintas, con hoja distinta, y el tablero se lee mejor separado. Sin proyecto,
+# una cotización pagada crea la cita pero NUNCA la visita del técnico: el producto
+# no sabe dónde nacer.
+TRATAMIENTOS = [
+    # (nombre del proyecto, nombre EXACTO del producto, nombre de la plantilla)
+    ("Tratamiento antitermita", "Tratamiento antitermita", TERMITAS_NAME),
+    ("Tratamiento antichinches", "Tratamiento antichinches de cama", CHINCHES_NAME),
+]
+
+
+def wire_treatment_projects(env, *_plantillas):
+    """Crea el proyecto FSM de cada tratamiento, le pone su hoja y engancha el
+    producto. Idempotente y respetuoso con lo elegido a mano.
+
+    Misma excepción deliberada que el combo (`wire_combined_project`): el criterio
+    de "la asignación de plantilla no se automatiza" protege una elección humana, y
+    aquí el proyecto lo crea el código y no existe para otra cosa. Una plantilla
+    distinta puesta a mano se respeta; la nativa genérica no cuenta como elección.
+    """
+    Project = env['project.project'].sudo()
+    Template = env['product.template'].sudo()
+    Worksheet = env['worksheet.template'].sudo()
+    native = env.ref(NATIVE_TEMPLATE_XMLID, raise_if_not_found=False)
+    creados = Project.browse()
+    for nombre_proyecto, nombre_producto, nombre_hoja in TRATAMIENTOS:
+        hoja = Worksheet.search([('name', '=', nombre_hoja)], limit=1)
+        producto = Template.with_context(active_test=False).search(
+            [('name', '=', nombre_producto)], limit=1)
+        if not producto:
+            _logger.info("Sin producto '%s': no se crea su proyecto", nombre_producto)
+            continue
+        project = Project.with_context(active_test=False).search(
+            [('name', '=', nombre_proyecto)], limit=1)
+        if not project:
+            project = Project.create({
+                'name': nombre_proyecto, 'is_fsm': True, 'allow_billable': True,
+                'company_id': env.company.id})
+            _logger.info("Proyecto FSM creado: %s", nombre_proyecto)
+        creados |= project
+        actual = project.worksheet_template_id
+        if hoja and (not actual or actual == native or actual == hoja):
+            if actual != hoja:
+                project.write({'worksheet_template_id': hoja.id})
+                _logger.info("Proyecto %s -> plantilla %s", nombre_proyecto, nombre_hoja)
+        # El producto solo se engancha si NADIE lo configuró: cambiar a qué
+        # proyecto va un servicio ya vendido movería las visitas de sitio.
+        if producto.service_tracking == 'no' and not producto.project_id:
+            producto.write({'service_tracking': 'task_global_project',
+                            'project_id': project.id})
+            _logger.info("Producto %s -> crea visita en %s", nombre_producto,
+                         nombre_proyecto)
+    return creados
 
 
 # ======================================================================

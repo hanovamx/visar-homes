@@ -1,5 +1,12 @@
 # Estado y roadmap
 
+> **22-sep-2026 — hojas, proyectos y visita de seguimiento de los tratamientos: DESPLEGADO en
+> `visar-db`** (visar_field_app 19.0.1.40.0; `deploy-hojas-tratamientos-22sep.sh`). Termitas y
+> chinches tienen hoja propia (sembrada por `hooks.py`), proyecto FSM propio y el producto
+> enganchado, así que una cotización pagada ya nace como visita con su hoja y su PDF. El cierre
+> acuerda la **visita de seguimiento** (fecha + franja) y Odoo la crea sin cargo. Detalle en
+> `25-field-app.md`.
+>
 > **22-sep-2026 — cotización lista: el agente agenda y cobra (paso 3): DESPLEGADO en
 > `visar-db`** (visar_field_app 19.0.1.39.0, visar_whatsapp_agent 19.0.1.24.0 + runtime;
 > `deploy-cotizacion-agente-22sep.sh`). "Agendar después" manda `quote_ready` con monto y

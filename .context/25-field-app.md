@@ -1858,6 +1858,26 @@ botón de respuesta rápida "Elegir fecha". Asignarla en *Plantillas de avisos* 
 `quote_ready`. Sin ella el aviso sale libre y **solo llega si el cliente escribió en las
 últimas 24 h**.
 
-**Pendiente de configurar:** los dos productos no tienen proyecto ni hoja (crean nada al
-confirmarse); hacen falta sus hojas y plantillas de PDF antes de que un tratamiento agendado
-nazca como visita.
+**Hojas y proyectos** (22-sep-2026, visar_field_app 19.0.1.40.0). Cada tratamiento tiene
+**proyecto FSM propio** ("Tratamiento antitermita", "Tratamiento antichinches") con su hoja, y
+el producto apunta a él (`service_tracking=task_global_project`): por eso una cotización pagada
+nace como visita con su hoja. Las hojas las siembra el builder de siempre
+(`hooks.py::seed_worksheet_templates` + `wire_treatment_projects`, idempotente): ni Studio ni
+código nuevo en la app ni en el PDF, que se arman solos a partir del arch.
+
+- **Termitas** (3 páginas): tipo de termita, estructuras afectadas (etiquetas), nivel de daño,
+  humedad, fotos; método aplicado y **una tarjeta por punto tratado** (ubicación, perforaciones,
+  foto); cierre con indicaciones al cliente.
+- **Chinches** (4 páginas): nivel, habitaciones, evidencia encontrada (etiquetas), fotos;
+  **preparación del cliente** (ropa lavada, colchones despejados, objetos retirados) — sin ella
+  el tratamiento falla y el cliente lo reclama como garantía, así que queda constancia; método y
+  **una tarjeta por zona o mueble**; cierre con indicaciones.
+
+Producto y dosis **no** van en la hoja: saldrán del inventario real (requisito aparte).
+
+**Visita de seguimiento incluida** (`models/seguimiento.py`). El cierre de las dos hojas pregunta
+si se requiere, con la **fecha y franja acordadas con el cliente delante** — el único momento en
+que las dos partes están juntas. Al guardar la hoja, Odoo crea la visita en el mismo proyecto,
+con los mismos técnicos, **sin cargo** (sin línea de pedido). Corregir la fecha la mueve;
+desmarcarla la retira mientras nadie la haya empezado; sin fecha no se crea nada y queda la nota
+para que oficina la agende.
