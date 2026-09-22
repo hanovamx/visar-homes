@@ -11,3 +11,4 @@ from . import ir_attachment
 from . import report_worksheet
 from . import wa_outbox
 from . import upsell_servicio
+from . import cotizacion_manual

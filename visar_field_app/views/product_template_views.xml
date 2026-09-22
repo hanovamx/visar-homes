@@ -25,6 +25,20 @@
         </field>
     </record>
 
+    <!-- Tratamientos que se cotizan a mano (22-sep-2026): qué servicio de la hoja de
+         trabajo pide su cotización. En la pestaña de Ventas, con el resto de lo que
+         decide cómo se vende el producto. -->
+    <record id="product_template_form_visar_quote" model="ir.ui.view">
+        <field name="name">product.template.form.visar.quote</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='sales']//group[@name='sale']" position="inside">
+                <field name="visar_quote_trigger" placeholder="p. ej. Termitas"/>
+            </xpath>
+        </field>
+    </record>
+
     <!-- Filtro para revisar de un vistazo qué se está ofreciendo en campo. -->
     <record id="product_template_search_visar_upsell" model="ir.ui.view">
         <field name="name">product.template.search.visar.upsell</field>

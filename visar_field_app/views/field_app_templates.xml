@@ -296,6 +296,21 @@
                         <t t-call="visar_field_app.upsell_card"/>
                     </t>
 
+                    <!-- Tratamientos que la hoja mandó a cotizar (termitas, chinches). El
+                         técnico no pone el precio: solo ve en qué va oficina, por si el
+                         cliente pregunta o por si se puede hacer hoy mismo. -->
+                    <t t-set="cotizaciones" t-value="task.sudo().visar_quote_order_ids"/>
+                    <div t-if="cotizaciones" class="card p-3 mb-4">
+                        <h6 class="mb-2">Cotizaciones pedidas a oficina</h6>
+                        <div t-foreach="cotizaciones" t-as="cot" class="small mb-1">
+                            <b t-esc="cot.visar_quote_trigger"/> —
+                            <t t-if="cot.visar_quote_path == 'en_visita'">cotizada: ya está en los adicionales para cobrarse hoy.</t>
+                            <t t-elif="cot.visar_quote_path == 'agendar'">cotizada; se agenda con el cliente para otro día.</t>
+                            <t t-elif="cot.state == 'cancel'">cancelada.</t>
+                            <t t-else="">oficina le está poniendo precio.</t>
+                        </div>
+                    </div>
+
                     <!-- Worksheet nativa (campos dinámicos del template).
                          Req 5: no se muestra ni se puede llenar hasta "Comenzar
                          servicio" (el servidor también lo rechaza). -->

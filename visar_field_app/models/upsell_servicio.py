@@ -254,33 +254,14 @@ class ProjectTask(models.Model):
     def _visar_upsell_valuation_credit(self):
         """(importe, línea de valoración) del descuento que toca, o (0, vacío)."""
         self.ensure_one()
-        vacio = (0.0, self.env['sale.order.line'].sudo().browse())
         # Solo el carrito abierto: un descuento ya facturado en una ronda anterior
-        # cuenta como "otro" de abajo, y la regla de una vez por pedido lo respeta.
-        propios = self._visar_upsell_open_lines()
-        servicios = self._visar_upsell_open_lines().filtered(
-            lambda l: l.product_id.visar_is_service and not l.visar_valuation_credit)
-        if not servicios:
-            return vacio  # solo contra servicios: una estación no se descuenta
-        valoracion = self._visar_upsell_valuation_lines()
-        producto = self._visar_upsell_credit_product()
-        if not valoracion or not producto:
-            return vacio
-        # UNA vez por pedido: cuenta un descuento de otra visita y también el que se
-        # capturó a mano antes de que esto existiera (línea negativa del producto de
-        # descuento, como en S00138).
-        pedidos = valoracion.order_id | self._visar_upsell_order()
-        otros = pedidos.order_line.filtered(
-            lambda l: l not in propios and l.product_uom_qty > 0 and (
-                l.visar_valuation_credit
-                or (l.product_id == producto and l.price_unit < 0)))
-        if otros:
-            return vacio
-        if not self._visar_valuation_is_paid(valoracion):
-            return vacio
-        importe = min(sum(self._visar_line_amount(l) for l in valoracion),
-                      sum(self._visar_line_amount(l) for l in servicios))
-        return (importe, valoracion[:1]) if importe > 0 else vacio
+        # cuenta como "ya usado", igual que uno capturado a mano antes de que esto
+        # existiera (S00138) o el de una cotización de la misma valoración
+        # (`cotizacion_manual.py`): una vez por pedido.
+        abiertas = self._visar_upsell_open_lines()
+        servicios = abiertas.filtered(
+            lambda l: l.product_id._visar_counts_as_service() and not l.visar_valuation_credit)
+        return self._visar_valuation_credit_for(servicios, propios=abiertas)
 
     def _visar_upsell_sync_valuation_credit(self):
         """Deja la línea de descuento como toca según el carrito. Idempotente.
@@ -313,7 +294,7 @@ class ProjectTask(models.Model):
             credito[:1].with_context(**ctx).write(vals)
             return
         empleado = self._visar_upsell_open_lines().filtered(
-            lambda l: l.product_id.visar_is_service).visar_upsell_employee_id[:1]
+            lambda l: l.product_id._visar_counts_as_service()).visar_upsell_employee_id[:1]
         self.env['sale.order.line'].sudo().with_context(**ctx).create(dict(
             vals,
             order_id=order.id,
@@ -344,7 +325,7 @@ class ProjectTask(models.Model):
         self.ensure_one()
         lineas = self._visar_upsell_lines().filtered(
             lambda l: l.task_id == self and not l.visar_valuation_credit
-            and l.product_id.visar_is_service
+            and l.product_id._visar_counts_as_service()
             and l.product_id.service_tracking != 'no').sudo()
         if not lineas:
             return self.browse()

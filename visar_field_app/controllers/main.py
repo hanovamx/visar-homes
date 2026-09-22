@@ -1908,6 +1908,9 @@ class VisarFieldApp(http.Controller):
                 ws_vals['visar_worksheet_saved_at'] = now
                 ws_vals['visar_worksheet_saved_by_id'] = employee.id
             task.write(ws_vals)
+            # Tratamientos que se cotizan a mano (termitas, chinches): si la hoja los
+            # marcó en "Servicios identificados", nace su cotización para oficina.
+            task.sudo()._visar_quote_requests_sync(employee)
             # Edición de un servicio cerrado: se re-bloquea (vuelve a solo lectura) y
             # se registra en el chatter. Editar de nuevo exige "Habilitar edición".
             if flow_state == 'cerrado':

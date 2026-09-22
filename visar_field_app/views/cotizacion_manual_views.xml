@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Cotizaciones que pide la hoja de trabajo (termitas, chinches). Quien cotiza
+         pone el precio en la línea y elige el camino con uno de los dos botones. -->
+    <record id="view_order_form_visar_quote" model="ir.ui.view">
+        <field name="name">sale.order.form.visar.quote</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_visar_quote_in_visit" type="object"
+                        string="Hacer en esta visita" class="btn-primary"
+                        invisible="not visar_quote_origin_task_id or visar_quote_path or state not in ('draft', 'sent')"
+                        confirm="El técnico sigue en la casa: el tratamiento pasa a los adicionales de la visita y él genera el cobro desde la app. ¿Continuar?"/>
+                <button name="action_visar_quote_schedule_later" type="object"
+                        string="Agendar después" class="btn-primary"
+                        invisible="not visar_quote_origin_task_id or visar_quote_path or state not in ('draft', 'sent')"/>
+            </xpath>
+            <xpath expr="//sheet" position="before">
+                <div class="alert alert-warning mb-0" role="alert"
+                     invisible="not visar_quote_origin_task_id or visar_quote_path or state not in ('draft', 'sent')">
+                    <b>Cotización pedida desde la hoja de trabajo</b>
+                    (<field name="visar_quote_trigger" class="oe_inline" readonly="1"/>).
+                    Ponle precio al tratamiento; el descuento de la visita de valoración se
+                    calcula solo. Luego elige <b>Hacer en esta visita</b> (el técnico sigue
+                    en la casa) o <b>Agendar después</b>.
+                </div>
+            </xpath>
+            <xpath expr="//notebook" position="inside">
+                <page name="visar_quote" string="Visar - Cotización de campo"
+                      invisible="not visar_quote_origin_task_id">
+                    <group>
+                        <field name="visar_quote_origin_task_id" readonly="1"
+                               options="{'no_create': True}"/>
+                        <field name="visar_quote_origin_order_id" readonly="1"
+                               options="{'no_create': True}"/>
+                        <field name="visar_quote_trigger" readonly="1"/>
+                        <field name="visar_quote_path" readonly="1"/>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_task_form_visar_quote" model="ir.ui.view">
+        <field name="name">project.task.form.visar.quote</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_form2"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_visar_view_quotes" type="object"
+                        class="oe_stat_button" icon="fa-calculator"
+                        invisible="visar_quote_order_count == 0">
+                    <field name="visar_quote_order_count" widget="statinfo"
+                           string="Cotizaciones"/>
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_visar_quotes_from_field" model="ir.actions.act_window">
+        <field name="name">Cotizaciones de campo</field>
+        <field name="res_model">sale.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('visar_quote_origin_task_id', '!=', False)]</field>
+        <field name="context">{'create': False, 'search_default_draft': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Sin cotizaciones pedidas desde campo</p>
+            <p>Nacen solas cuando un técnico marca en la hoja de trabajo un tratamiento
+               que se cotiza a mano (termitas, chinches).</p>
+        </field>
+    </record>
+
+    <menuitem id="menu_visar_quotes_from_field" name="Cotizaciones de campo"
+              parent="sale.sale_order_menu" action="action_visar_quotes_from_field"
+              sequence="15"/>
+
+</odoo>

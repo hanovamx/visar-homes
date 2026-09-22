@@ -1,5 +1,12 @@
 # Estado y roadmap
 
+> **22-sep-2026 — tratamientos que se cotizan a mano (termitas, chinches), pasos 1 y 2:
+> DESPLEGADO en `visar-db`** (visar_field_app 19.0.1.38.0; `deploy-cotizacion-manual-22sep.sh`).
+> La hoja de trabajo pide la cotización; oficina le pone precio (descuento de valoración
+> automático) y elige "hacer en esta visita" o "agendar después". Detalle en
+> `25-field-app.md` §"Tratamientos que se cotizan a mano". **Paso 3 pendiente**: el agente
+> manda precio + "Elegir fecha" + liga (necesita plantilla de Meta con respuesta rápida).
+>
 > **22-sep-2026 01:17 — varias rondas de adicionales en la misma visita: DESPLEGADO en
 > `visar-db`** (visar_field_app 19.0.1.37.0, visar_commission 19.0.1.0.2;
 > `deploy-rondas-adicionales-22sep.sh`, backup

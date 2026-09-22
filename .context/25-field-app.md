@@ -1811,3 +1811,35 @@ La factura sigue publicada pero ya no está ligada a ningún pedido. El sello de
 la visita quedó sin factura; con el código anterior hacía ver como "Pagado" la estación que
 se agregó a las 00:43, y por eso la visita se pudo cerrar con $100 sin cobrar.
 
+
+## Tratamientos que se cotizan a mano (22-sep-2026, visar_field_app 19.0.1.38.0)
+
+**Caso:** termitas y chinches no tienen precio de lista y no los cotiza el técnico sino un
+administrador. Ya no se venden desde el catálogo de campo (su "Vendible en campo" se apagó a
+mano). Código y razones en `visar_field_app/models/cotizacion_manual.py`.
+
+**Disparador.** El producto dice qué servicio de la hoja lo pide: campo *Se cotiza cuando la
+hoja marca* (pestaña Ventas; hoy "Termitas" en *Tratamiento antitermita* y "Chinches" en
+*Tratamiento antichinches de cama*). Al GUARDAR la hoja (no el borrador) con ese servicio en
+*Servicios identificados* —hoy solo la hoja de valoración lo tiene— nace una cotización
+(`sale.order` en borrador) ligada a la visita (`visar_quote_origin_task_id`) y a su pedido
+(`visar_quote_origin_order_id`), con la línea en $0 y una actividad "Cotizar" para el
+*Responsable de cotizar* (Ajustes → Visar → Venta en campo; vacío = vendedor del pedido).
+Una por visita y servicio; desmarcar el servicio la cancela solo si nadie le puso precio.
+Menú: Ventas → Pedidos → *Cotizaciones de campo*. La app le enseña al técnico en qué va.
+
+**Precio y descuento.** Al poner precio se crea sola la línea de descuento de la valoración
+(`_visar_quote_sync_credit`), con las reglas de siempre y también si el servicio es otro día.
+"Una vez por pedido" cuenta ahora la visita, su pedido de adicionales y sus cotizaciones
+vivas (`_visar_valuation_credit_for`, compartido con el upsell).
+
+**Dos caminos** (botones en la cotización):
+- *Hacer en esta visita* — solo con la visita en ejecución y sin cobro pendiente. La
+  cotización se cancela y su contenido entra como ronda de adicionales de la visita; el
+  técnico genera el cobro desde la app como con cualquier adicional.
+- *Agendar después* — la cotización pasa a "enviada" y queda lista para el paso 3: el agente
+  le ofrece al cliente fecha y liga de pago. **Paso 3 pendiente** de la plantilla de Meta.
+
+**Pendiente de configurar:** los dos productos no tienen proyecto ni hoja (crean nada al
+confirmarse); hacen falta sus hojas y plantillas de PDF antes de que un tratamiento agendado
+nazca como visita.
