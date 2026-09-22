@@ -1769,11 +1769,45 @@ capturado a mano con ese producto), solo contra servicios, tope = precio del ser
 solo si la valoración está pagada (factura pagada o pago en línea del pedido). Lleva el
 técnico, así su comisión se mide sobre lo que el cliente paga de más.
 
-**Liga de pago.** Aviso `upsell_payment` desde el número de Visar, una vez
-(`visar_upsell_link_sent_at`); el botón "Enviar enlace desde mi WhatsApp" queda de respaldo.
+**Liga de pago.** Aviso `upsell_payment` desde el número de Visar, una vez por ronda
+(`visar_upsell_link_sent_at` + `visar_upsell_link_move_id`); el botón "Enviar enlace desde
+mi WhatsApp" queda de respaldo.
 La factura del extra **no** se liga al pago en línea del pedido
 (`sale.order._prepare_invoice` bajo `visar_upsell_solo_lineas`).
 
 **Pago de prueba.** `visar_field.upsell_permitir_pago_prueba` (ajuste "Permitir pagos de
 prueba en campo"): acepta proveedores en estado `test` y la app enseña PRUEBA. Apagar
 antes de salir en vivo.
+
+## Varias rondas de adicionales en la misma visita (22-sep-2026, visar_field_app 19.0.1.37.0)
+
+**Caso:** el cliente paga una estación y más tarde autoriza la fumigación (S00316). Antes,
+pagado el primer cobro la tarjeta se cerraba ("Ver el cobro") y no se podía vender más.
+
+**Cómo queda.** Cada "Generar cobro" cierra una **ronda** con su propia factura, en el
+mismo pedido. Pagada la ronda, la tarjeta ofrece "+ Agregar más (nuevo cobro)"; lo nuevo
+es el carrito abierto (`_visar_upsell_open_lines`: adicionales sin factura) y se cobra
+aparte. La tarjeta y la pantalla de cobro enseñan solo la ronda en curso
+(`_visar_upsell_round_lines` / `_round_total`) y abajo "Cobros anteriores de esta visita".
+`visar_upsell_amount_total` sigue siendo todo lo vendido en la visita (backend).
+
+**Reglas.** Una ronda nueva solo con la anterior **pagada** (nunca dos cobros pendientes),
+y nunca en los pedidos aparte anteriores al 17-sep-2026 (líneas sin marcador). Un
+producto repetido en otra ronda es una línea nueva: la ya facturada no se toca. El
+descuento de la valoración sigue siendo una vez por pedido: entra en la ronda donde
+aparece el primer servicio. El PDF firmado lleva lo ya cobrado, aunque haya un carrito
+abierto.
+
+**Sellos por ronda.** El efectivo y la liga enviada se sellan en la tarea con la factura
+que cubren (`visar_upsell_cash_move_id`, `visar_upsell_link_move_id`): un sello de otra
+ronda no paga ésta. El efectivo se copia además en la factura
+(`account.move.visar_upsell_cash_at`), de donde lo lee la comisión (base "cobrado"). La
+migración 19.0.1.37.0 apuntó los sellos viejos a su factura. No se comparan fechas:
+`create_date` es el inicio de la transacción.
+
+**S00316.** Su pedido aparte S00318 (estación + guardapolvos, $450, pagado en efectivo el
+18-sep, INV/2026/00172) se canceló y borró a mano desde el backend el 22-sep-2026 00:42.
+La factura sigue publicada pero ya no está ligada a ningún pedido. El sello de efectivo de
+la visita quedó sin factura; con el código anterior hacía ver como "Pagado" la estación que
+se agregó a las 00:43, y por eso la visita se pudo cerrar con $100 sin cobrar.
+

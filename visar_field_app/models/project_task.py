@@ -238,6 +238,12 @@ class ProjectTask(models.Model):
     visar_upsell_cash_by_id = fields.Many2one(
         'hr.employee', string="Efectivo de adicionales recibido por",
         readonly=True, copy=False)
+    # Una visita puede cobrar adicionales en varias rondas (una factura cada una):
+    # el sello de efectivo es el de la última ronda que se pagó así.
+    visar_upsell_cash_move_id = fields.Many2one(
+        'account.move', string="Factura cobrada en efectivo", readonly=True,
+        copy=False, index='btree_not_null',
+        help="Factura de adicionales que cubre el sello de efectivo de arriba.")
 
     # ==================================================================
     # Flujo en sitio: etapas nativas + timesheet + reagenda (Req 2)
@@ -1199,6 +1205,71 @@ class ProjectTask(models.Model):
         return lines.filtered(
             lambda line: not line.display_type and line.product_uom_qty > 0)
 
+    # Rondas de cobro. Una visita puede cobrar adicionales VARIAS veces: el cliente
+    # paga una estación y más tarde autoriza la fumigación (S00316, 21-sep-2026).
+    # Cada "Generar cobro" cierra una ronda con su propia factura; lo que se agrega
+    # después es una ronda nueva que se cobra aparte, en el mismo pedido.
+    def _visar_upsell_open_lines(self):
+        """Carrito de la ronda en curso: adicionales que aún no entraron a factura."""
+        self.ensure_one()
+        return self._visar_upsell_lines().filtered(
+            lambda line: not line.invoice_lines.filtered(
+                lambda aml: aml.move_id.state != 'cancel'))
+
+    def _visar_upsell_invoices(self):
+        """Facturas POSTEADAS de los adicionales de esta visita, de la más vieja a la
+        más nueva (una por ronda)."""
+        self.ensure_one()
+        return self._visar_upsell_lines().sudo().invoice_lines.move_id.filtered(
+            lambda m: m.move_type == 'out_invoice' and m.state == 'posted'
+        ).sorted('id')
+
+    def _visar_upsell_round_lines(self):
+        """Lo que la app enseña y cobra ahora: el carrito abierto o, si no hay, lo de
+        la última factura."""
+        self.ensure_one()
+        abiertas = self._visar_upsell_open_lines()
+        if abiertas:
+            return abiertas
+        invoice = self._visar_upsell_invoice()
+        return self._visar_upsell_lines().filtered(
+            lambda line: invoice in line.invoice_lines.move_id)
+
+    def _visar_upsell_round_total(self):
+        """Total de la ronda en curso, IVA incluido (ver el compute de arriba)."""
+        self.ensure_one()
+        return sum(self._visar_upsell_round_lines().mapped('price_total'))
+
+    def _visar_stamp_covers(self, stamp, stamp_move, invoice):
+        """¿Un sello de la tarea (efectivo, liga enviada) es de la ronda de `invoice`?
+
+        Los sellos se pisan en cada ronda y guardan la factura que cubrían (los de
+        antes del 22-sep-2026 los apunta la migración 19.0.1.37.0). Un sello sin
+        factura solo vale mientras no haya factura: el pedido aparte confirmado sin
+        facturar del histórico. No se comparan fechas: `create_date` es el inicio de
+        la transacción, no el momento de la factura.
+        """
+        self.ensure_one()
+        if not stamp:
+            return False
+        if stamp_move:
+            return stamp_move == invoice
+        return not invoice
+
+    def _visar_upsell_cash_covers(self, invoice):
+        return self._visar_stamp_covers(
+            self.visar_upsell_cash_at, self.visar_upsell_cash_move_id, invoice)
+
+    def _visar_upsell_can_start_round(self):
+        """¿Se puede abrir una ronda nueva? Solo con la anterior PAGADA —dos cobros
+        pendientes a la vez confunden al cliente y al técnico— y nunca en los pedidos
+        aparte anteriores al 17-sep-2026: sus líneas no llevan marcador y una línea
+        marcada nueva haría desaparecer las viejas de la visita."""
+        self.ensure_one()
+        if self._visar_upsell_es_pedido_aparte() and not self.visar_upsell_line_ids:
+            return False
+        return self._visar_upsell_state() in ('vacio', 'borrador', 'pagado')
+
     def _visar_upsell_currency(self):
         """Moneda con la que se pinta el cobro en la app."""
         self.ensure_one()
@@ -1222,17 +1293,22 @@ class ProjectTask(models.Model):
         if product_id not in catalogo:
             return False
         quantity = max(int(quantity or 1), 1)
-        if self._visar_upsell_state() not in ('vacio', 'borrador'):
-            return False  # ya se generó el cobro: el carrito está cerrado
+        if not self._visar_upsell_can_start_round():
+            return False  # cobro pendiente: primero se paga, luego se agrega más
         order = self._visar_upsell_order(employee=employee, create=True)
         if not order:
             return False
         # Se buscan solo las líneas MARCADAS: en el pedido original puede existir ya
         # el mismo producto como parte del servicio contratado (pasó en S00264), y
         # sumarle cantidad ahí sería cobrarle al cliente algo que no se vendió hoy.
-        linea = self.visar_upsell_line_ids.sudo().filtered(
+        # Y solo las del carrito ABIERTO: sumarle a una línea ya facturada en una
+        # ronda anterior cambiaría una factura que el cliente ya pagó.
+        abiertas = self.visar_upsell_line_ids.sudo().filtered(
+            lambda l: not l.invoice_lines.filtered(lambda a: a.move_id.state != 'cancel'))
+        linea = abiertas.filtered(
             lambda l: l.product_id.id == product_id and not l.display_type)[:1]
-        if not linea and self._visar_upsell_es_pedido_aparte():
+        if not linea and self._visar_upsell_es_pedido_aparte() \
+                and not self.visar_upsell_line_ids:
             linea = order.order_line.filtered(
                 lambda l: l.product_id.id == product_id and not l.display_type)[:1]
         if linea:
@@ -1353,9 +1429,9 @@ class ProjectTask(models.Model):
             order.visar_upsell_employee_id = employee.id
         if order.state == 'draft':
             order.action_confirm()  # solo ocurre en el pedido aparte
-        if self._visar_upsell_invoice():
-            return order
-        por_facturar = self._visar_upsell_lines().filtered(
+        # Solo el carrito abierto: lo de rondas anteriores ya tiene su factura, y
+        # repetir el POST encuentra el carrito vacío y no duplica nada.
+        por_facturar = self._visar_upsell_open_lines().filtered(
             lambda l: l.qty_to_invoice > 0)
         if por_facturar:
             # El contexto es lo que impide facturar el servicio contratado junto con
@@ -1367,18 +1443,13 @@ class ProjectTask(models.Model):
         return order
 
     def _visar_upsell_invoice(self):
-        """Factura POSTEADA que cobra los adicionales de esta visita (o vacío).
+        """Factura POSTEADA de la última ronda de adicionales de esta visita (o vacío).
 
         Se llega a ella por las LÍNEAS y no por el pedido: el pedido original puede
         tener además la factura del servicio contratado, que no es esta.
         """
         self.ensure_one()
-        lines = self._visar_upsell_lines()
-        if not lines:
-            return self.env['account.move'].sudo().browse()
-        moves = lines.sudo().invoice_lines.move_id.filtered(
-            lambda m: m.move_type == 'out_invoice' and m.state == 'posted')
-        return moves.sorted('id')[:1]
+        return self._visar_upsell_invoices()[-1:]
 
     def _visar_upsell_payment_link(self):
         """Enlace de pago nativo por el monto pendiente de los adicionales.
@@ -1431,7 +1502,7 @@ class ProjectTask(models.Model):
         providers = Provider._get_compatible_providers(
             company.id,
             self.partner_id.id,
-            self.visar_upsell_amount_total or 0.0,
+            self._visar_upsell_round_total() or 0.0,
             currency_id=currency.id or None,
         )
         estados = self._visar_upsell_provider_states()
@@ -1458,11 +1529,15 @@ class ProjectTask(models.Model):
         order = self._visar_upsell_confirm(employee)
         if not order:
             return False
-        if not self.visar_upsell_cash_at:
-            self.sudo().write({
+        invoice = self._visar_upsell_invoice()
+        if not self._visar_upsell_cash_covers(invoice):
+            sello = {
                 'visar_upsell_cash_at': fields.Datetime.now(),
                 'visar_upsell_cash_by_id': employee.id if employee else False,
-            })
+            }
+            self.sudo().write(dict(sello, visar_upsell_cash_move_id=invoice.id or False))
+            if invoice:
+                invoice.sudo().write(sello)
             order.message_post(body=Markup(
                 "<p>Pago de los adicionales del servicio <b>%s</b> recibido en sitio "
                 "por <b>%s</b>.</p>"
@@ -1477,11 +1552,15 @@ class ProjectTask(models.Model):
         delega al pedido, que es como quedó el histórico.
         """
         self.ensure_one()
-        if self.visar_upsell_cash_at:
-            return True
-        if self._visar_upsell_es_pedido_aparte():
+        if self._visar_upsell_es_pedido_aparte() and not self.visar_upsell_line_ids:
+            if self.visar_upsell_cash_at:
+                return True
             return self.visar_upsell_order_id.sudo()._visar_upsell_is_paid()
+        # La ronda que cuenta es la de la última factura: un efectivo sellado en una
+        # ronda anterior no paga esta.
         invoice = self._visar_upsell_invoice()
+        if self._visar_upsell_cash_covers(invoice):
+            return True
         if not invoice:
             return False
         if invoice.payment_state in ('paid', 'in_payment'):
@@ -1497,7 +1576,11 @@ class ProjectTask(models.Model):
         quién recibió el dinero.
         """
         self.ensure_one()
-        if self.visar_upsell_cash_at:
+        invoice = self._visar_upsell_invoice()
+        # Sin factura el sello solo es del pedido aparte confirmado sin facturar (el
+        # histórico); en un carrito abierto sería el efectivo de otra ronda.
+        if self._visar_upsell_cash_covers(invoice) and (
+                invoice or self._visar_upsell_es_pedido_aparte()):
             return self.visar_upsell_cash_at, self.visar_upsell_cash_by_id.name
         order = self.visar_upsell_order_id
         if self._visar_upsell_es_pedido_aparte() and order.visar_upsell_cash_at:
@@ -1513,6 +1596,13 @@ class ProjectTask(models.Model):
         self.ensure_one()
         if not self._visar_upsell_lines():
             return 'vacio'
+        # Carrito abierto = se está armando una ronda, aunque la anterior esté pagada.
+        # Salvo el pedido aparte confirmado sin factura (histórico), que ya se cerró.
+        order = self.visar_upsell_order_id
+        if self._visar_upsell_open_lines() and (
+                self._visar_upsell_invoices() or not self._visar_upsell_es_pedido_aparte()
+                or order.state == 'draft'):
+            return 'borrador'
         if self._visar_upsell_is_paid():
             return 'pagado'
         if self._visar_upsell_invoice():
@@ -1547,10 +1637,14 @@ class ProjectTask(models.Model):
         firma este documento.
         """
         self.ensure_one()
-        if self._visar_upsell_state() in ('vacio', 'borrador'):
+        state = self._visar_upsell_state()
+        if state == 'vacio':
             return None
         order = self._visar_upsell_order()
         lines = self._visar_upsell_lines()
+        if state == 'borrador':
+            # Con una ronda nueva en el carrito, entra lo ya cobrado en las anteriores.
+            lines -= self._visar_upsell_open_lines()
         if not lines:
             return None
         currency = self._visar_upsell_currency()
@@ -1574,7 +1668,7 @@ class ProjectTask(models.Model):
             {'kind': 'scalar', 'text': "Total"},
             {'kind': 'scalar', 'text': ''},
             {'kind': 'scalar', 'text': ''},
-            {'kind': 'scalar', 'text': money(self.visar_upsell_amount_total)},
+            {'kind': 'scalar', 'text': money(sum(lines.mapped('price_total')))},
         ])
         fields_ = [{
             'kind': 'table',
@@ -1590,11 +1684,17 @@ class ProjectTask(models.Model):
         if cash_at:
             note = ("Pagado en sitio (efectivo o transferencia), recibido por %s."
                     % (cash_by or "el técnico"))
-        elif self._visar_upsell_state() == 'pagado':
+        elif self._visar_upsell_is_paid():
             note = "Pagado en línea."
         else:
             note = ("Pendiente de pago. Se cobra contra %s."
                     % (invoice.name if invoice else (order.name or 'el pedido')))
+        anteriores = self._visar_upsell_invoices()[:-1]
+        if anteriores:
+            # Varias rondas: las anteriores están pagadas por construcción (no se
+            # abre una ronda con la previa pendiente); la nota de arriba es la última.
+            note = "%s Cobros anteriores ya pagados: %s." % (
+                note, ", ".join(anteriores.mapped('name')))
         fields_.append({'kind': 'scalar', 'label': "Estado del cobro", 'text': note})
         return {'title': "PRODUCTOS ADICIONALES VENDIDOS EN SITIO", 'fields': fields_}
 

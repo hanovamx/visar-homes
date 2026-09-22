@@ -364,3 +364,49 @@ class TestMedicion(TransactionCase):
         self.assertEqual(len(junio.line_ids), 2)
         self.assertEqual(len(junio.line_ids.filtered(
             lambda l: l.employee_id == self.vendedora)), 1)
+
+
+@tagged('post_install', '-at_install')
+class TestEfectivoPorRonda(TransactionCase):
+    """Una visita puede cobrar adicionales en efectivo en varias rondas (22-sep-2026):
+    cada línea se fecha con el efectivo de SU factura, no con el último de la visita."""
+
+    def test_cada_ronda_se_fecha_con_su_propio_efectivo(self):
+        from datetime import datetime
+        env = self.env
+        tecnico = env['hr.employee'].create({'name': 'Tecnico rondas'})
+        cliente = env['res.partner'].create({'name': 'Cliente rondas'})
+        lista = env['product.pricelist'].create({'name': 'Lista rondas'})
+        servicio = env['product.product'].create({
+            'name': 'Servicio rondas', 'type': 'service', 'invoice_policy': 'order'})
+        extra = env['product.product'].create({
+            'name': 'Extra rondas', 'type': 'consu', 'list_price': 100.0,
+            'invoice_policy': 'order', 'sale_ok': True, 'visar_upsell_ok': True})
+        proyecto = env['project.project'].create({
+            'name': 'FSM rondas', 'is_fsm': True, 'allow_billable': True,
+            'company_id': env.company.id})
+        pedido = env['sale.order'].create({
+            'partner_id': cliente.id, 'pricelist_id': lista.id,
+            'order_line': [(0, 0, {'product_id': servicio.id})]})
+        pedido.action_confirm()
+        tarea = env['project.task'].create({
+            'name': 'Visita rondas', 'project_id': proyecto.id,
+            'partner_id': cliente.id, 'sale_line_id': pedido.order_line[0].id})
+
+        tarea._visar_upsell_add(tecnico, extra.id, 1)
+        tarea._visar_upsell_register_cash(tecnico)
+        primera = tarea._visar_upsell_lines()
+        primera.invoice_lines.move_id.visar_upsell_cash_at = datetime(2026, 9, 10, 12)
+
+        tarea._visar_upsell_add(tecnico, extra.id, 1)
+        segunda = tarea._visar_upsell_open_lines()
+        Regla = env['visar.commission.rule']
+        self.assertFalse(Regla._visar_fecha_de_pago(segunda),
+                         "sin cobrar todavía: el efectivo de la ronda 1 no cuenta")
+
+        tarea._visar_upsell_confirm(tecnico)
+        tarea._visar_upsell_register_cash(tecnico)
+
+        self.assertEqual(Regla._visar_fecha_de_pago(primera), date(2026, 9, 10))
+        self.assertEqual(Regla._visar_fecha_de_pago(segunda),
+                         tarea.visar_upsell_cash_at.date())

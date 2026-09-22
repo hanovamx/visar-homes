@@ -369,3 +369,54 @@ class TestServicioEnVisita(TransactionCase):
         from odoo.addons.visar_field_app.controllers.main import VisarFieldApp
         png = VisarFieldApp._upsell_qr_png('https://visar.test/pay/1')
         self.assertTrue(png.startswith(b'\x89PNG'))
+
+    # ------------------------------------------------------------------
+    # Varias rondas de cobro en la misma visita (22-sep-2026)
+    # ------------------------------------------------------------------
+    def test_18_el_servicio_en_una_segunda_ronda_lleva_el_descuento(self):
+        """Primero una estación pagada en efectivo; después el servicio. El descuento
+        de la valoración entra en la ronda del servicio, no antes."""
+        tarea = self._visita()
+        tarea._visar_upsell_add(self.tecnico, self.estacion.id, 1)
+        tarea._visar_upsell_register_cash(self.tecnico)
+        self.assertEqual(tarea._visar_upsell_state(), 'pagado')
+
+        ok, error = self._vender_poda(tarea)
+        self.assertTrue(ok, error)
+        tarea._visar_upsell_confirm(self.tecnico)
+
+        factura = tarea._visar_upsell_invoice()
+        self.assertEqual(factura.amount_total, 190.0, "690 − 500 de la valoración")
+        self.assertEqual(len(tarea.visar_upsell_service_task_ids), 1)
+        self.assertEqual(tarea._visar_upsell_state(), 'por_cobrar')
+
+    def test_19_el_descuento_no_se_repite_en_otra_ronda(self):
+        tarea = self._visita()
+        self._vender_poda(tarea)
+        tarea._visar_upsell_register_cash(self.tecnico)
+        self.assertEqual(tarea._visar_upsell_invoice().amount_total, 190.0)
+
+        ok, error = self._vender_poda(tarea)
+        self.assertTrue(ok, error)
+        tarea._visar_upsell_confirm(self.tecnico)
+
+        self.assertEqual(tarea._visar_upsell_invoice().amount_total, 690.0,
+                         "una vez por pedido")
+        self.assertEqual(len(tarea.visar_upsell_service_task_ids), 2)
+
+    def test_20_cada_ronda_manda_su_propia_liga(self):
+        tarea = self._visita()
+        self.env['ir.config_parameter'].sudo().set_param(PARAM_PAGO_PRUEBA, True)
+        tarea._visar_upsell_add(self.tecnico, self.estacion.id, 1)
+        tarea._visar_upsell_confirm(self.tecnico)
+        if not tarea._visar_upsell_payment_link():
+            self.skipTest("No hay proveedor de pago (ni de prueba) en esta BD")
+        tarea._visar_upsell_register_cash(self.tecnico)
+
+        tarea._visar_upsell_add(self.tecnico, self.estacion.id, 1)
+        tarea._visar_upsell_confirm(self.tecnico)
+
+        avisos = self.env['visar.wa.message'].search([
+            ('task_id', '=', tarea.id), ('template_key', '=', 'upsell_payment')])
+        self.assertEqual(len(avisos), 2)
+        self.assertEqual(tarea.visar_upsell_link_move_id, tarea._visar_upsell_invoice())

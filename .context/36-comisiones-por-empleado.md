@@ -70,7 +70,9 @@ multimoneda, pronóstico y vistas materializadas. El cálculo es Python sobre
   **sin factura**. Con "facturado" esos vendedores no cobrarían comisión de una
   venta que sí entró. La base "cobrado" mira, en este orden: factura pagada o en
   proceso de pago → transacción de pago liquidada del pedido → sello de efectivo
-  del técnico.
+  del técnico. Desde el 22-sep-2026 ese sello se lee de la **factura** de la línea
+  (`account.move.visar_upsell_cash_at`): una visita puede cobrar en varias rondas y
+  el de la tarea es solo el de la última.
 - **Atribución por LÍNEA.** El adicional que vende el técnico vive dentro del
   pedido del servicio (REQ-007) con su propio empleado en la línea. El nativo
   reparte el documento completo y no sabría separar al vendedor del técnico. Aquí

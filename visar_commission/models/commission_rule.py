@@ -245,9 +245,19 @@ class VisarCommissionRule(models.Model):
             tx = transacciones.sorted('id')[0]
             fecha = tx.last_state_change or tx.create_date
             return fecha.date() if fecha else False
+        # Efectivo sellado en la factura de la línea: una visita puede cobrar
+        # adicionales en varias rondas (22-sep-2026) y el sello de la tarea es solo
+        # el de la última.
+        sellos = linea.invoice_lines.move_id.filtered(
+            lambda m: m.state == 'posted' and m.visar_upsell_cash_at
+        ).mapped('visar_upsell_cash_at')
+        if sellos:
+            return min(sellos).date()
+        # El sello de la TAREA ya no cuenta: el de cada ronda está en su factura (la
+        # migración 19.0.1.37.0 de visar_field_app copió ahí los anteriores), y uno
+        # sin factura es de un cobro que ya no existe (S00316, cuyo pedido aparte se
+        # borró a mano): fecharía hoy lo que el técnico aún no cobra.
         tarea = linea.visar_upsell_task_id or pedido.visar_upsell_task_id
-        if tarea and tarea.visar_upsell_cash_at:
-            return tarea.visar_upsell_cash_at.date()
         if tarea and pedido.visar_upsell_cash_at:
             return pedido.visar_upsell_cash_at.date()
         return False

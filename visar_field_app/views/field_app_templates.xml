@@ -766,7 +766,30 @@
                        class="btn btn-primary btn-lg w-100">💳 Ir al cobro</a>
                     <a t-else="" t-att-href="'/visar/field/task/%s/upsell/pay' % task.id"
                        class="btn btn-link w-100">Ver el cobro</a>
+                    <!-- Ronda nueva: el cliente ya pagó y autoriza algo más. Se cobra
+                         con su propia factura, en el mismo pedido. -->
+                    <a t-if="upsell_can_add_more"
+                       t-att-href="'/visar/field/task/%s/upsell' % task.id"
+                       class="btn btn-outline-primary w-100 mt-2">+ Agregar más (nuevo cobro)</a>
                 </t>
+
+                <!-- Cobros ya cerrados de rondas anteriores, para que el técnico sepa
+                     que eso ya se pagó y no lo vuelva a cobrar. Pagados por
+                     construcción: una ronda nueva solo se abre con la previa pagada
+                     (en efectivo la factura sigue "no pagada" hasta que
+                     administración concilia). -->
+                <div t-if="upsell_prev_invoices" class="small text-muted mt-3 border-top pt-2">
+                    Cobros anteriores de esta visita:
+                    <div t-foreach="upsell_prev_invoices" t-as="prev"
+                         class="d-flex justify-content-between">
+                        <span t-esc="prev.name"/>
+                        <span>
+                            <t t-out="prev.amount_total"
+                               t-options="{'widget': 'monetary', 'display_currency': prev.currency_id}"/>
+                            · pagado
+                        </span>
+                    </div>
+                </div>
             </t>
         </div>
     </template>

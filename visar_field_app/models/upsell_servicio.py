@@ -60,6 +60,20 @@ class SaleOrderLine(models.Model):
              "pedido.")
 
 
+class AccountMove(models.Model):
+    _inherit = 'account.move'
+
+    # Sello del efectivo POR FACTURA. El de la tarea se pisa en cada ronda de cobro
+    # (22-sep-2026); aquí se queda el de cada ronda, que es lo que la comisión
+    # necesita para fechar lo cobrado en efectivo mientras nadie concilia.
+    visar_upsell_cash_at = fields.Datetime(
+        string="Adicionales cobrados en efectivo", readonly=True, copy=False,
+        help="Momento en que el técnico declaró haber recibido en sitio el pago de "
+             "esta factura de adicionales. No sustituye la conciliación contable.")
+    visar_upsell_cash_by_id = fields.Many2one(
+        'hr.employee', string="Efectivo recibido por", readonly=True, copy=False)
+
+
 class ResConfigSettings(models.TransientModel):
     _inherit = 'res.config.settings'
 
@@ -93,6 +107,10 @@ class ProjectTask(models.Model):
         string="Liga de pago enviada", readonly=True, copy=False,
         help="Cuándo se le mandó al cliente, desde el número de Visar, la liga de pago "
              "de lo vendido en esta visita.")
+    visar_upsell_link_move_id = fields.Many2one(
+        'account.move', string="Factura de la liga enviada", readonly=True, copy=False,
+        index='btree_not_null',
+        help="Factura de adicionales cuya liga de pago se mandó. Una por ronda de cobro.")
 
     # ------------------------------------------------------------------
     # Qué servicios se pueden vender aquí
@@ -135,7 +153,7 @@ class ProjectTask(models.Model):
         cotiza oficina.
         """
         self.ensure_one()
-        if self._visar_upsell_state() not in ('vacio', 'borrador'):
+        if not self._visar_upsell_can_start_round():
             return False, 'cerrado'
         zone = self._visar_upsell_zone()
         if not zone:
@@ -237,8 +255,10 @@ class ProjectTask(models.Model):
         """(importe, línea de valoración) del descuento que toca, o (0, vacío)."""
         self.ensure_one()
         vacio = (0.0, self.env['sale.order.line'].sudo().browse())
-        propios = self.visar_upsell_line_ids.sudo()
-        servicios = self._visar_upsell_lines().filtered(
+        # Solo el carrito abierto: un descuento ya facturado en una ronda anterior
+        # cuenta como "otro" de abajo, y la regla de una vez por pedido lo respeta.
+        propios = self._visar_upsell_open_lines()
+        servicios = self._visar_upsell_open_lines().filtered(
             lambda l: l.product_id.visar_is_service and not l.visar_valuation_credit)
         if not servicios:
             return vacio  # solo contra servicios: una estación no se descuenta
@@ -272,7 +292,7 @@ class ProjectTask(models.Model):
         order = self._visar_upsell_order()
         if not order:
             return
-        credito = self.visar_upsell_line_ids.sudo().filtered('visar_valuation_credit')
+        credito = self._visar_upsell_open_lines().filtered('visar_valuation_credit')
         importe, valoracion = self._visar_upsell_valuation_credit()
         ctx = dict(self._VISAR_UPSELL_LINE_CTX)
         if importe <= 0:
@@ -292,7 +312,7 @@ class ProjectTask(models.Model):
         if credito:
             credito[:1].with_context(**ctx).write(vals)
             return
-        empleado = self._visar_upsell_lines().filtered(
+        empleado = self._visar_upsell_open_lines().filtered(
             lambda l: l.product_id.visar_is_service).visar_upsell_employee_id[:1]
         self.env['sale.order.line'].sudo().with_context(**ctx).create(dict(
             vals,
@@ -384,27 +404,37 @@ class ProjectTask(models.Model):
     # Liga de pago desde el número de Visar
     # ------------------------------------------------------------------
     def _visar_upsell_send_payment_link(self):
-        """Manda la liga de pago por WhatsApp desde el número de Visar. Una vez.
+        """Manda la liga de pago por WhatsApp desde el número de Visar. Una vez por
+        ronda de cobro.
 
         El botón con el que el técnico la manda desde su teléfono se queda como
         respaldo: sirve cuando el cliente no tiene la ventana de 24 h abierta y la
         plantilla todavía no está aprobada.
         """
         self.ensure_one()
-        if self.visar_upsell_link_sent_at:
+        invoice = self._visar_upsell_invoice()
+        # Una vez POR RONDA: la liga de un cobro anterior no sirve para este.
+        if self._visar_upsell_link_covers(invoice):
             return self.env['visar.wa.message'].browse()
         link = self._visar_upsell_payment_link()
         if not link:
             return self.env['visar.wa.message'].browse()
-        invoice = self._visar_upsell_invoice()
         currency = self._visar_upsell_currency()
-        importe = invoice.amount_residual if invoice else self.visar_upsell_amount_total
+        importe = invoice.amount_residual if invoice else self._visar_upsell_round_total()
         monto = currency.format(importe) if currency else str(importe)
         text, params = self._visar_msg_upsell_payment(monto, link)
         queued = self._visar_notify_client(text, event='upsell_payment', params=params)
         if queued:
-            self.sudo().visar_upsell_link_sent_at = fields.Datetime.now()
+            self.sudo().write({
+                'visar_upsell_link_sent_at': fields.Datetime.now(),
+                'visar_upsell_link_move_id': invoice.id or False,
+            })
         return queued
+
+    def _visar_upsell_link_covers(self, invoice):
+        """¿La liga de `invoice` ya salió del número de Visar?"""
+        return self._visar_stamp_covers(
+            self.visar_upsell_link_sent_at, self.visar_upsell_link_move_id, invoice)
 
     def _visar_msg_upsell_payment(self, monto, link):
         """Texto y parámetros del aviso `upsell_payment` ({{1}} monto, {{2}} liga)."""

@@ -2077,13 +2077,20 @@ class VisarFieldApp(http.Controller):
         """
         zone = task._visar_upsell_zone()
         cash_at, cash_by = task._visar_upsell_cash_info()
+        state = task._visar_upsell_state()
+        facturas = task._visar_upsell_invoices()
         return {
-            'upsell_state': task._visar_upsell_state(),
+            'upsell_state': state,
             'upsell_order': task._visar_upsell_order(),
-            'upsell_lines': task._visar_upsell_lines(),
-            'upsell_total': task.visar_upsell_amount_total,
+            # La RONDA en curso (carrito abierto o último cobro), no todo lo vendido
+            # en la visita: lo de rondas anteriores ya se cobró aparte.
+            'upsell_lines': task._visar_upsell_round_lines(),
+            'upsell_total': task._visar_upsell_round_total(),
             'upsell_currency': task._visar_upsell_currency(),
             'upsell_invoice': task._visar_upsell_invoice(),
+            'upsell_prev_invoices': facturas if state == 'borrador' else facturas[:-1],
+            'upsell_can_add_more': (state == 'pagado' and self._upsell_available(task)
+                                    and task._visar_upsell_can_start_round()),
             'upsell_aparte': task._visar_upsell_es_pedido_aparte(),
             'upsell_cash_at': cash_at,
             'upsell_cash_by': cash_by,
@@ -2226,7 +2233,8 @@ class VisarFieldApp(http.Controller):
             'status_url': '/visar/field/task/%s/upsell/status' % task.id,
             'sent': kw.get('sent'),
             'is_test_payment': bool(link) and task._visar_upsell_is_test_payment(),
-            'link_sent_at': task.visar_upsell_link_sent_at,
+            'link_sent_at': (task.visar_upsell_link_sent_at if task._visar_upsell_link_covers(
+                values['upsell_invoice']) else False),
         })
         return request.render('visar_field_app.field_upsell_pay', values)
 
@@ -2304,7 +2312,7 @@ class VisarFieldApp(http.Controller):
             "Hola %s, le comparto el enlace para pagar los productos adicionales "
             "de su servicio de hoy (%s): %s" % (
                 task.partner_id.name or '',
-                currency.format(task.visar_upsell_amount_total) if currency else '',
+                currency.format(task._visar_upsell_round_total()) if currency else '',
                 link)
         )
         return 'https://wa.me/%s?%s' % (digits, urlencode({'text': text}))
