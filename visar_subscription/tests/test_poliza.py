@@ -598,3 +598,24 @@ class TestPoliza(TransactionCase):
         self.assertEqual(visits[0].date_deadline, stop)
         self.assertFalse(visits[1].planned_date_begin,
                          "la 2ª visita del ciclo se agenda después")
+
+
+@tagged('post_install', '-at_install')
+class TestEtiquetasDelPlan(TransactionCase):
+    """El plan enseña cuántas visitas resultan de sus números (22-sep-2026)."""
+
+    def _plan(self, valor, unidad, cada=1, adelantado=1):
+        return self.env['sale.subscription.plan'].create({
+            'name': 'Plan etiquetas', 'billing_period_value': valor,
+            'billing_period_unit': unidad, 'visar_visit_interval_months': cada,
+            'visar_first_invoice_periods': adelantado})
+
+    def test_visitas_por_factura_y_primer_cobro(self):
+        semestral = self._plan(6, 'month')
+        self.assertEqual(semestral.visar_visits_per_invoice, 6)
+        self.assertEqual(semestral.visar_visits_first_invoice, 6)
+        mensual = self._plan(1, 'month', adelantado=3)
+        self.assertEqual(mensual.visar_visits_per_invoice, 1)
+        self.assertEqual(mensual.visar_visits_first_invoice, 3)
+        anual_bimestral = self._plan(1, 'year', cada=2)
+        self.assertEqual(anual_bimestral.visar_visits_per_invoice, 6)

@@ -41,6 +41,25 @@ class SaleSubscriptionPlan(models.Model):
              "cobran 3 meses de entrada.",
     )
 
+    # Solo para enseñar en el plan lo que resulta de los números de arriba: sin esto
+    # el que edita el plan tenía que hacer la cuenta de cabeza (22-sep-2026).
+    visar_visits_per_invoice = fields.Integer(
+        string="Visitas por factura", compute='_compute_visar_visits_preview',
+        help="Visitas que genera cada factura pagada de renovación: meses del periodo "
+             "÷ meses entre visitas. Se calcula; no se captura.")
+    visar_visits_first_invoice = fields.Integer(
+        string="Visitas en el primer cobro", compute='_compute_visar_visits_preview',
+        help="Visitas que genera el primer cobro: periodos cobrados por adelantado × "
+             "visitas por factura. Se calcula; no se captura.")
+
+    @api.depends('billing_period_value', 'billing_period_unit',
+                 'visar_visit_interval_months', 'visar_first_invoice_periods')
+    def _compute_visar_visits_preview(self):
+        for plan in self:
+            por_factura = plan._visar_visits_per_period()
+            plan.visar_visits_per_invoice = por_factura
+            plan.visar_visits_first_invoice = max(1, plan.visar_first_invoice_periods or 1) * por_factura
+
     @api.constrains('visar_visit_interval_months')
     def _check_visar_visit_interval_months(self):
         for plan in self:

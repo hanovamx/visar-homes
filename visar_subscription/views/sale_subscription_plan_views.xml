@@ -5,12 +5,30 @@
         <field name="model">sale.subscription.plan</field>
         <field name="inherit_id" ref="sale_subscription.sale_subscription_plan_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='billing_period_unit']" position="after">
-                <field name="visar_commitment_months"/>
-                <field name="visar_first_invoice_periods"/>
+            <!-- Cada número con su etiqueta, debajo de "Periodo de facturación". Hasta el
+                 22-sep-2026 iban DENTRO de esa fila, como números sueltos sin nombre, y no
+                 había forma de saber cuál era cuál. -->
+            <xpath expr="//field[@name='billing_first_day']" position="before">
+                <label for="visar_commitment_months" string="Duración del compromiso"/>
+                <div>
+                    <field name="visar_commitment_months" class="oe_inline" style="width: 3rem;"/> meses
+                    <span class="text-muted small">(0 = sin fecha de fin)</span>
+                </div>
+                <label for="visar_first_invoice_periods" string="Cobro por adelantado"/>
+                <div>
+                    <field name="visar_first_invoice_periods" class="oe_inline" style="width: 3rem;"/> periodos en el primer cobro
+                </div>
+                <label for="visar_visit_interval_months" string="Una visita cada"/>
+                <div>
+                    <field name="visar_visit_interval_months" class="oe_inline" style="width: 3rem;"/> meses
+                </div>
                 <!-- "Visitas incluidas" se quitó el 22-sep-2026: las visitas salen de los
-                     meses pagados ÷ este número. -->
-                <field name="visar_visit_interval_months"/>
+                     meses pagados ÷ "una visita cada". Aquí solo se enseña el resultado. -->
+                <label for="visar_visits_per_invoice" string="Visitas que genera"/>
+                <div class="text-muted">
+                    <field name="visar_visits_per_invoice" class="oe_inline"/> por factura ·
+                    <field name="visar_visits_first_invoice" class="oe_inline"/> en el primer cobro
+                </div>
             </xpath>
         </field>
     </record>
