@@ -1,5 +1,12 @@
 # Estado y roadmap
 
+> **22-sep-2026 — cotización lista: el agente agenda y cobra (paso 3): DESPLEGADO en
+> `visar-db`** (visar_field_app 19.0.1.39.0, visar_whatsapp_agent 19.0.1.24.0 + runtime;
+> `deploy-cotizacion-agente-22sep.sh`). "Agendar después" manda `quote_ready` con monto y
+> botón "Elegir fecha" → días/horarios de valoración → liga de la cotización → al pagar,
+> cita. Falta: aprobar y asignar la plantilla `visar_cotizacion_lista`, y que los
+> tratamientos tengan proyecto + hoja para que al confirmarse nazca la visita del técnico.
+>
 > **22-sep-2026 — tratamientos que se cotizan a mano (termitas, chinches), pasos 1 y 2:
 > DESPLEGADO en `visar-db`** (visar_field_app 19.0.1.38.0; `deploy-cotizacion-manual-22sep.sh`).
 > La hoja de trabajo pide la cotización; oficina le pone precio (descuento de valoración

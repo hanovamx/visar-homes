@@ -1837,8 +1837,26 @@ vivas (`_visar_valuation_credit_for`, compartido con el upsell).
 - *Hacer en esta visita* — solo con la visita en ejecución y sin cobro pendiente. La
   cotización se cancela y su contenido entra como ronda de adicionales de la visita; el
   técnico genera el cobro desde la app como con cualquier adicional.
-- *Agendar después* — la cotización pasa a "enviada" y queda lista para el paso 3: el agente
-  le ofrece al cliente fecha y liga de pago. **Paso 3 pendiente** de la plantilla de Meta.
+- *Agendar después* — la cotización pasa a "enviada" y sale el aviso **`quote_ready`** al
+  cliente de la visita (cuelga de la tarea; `visar.wa.message.quote_order_id` dice cuál
+  cotización): servicio + monto ya con descuento + botón **"Elegir fecha"**.
+
+**Paso 3 — el agente agenda y cobra** (22-sep-2026, visar_whatsapp_agent 19.0.1.24.0 +
+runtime). El tap (o un "sí"/"agendar" escrito) entra al modo `quote` del agendado: días y
+horarios de **visita de valoración** (1 h con traslado, cualquier técnico elegible de la
+zona; decisión de Visar), sin cuestionario ni revisión. Al elegir hora,
+`agent_quote_prepare` aparta el horario, cuelga una `calendar.booking` de la línea del
+tratamiento (`order_line_id`) y manda la liga de la **cotización**. Al pagarse, Odoo la
+confirma (REQ-004 exime la confirmación por pago) y `website_appointment_sale` convierte la
+reserva en cita; sale el "cita confirmada" de siempre. Otra fecha tras la liga mueve la
+reserva; arrepentirse la suelta (`agent_quote_release`) y la cotización sigue vigente.
+Código: `visar_whatsapp_agent/models/visar_agent_quote.py` y el modo `quote` de
+`app/agent.py` en el runtime. Contrato: runtime `.context/30-odoo-contract.md`.
+
+**Plantilla de Meta:** `visar_cotizacion_lista` (Utilidad) — {{1}} servicio, {{2}} monto,
+botón de respuesta rápida "Elegir fecha". Asignarla en *Plantillas de avisos* →
+`quote_ready`. Sin ella el aviso sale libre y **solo llega si el cliente escribió en las
+últimas 24 h**.
 
 **Pendiente de configurar:** los dos productos no tienen proyecto ni hoja (crean nada al
 confirmarse); hacen falta sus hojas y plantillas de PDF antes de que un tratamiento agendado

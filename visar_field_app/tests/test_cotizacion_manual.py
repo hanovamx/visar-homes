@@ -206,3 +206,17 @@ class TestCotizacionManual(TransactionCase):
         cot = tarea._visar_quote_requests_sync(self.tecnico)
 
         self.assertEqual(cot.order_line.product_id.product_tmpl_id, self.termitas)
+
+    def test_agendar_despues_avisa_al_cliente_con_el_monto(self):
+        self.cliente.phone = '5218190005566'
+        tarea = self._visita()
+        cot = self._hoja_marca(tarea, 'Termitas')
+        self._cotizar(cot, 3000.0)
+        cot.action_visar_quote_schedule_later()
+
+        aviso = self.env['visar.wa.message'].search([
+            ('quote_order_id', '=', cot.id), ('template_key', '=', 'quote_ready')])
+        self.assertEqual(len(aviso), 1)
+        self.assertEqual(aviso.task_id, tarea, "cuelga de la visita que la pidió")
+        self.assertIn('2,500.00', aviso.params_json, "el monto ya con el descuento")
+        self.assertEqual(aviso._visar_wa_context().get('quote_id'), cot.id)

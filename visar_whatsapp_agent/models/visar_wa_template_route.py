@@ -88,6 +88,14 @@ ESPECIFICACION = {
         'variables': 1, 'header': 'none', 'quick_reply': False,
         'nota': "{{1}} fecha y hora que se soltó",
     },
+    'quote_ready': {
+        'label': "Cotización lista — el cliente elige fecha",
+        'variables': 2, 'header': 'none', 'quick_reply': True,
+        'nota': "{{1}} servicio cotizado · {{2}} monto ya con el descuento de la "
+                "valoración · un botón de respuesta rápida \"Elegir fecha\" (el "
+                "runtime manda su payload). Sale cuando oficina pulsa \"Agendar "
+                "después\" en una cotización pedida desde la hoja de trabajo.",
+    },
     'upsell_payment': {
         'label': "Liga de pago del servicio adicional (venta en campo)",
         'variables': 2, 'header': 'none', 'quick_reply': False,

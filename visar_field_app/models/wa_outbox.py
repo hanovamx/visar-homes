@@ -27,6 +27,7 @@ TEMPLATE_KEYS = [
     ('reschedule', "Reagendar (cliente no llegó)"),
     ('reschedule_offer', "Reagendar — el cliente elige horario"),
     ('upsell_payment', "Liga de pago de lo vendido en la visita"),
+    ('quote_ready', "Cotización lista — el cliente elige fecha"),
 ]
 
 # `reschedule_offer` no es un texto más: el cliente tiene que poder CONTESTARLO.
@@ -38,6 +39,9 @@ TEMPLATE_KEYS = [
 # cita resoluble: ahí no hay autoservicio que ofrecer y prometerlo sería peor.
 ENDPOINTS = {
     'reschedule_offer': '/internal/booking-event',
+    # Lo mismo: el cliente CONTESTA ("Elegir fecha") y el runtime tiene que saber
+    # de qué cotización se habla antes de que llegue el tap.
+    'quote_ready': '/internal/booking-event',
 }
 
 # Vida útil de cada aviso, en minutos. Sale de para qué sirve el mensaje, no de un
@@ -53,6 +57,9 @@ TTL_MINUTES = {
     # La liga sigue cobrando días después: si el cliente no pagó en la puerta,
     # recibirla por la tarde todavía le sirve.
     'upsell_payment': 24 * 60,
+    # Una cotización no caduca en horas: si WhatsApp estuvo caído, entregarla al
+    # día siguiente sigue siendo darle al cliente su precio.
+    'quote_ready': 3 * 24 * 60,
 }
 DEFAULT_TTL_MINUTES = 30
 
@@ -67,6 +74,10 @@ class VisarWaMessage(models.Model):
     task_id = fields.Many2one(
         'project.task', string="Servicio", required=True, ondelete='cascade',
         index=True)
+    quote_order_id = fields.Many2one(
+        'sale.order', string="Cotización", ondelete='cascade',
+        index='btree_not_null',
+        help="Solo en `quote_ready`: la cotización que el cliente va a agendar.")
 
     # ------------------------------------------------------------------
     # Lo que el mixin pide
@@ -108,6 +119,10 @@ class VisarWaMessage(models.Model):
             # la tarea ahora.
             evento = self.task_id._visar_calendar_event()
             contexto['event_id'] = evento.id or None
+        if self.template_key == 'quote_ready':
+            # Igual de funcional: con él, el "Elegir fecha" aterriza en ESTA
+            # cotización y no en "cuál de tus cotizaciones".
+            contexto['quote_id'] = self.quote_order_id.id or None
         return contexto
 
     # ------------------------------------------------------------------

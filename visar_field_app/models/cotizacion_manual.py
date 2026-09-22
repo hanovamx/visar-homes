@@ -197,12 +197,48 @@ class SaleOrder(models.Model):
         self.with_context(visar_quote_no_sync=True).write({'visar_quote_path': 'agendar'})
         if self.state == 'draft':
             self.action_quotation_sent()
-        nota = _("Cotizada para agendarse aparte. Total %s. Siguiente paso: el agente "
-                 "le ofrece al cliente fecha y liga de pago.",
-                 self.currency_id.format(self.amount_total))
+        enviado = self._visar_quote_notify_client()
+        nota = (_("Cotizada para agendarse aparte. Total %s. Se le mandó al cliente por "
+                  "WhatsApp con el botón \"Elegir fecha\": el agente le ofrece horarios "
+                  "y la liga de pago.", self.currency_id.format(self.amount_total))
+                if enviado else
+                _("Cotizada para agendarse aparte. Total %s. NO se pudo avisar al "
+                  "cliente por WhatsApp (sin teléfono): hay que llamarle.",
+                  self.currency_id.format(self.amount_total)))
         self.message_post(body=nota)
         self._visar_quote_close_activity(nota)
         return True
+
+    def _visar_quote_notify_client(self):
+        """Encola el aviso `quote_ready` al cliente de la visita. Devuelve el aviso.
+
+        Cuelga de la VISITA que pidió la cotización: ahí está el teléfono del
+        cliente al que se le habló, y ahí queda la nota del envío. El monto va en el
+        mensaje porque es lo primero que el cliente quiere saber, y porque la liga
+        que le llega después tiene que decir la misma cifra.
+        """
+        self.ensure_one()
+        task = self.visar_quote_origin_task_id.sudo()
+        _display, e164 = task._visar_client_phone()
+        servicio = ", ".join(
+            self._visar_quote_service_lines().product_id.mapped('name')).lower() \
+            or "su servicio"
+        monto = self.currency_id.format(self.amount_total)
+        con_descuento = bool(self.order_line.filtered('visar_valuation_credit'))
+        texto = (
+            "Hola, le saluda Visar Homes. La cotización de su servicio de *%s* ya está "
+            "lista: *%s*%s.\n\nToque *Elegir fecha* para agendarlo; al confirmar le "
+            "enviamos su liga de pago." % (
+                servicio, monto,
+                ", con el descuento de su visita de valoración ya aplicado"
+                if con_descuento else ""))
+        aviso = self.env['visar.wa.message'].sudo()._visar_wa_enqueue(
+            'quote_ready', e164, texto, params=[servicio, monto],
+            values={'task_id': task.id, 'quote_order_id': self.id}) if e164 else False
+        task.message_post(body=Markup("📱 <b>[WhatsApp %s]</b><br/>%s") % (
+            ("→ %s (en cola)" % _display) if aviso else "— sin número en el contacto",
+            texto), subtype_xmlid='mail.mt_note')
+        return aviso
 
 
 class ProjectTask(models.Model):

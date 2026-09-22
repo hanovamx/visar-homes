@@ -31,6 +31,9 @@
         <record id="wa_template_route_upsell_payment" model="visar.wa.template.route">
             <field name="key">upsell_payment</field><field name="sequence">90</field>
         </record>
+        <record id="wa_template_route_quote_ready" model="visar.wa.template.route">
+            <field name="key">quote_ready</field><field name="sequence">100</field>
+        </record>
 
         <!-- El webhook de Meta de este numero llega al runtime, no a Odoo: sin
              esto el estado de una plantilla solo cambia cuando alguien pulsa
