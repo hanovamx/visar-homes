@@ -1,5 +1,15 @@
 # Estado y roadmap
 
+> **22-sep-2026 00:20 — pólizas: se quita "Visitas incluidas"; las visitas salen de los
+> meses pagados. DESPLEGADO en `visar-db`** (visar_subscription 19.0.1.8.0,
+> visar_whatsapp_agent 19.0.1.23.0; `deploy-sin-visitas-incluidas-22sep.sh`, backup
+> `/var/backups/visar-db_sin-visitas-incluidas_20260922-001924.sql.gz`). Visitas por factura
+> = periodos pagados × (meses del periodo ÷ "Meses entre visitas"): anual 12, semestral 6,
+> mensual 3 en el primer cobro y luego 1. "Meses entre visitas" ocupa en el plan el lugar del
+> campo quitado. Motivo y efecto en pólizas activas en `35-polizas.md` §"Cuántas visitas
+> genera cada factura". S00154 (bimestral archivado, factura el 30-sep) pasa a 2 visitas; si
+> ese plan debe ser una cada dos meses, poner su "Meses entre visitas" en 2.
+>
 > **21-sep-2026 23:26 — servicio vendido y hecho en la misma visita: DESPLEGADO en
 > `visar-db`** (leído de la BD: visar_field_app 19.0.1.35.0, visar_whatsapp_agent
 > 19.0.1.22.0; `deploy-upsell-servicio-21sep.sh`, backup
