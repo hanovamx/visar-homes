@@ -15,6 +15,7 @@ Los metodos NO usan sudo: corren como el usuario RPC, asi que las ACLs del
 grupo de solo lectura son el limite efectivo.
 """
 import logging
+import re
 
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -781,7 +782,12 @@ class VisarAgentTools(models.AbstractModel):
         Sin tarea se deriva de la fecha: futura = Programada, pasada =
         Realizada, sin fecha = Pendiente de agendar.
         """
-        task = line.task_id
+        return self._agent_task_status(line.task_id, date, now)
+
+    @api.model
+    def _agent_task_status(self, task, date, now):
+        """Lo mismo, a partir de la TAREA: tambien hay visitas sin linea de pedido
+        (la revision incluida de un tratamiento, o una visita que puso oficina)."""
         if task and task.stage_id:
             return task.stage_id.visar_agent_label or task.stage_id.name
         if not date:
@@ -836,7 +842,12 @@ class VisarAgentTools(models.AbstractModel):
         cancela servicios. El cliente la leia bajo "tus servicios anteriores"
         con una fecha futura. Ver `project_task_type.py`.
         """
-        stage = line.task_id.stage_id if line.task_id else False
+        return self._agent_task_bucket(line.task_id, date, today_start)
+
+    @api.model
+    def _agent_task_bucket(self, task, date, today_start):
+        """Lo mismo, a partir de la TAREA."""
+        stage = task.stage_id if task else False
         forzado = stage.visar_agent_bucket if stage else 'auto'
         if forzado in ('upcoming', 'history'):
             return forzado
@@ -845,6 +856,82 @@ class VisarAgentTools(models.AbstractModel):
         if date and date < today_start:
             return 'history'
         return 'upcoming'
+
+    @api.model
+    def _agent_partner_task_entries(self, partner, scope, now, today_start, tz,
+                                    ya_listadas=()):
+        """Visitas del cliente que NO cuelgan de una linea de pedido.
+
+        Existen y el cliente las vive igual: la **revision incluida** de un
+        tratamiento —se acuerda en la puerta y no se cobra, asi que no tiene linea
+        (`visar_field_app/models/seguimiento.py`)— y las que oficina crea a mano.
+        Sin esto, el cliente preguntaba "¿que tengo agendado?" y no veia la visita
+        que Visar le habia prometido.
+
+        Solo tareas de proyecto FSM: las demas son trabajo interno y no son suyas.
+        No se puede mover por chat lo que no tiene cita (`event_id` vacio); el
+        agente lo dice y ofrece asesor, que es lo que ya hace con cualquier
+        servicio sin cita.
+        """
+        # `SERVICES_LANG`, igual que las ordenes: el nombre de la etapa se le
+        # ensena al CLIENTE, y sin esto salia en ingles ("In Progress").
+        Task = self.env['project.task'].with_context(lang=SERVICES_LANG).sudo()
+        tareas = Task.search([
+            ('partner_id', '=', partner.id),
+            ('project_id.is_fsm', '=', True),
+            ('sale_line_id', '=', False),
+            ('id', 'not in', [t for t in ya_listadas if t]),
+        ], order='id desc', limit=MAX_SERVICES * 2)
+        entries = []
+        for tarea in tareas:
+            evento = tarea._visar_calendar_event() if hasattr(
+                tarea, '_visar_calendar_event') else Task.browse()
+            date = (evento.start if evento and evento.start
+                    else tarea.planned_date_begin) or False
+            # SIN FECHA no entra. Las visitas de póliza todavía por agendar son
+            # legión (209 tareas sin línea el 23-sep-2026, casi todas de póliza) y
+            # enseñarle al cliente "tienes 12 visitas pendientes, fecha por
+            # confirmar" es abrirle una pregunta —"¿cuándo?"— que el agente
+            # todavía no sabe contestar: elegir fecha de una visita de póliza es
+            # el paso 2 de `35-polizas.md`, sin empezar. Cuando exista, se quita
+            # este filtro y el cliente podrá agendarlas desde aquí.
+            if not date:
+                continue
+            if scope != 'all' and self._agent_task_bucket(
+                    tarea, date, today_start) != scope:
+                continue
+            bloqueo = evento._visar_reschedule_blocked() if evento else 'sin_fecha'
+            entries.append({
+                'service': self._agent_task_label(tarea),
+                'date': date.isoformat() if date else None,
+                'date_label': self._agent_format_date(date, tz),
+                'status': self._agent_task_status(tarea, date, now),
+                'zone': (evento.visar_zone_id.name
+                         if evento and evento.visar_zone_id else None),
+                'event_id': evento.id if evento else None,
+                'can_reschedule': bool(evento) and bloqueo is None,
+                'reschedule_reason': bloqueo,
+                'reschedule_granted': bool(
+                    evento and evento.visar_reschedule_granted_at),
+                '_sort': date or fields.Datetime.end_of(now, 'year'),
+            })
+        return entries
+
+    @api.model
+    def _agent_task_label(self, task):
+        """Nombre de la visita como lo lee el cliente: sin el prefijo del pedido.
+
+        Las tareas nacidas de una venta se llaman "S00284 - Fumigacion ...", y ese
+        "S00284" no le dice nada a quien pregunta que tiene agendado.
+        """
+        nombre = (task.name or '').strip()
+        # "S00284 - " (venta) y "Visita póliza 2026-09-22 — " (póliza): los dos son
+        # lenguaje interno. La fecha ya va al lado en la lista, y repetirla dentro
+        # del nombre solo gasta renglón.
+        nombre = re.sub(r'^S\d+\s*-\s*', '', nombre)
+        nombre = re.sub(r'^Visita p[oó]liza\s+\d{4}-\d{2}-\d{2}\s*[—-]\s*', '',
+                        nombre, flags=re.IGNORECASE)
+        return nombre or "Visita"
 
     @api.model
     def _agent_partner_services(self, partner, scope=DEFAULT_SERVICE_SCOPE):
@@ -871,7 +958,10 @@ class VisarAgentTools(models.AbstractModel):
 
         entries = []
         for line in orders.mapped('order_line'):
-            if not line.product_id.visar_is_service:
+            # El método y NO el flag `visar_is_service`: los tratamientos que cotiza
+            # oficina (termitas, chinches) no son agendables por la web pero para el
+            # cliente son un servicio suyo, con su fecha y su técnico.
+            if not line.product_id._visar_counts_as_service():
                 continue
             date = self._agent_service_date(line)
             bucket = self._agent_service_bucket(line, date, today_start)
@@ -903,7 +993,14 @@ class VisarAgentTools(models.AbstractModel):
                 # 24 h y la conversacion 3.
                 'reschedule_granted': bool(event and event.visar_reschedule_granted_at),
                 '_sort': date or fields.Datetime.end_of(now, 'year'),
+                '_task_id': line.task_id.id or None,
             })
+
+        entries += self._agent_partner_task_entries(
+            partner, scope, now, today_start, tz, ya_listadas=[
+                e['_task_id'] for e in entries if e.get('_task_id')])
+        for entry in entries:
+            entry.pop('_task_id', None)
 
         # Historial: mas reciente primero. Proximos: mas cercano primero, con los
         # pendientes sin fecha al final (su clave de orden es un futuro lejano).

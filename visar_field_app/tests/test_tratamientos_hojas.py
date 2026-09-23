@@ -150,3 +150,43 @@ class TestVisitaDeSeguimiento(TransactionCase):
         tarea = self._visita()
         self.assertEqual(tarea._visar_followup_request(), (False, False, ''))
         self.assertFalse(tarea._visar_followup_sync())
+
+
+@tagged('post_install', '-at_install')
+class TestTratamientoEsServicio(TransactionCase):
+    """Para el cliente, un tratamiento cotizado es un servicio suyo: sale en "Mis
+    servicios" del agente aunque no sea agendable por la web (22-sep-2026)."""
+
+    def test_el_producto_cuenta_como_servicio(self):
+        producto = self.env['product.template'].search(
+            [('visar_quote_trigger', '!=', False)], limit=1)
+        if not producto:
+            self.skipTest("Sin productos con cotización manual configurada")
+        self.assertFalse(producto.visar_is_service,
+                         "no es agendable por la web: eso exigiría tipo de cita")
+        self.assertTrue(producto._visar_counts_as_service())
+        self.assertTrue(producto.product_variant_id._visar_counts_as_service())
+
+    def test_el_agente_lo_lista_en_mis_servicios(self):
+        if 'visar.agent.tools' not in self.env:
+            self.skipTest("visar_whatsapp_agent no está instalado")
+        producto = self.env['product.template'].search(
+            [('visar_quote_trigger', '!=', False)], limit=1)
+        if not producto:
+            self.skipTest("Sin productos con cotización manual configurada")
+        cliente = self.env['res.partner'].create({
+            'name': 'Cliente tratamiento agente', 'phone': '5218190007788'})
+        # Lista de precios: REQ-004 no deja confirmar sin ella (la real la copia la
+        # cotización del pedido de la visita).
+        lista = self.env['product.pricelist'].create({'name': 'Lista tratamiento agente'})
+        pedido = self.env['sale.order'].create({
+            'partner_id': cliente.id, 'pricelist_id': lista.id,
+            'order_line': [(0, 0, {'product_id': producto.product_variant_id.id,
+                                   'price_unit': 3700.0})]})
+        pedido.action_confirm()
+
+        servicios = self.env['visar.agent.tools'].agent_customer_services(
+            {'phone': '5218190007788', 'scope': 'all'})
+
+        self.assertTrue(servicios['found'])
+        self.assertIn(producto.name, [s['service'] for s in servicios['services']])

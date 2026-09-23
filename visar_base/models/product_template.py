@@ -9,6 +9,18 @@ class ProductTemplate(models.Model):
     visar_is_service = fields.Boolean(
         "Servicio agendable (Visar)",
         help="Marca este producto como un servicio reservable vía citas web con preguntas previas.")
+    def _visar_counts_as_service(self):
+        """¿Cuenta como SERVICIO de Visar para el cliente?
+
+        `visar_is_service` significa "agendable por la web con cuestionario", y por
+        eso obliga a tener tipo de cita. Hay servicios que no lo son y el cliente
+        vive igual: los tratamientos que cotiza oficina (termitas, chinches), que
+        `visar_field_app` añade aquí. Lo que se le enseña al cliente en "Mis
+        servicios" tiene que usar ESTE método, no el flag.
+        """
+        self.ensure_one()
+        return bool(self.visar_is_service)
+
     visar_is_valuation = fields.Boolean(
         "Producto de valoración técnica",
         help="Producto usado en el flujo de valoración técnica (solo zona).")
@@ -329,3 +341,11 @@ class ProductTemplate(models.Model):
             if all(ptav in values for ptav in target):
                 return variant
         return empty
+
+
+class ProductProduct(models.Model):
+    _inherit = 'product.product'
+
+    def _visar_counts_as_service(self):
+        self.ensure_one()
+        return self.product_tmpl_id._visar_counts_as_service()

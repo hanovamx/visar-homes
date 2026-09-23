@@ -1,5 +1,13 @@
 # Estado y roadmap
 
+> **23-sep-2026 — "Mis servicios" del agente: los tratamientos cotizados y las visitas sin
+> venta detrás. DESPLEGADO en `visar-db`** (visar_base 19.0.1.14.0, visar_field_app
+> 19.0.1.41.0, visar_whatsapp_agent 19.0.1.26.0; `deploy-tratamiento-servicio-23sep.sh`).
+> El filtro era `visar_is_service`, que significa "agendable por la web": termitas y
+> chinches quedaban fuera, y también toda visita sin línea de pedido (la revisión incluida
+> y las de póliza). Ahora manda `_visar_counts_as_service()` + las visitas FSM con fecha.
+> Detalle en `27-whatsapp-agent.md`.
+>
 > **22-sep-2026 — hojas, proyectos y visita de seguimiento de los tratamientos: DESPLEGADO en
 > `visar-db`** (visar_field_app 19.0.1.40.0; `deploy-hojas-tratamientos-22sep.sh`). Termitas y
 > chinches tienen hoja propia (sembrada por `hooks.py`), proyecto FSM propio y el producto

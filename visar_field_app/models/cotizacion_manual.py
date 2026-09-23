@@ -50,14 +50,15 @@ class ProductTemplate(models.Model):
              "para que un administrador le ponga precio. Vacío = no se cotiza así.")
 
 
-class ProductProduct(models.Model):
-    _inherit = 'product.product'
+class ProductTemplateService(models.Model):
+    _inherit = 'product.template'
 
     def _visar_counts_as_service(self):
-        """¿Recibe el descuento de la valoración y nace como su propia visita? Los
-        servicios de catálogo y los tratamientos que se cotizan a mano."""
+        """Un tratamiento que cotiza oficina es un servicio para el cliente aunque no
+        sea agendable por la web: recibe el descuento de la valoración, nace como su
+        propia visita y sale en "Mis servicios" cuando el agente los lista."""
         self.ensure_one()
-        return bool(self.visar_is_service or self.visar_quote_trigger)
+        return super()._visar_counts_as_service() or bool(self.visar_quote_trigger)
 
 
 class ResConfigSettings(models.TransientModel):

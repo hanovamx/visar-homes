@@ -134,3 +134,73 @@ class TestAgentQuote(TransactionCase):
         self.assertEqual(
             self.tools.agent_quote_days({'phone': TEL, 'quote_id': self.cotizacion.id})
             ['blocked'], 'paid')
+
+
+@tagged('post_install', '-at_install')
+class TestServiciosSinPedido(TransactionCase):
+    """"Mis servicios" también lista las visitas que no cuelgan de una venta: la
+    revisión incluida de un tratamiento y las que crea oficina a mano (23-sep-2026).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.tools = cls.env['visar.agent.tools']
+        cls.proyecto = cls.env['project.project'].create({
+            'name': 'FSM servicios sin pedido', 'is_fsm': True,
+            'company_id': cls.env.company.id})
+        cls.interno = cls.env['project.project'].create({
+            'name': 'Proyecto interno', 'is_fsm': False,
+            'company_id': cls.env.company.id})
+        cls.cliente = cls.env['res.partner'].create({
+            'name': 'Cliente con revision', 'phone': '5218190009911'})
+
+    def _tarea(self, nombre, proyecto=None, dias=7):
+        from odoo import fields as odoo_fields
+        inicio = odoo_fields.Datetime.add(odoo_fields.Datetime.now(), days=dias)
+        return self.env['project.task'].create({
+            'name': nombre, 'project_id': (proyecto or self.proyecto).id,
+            'partner_id': self.cliente.id, 'planned_date_begin': inicio,
+            'date_deadline': odoo_fields.Datetime.add(inicio, hours=2)})
+
+    def _servicios(self, scope='upcoming'):
+        return self.tools.agent_customer_services(
+            {'phone': '5218190009911', 'scope': scope})['services']
+
+    def test_la_revision_incluida_sale_en_mis_servicios(self):
+        self._tarea("Seguimiento — Tratamiento antitermita")
+        nombres = [s['service'] for s in self._servicios()]
+        self.assertIn("Seguimiento — Tratamiento antitermita", nombres)
+
+    def test_una_visita_sin_cita_no_se_ofrece_mover(self):
+        self._tarea("Seguimiento — Tratamiento antichinches")
+        servicio = [s for s in self._servicios()
+                    if s['service'].startswith("Seguimiento")][0]
+        self.assertFalse(servicio['can_reschedule'])
+        self.assertFalse(servicio['event_id'])
+        self.assertTrue(servicio['date_label'], "pero sí se le dice cuándo es")
+
+    def test_el_trabajo_interno_no_es_del_cliente(self):
+        self._tarea("Revisar inventario del almacén", proyecto=self.interno)
+        nombres = [s['service'] for s in self._servicios()]
+        self.assertNotIn("Revisar inventario del almacén", nombres)
+
+    def test_el_prefijo_del_pedido_no_se_le_ensena_al_cliente(self):
+        self._tarea("S00999 - Tratamiento antitermita")
+        nombres = [s['service'] for s in self._servicios()]
+        self.assertIn("Tratamiento antitermita", nombres)
+        self.assertFalse([n for n in nombres if n.startswith('S00999')])
+
+    def test_una_visita_sin_fecha_todavia_no_se_le_ofrece(self):
+        """Las visitas de póliza por agendar son muchas y el agente aún no sabe
+        ponerles fecha (paso 2 de pólizas): prometerlas sería abrir una pregunta
+        sin respuesta."""
+        tarea = self._tarea("Visita póliza 2026-10-01 — Fumigación", dias=7)
+        tarea.write({'planned_date_begin': False, 'date_deadline': False})
+        nombres = [s['service'] for s in self._servicios('all')]
+        self.assertNotIn("Fumigación", nombres)
+
+    def test_el_nombre_de_una_visita_de_poliza_se_limpia(self):
+        self._tarea("Visita póliza 2026-10-01 — Fumigación interior (1/3)")
+        nombres = [s['service'] for s in self._servicios()]
+        self.assertIn("Fumigación interior (1/3)", nombres)

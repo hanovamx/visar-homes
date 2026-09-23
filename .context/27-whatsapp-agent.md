@@ -142,6 +142,21 @@ de `visar_fastapi`.
 > (acotado): cruza datos de cliente que el ACL del usuario share no ve, y devuelve
 > un dict tipado y mínimo. No amplía el ACL del share.
 
+> **Qué cuenta como servicio del cliente (23-sep-2026).** Dos fuentes, no una:
+> las **líneas de pedido** cuyo producto pasa `product.template._visar_counts_as_service()`
+> —`visar_is_service` ("agendable por la web", que obliga a tipo de cita) **más** los
+> tratamientos que cotiza oficina, termitas y chinches, que no lo son y para el cliente
+> son servicios suyos igual— y las **visitas FSM sin línea de pedido y con fecha**: la
+> revisión incluida de un tratamiento (no se cobra, así que no tiene línea) y las que
+> crea oficina a mano, incluidas las de póliza ya agendadas. Se les limpia el prefijo
+> interno ("S00284 - ", "Visita póliza 2026-09-22 — ").
+>
+> **Sin fecha no entran**, y es deliberado: las visitas de póliza por agendar son
+> cientos, y ofrecerlas invita a un "¿cuándo?" que el agente todavía no sabe contestar
+> (paso 2 de `35-polizas.md`, sin empezar). Al existir ese paso, se quita el filtro.
+> Una visita sin cita (`event_id` vacío) no se puede mover por chat: el agente lo dice
+> y ofrece asesor, como con cualquier servicio sin cita.
+
 `service_code` es un **código de dimensión** (`FUM_INT`, `FUM_EXT`, `MAV_JAR`),
 no de grupo. Si se manda un grupo con varias dimensiones, la respuesta trae
 `needs_clarification: true` con las opciones, sin total (cada dimensión tiene su
