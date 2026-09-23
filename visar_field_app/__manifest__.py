@@ -20,7 +20,7 @@ citas), sin tocar el frontend OWL nativo.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.41.0',
+    'version': '19.0.1.42.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_fsm',
@@ -34,6 +34,10 @@ citas), sin tocar el frontend OWL nativo.
         # (`appointment.type._visar_build_sale_lines`) para que la misma casa cueste
         # lo mismo por web, WhatsApp y en la puerta.
         'visar_appointment',
+        # Inventario por ruta: la ubicación del técnico, sus existencias y la
+        # entrega de lo vendido en campo salen de `stock` (vía `sale_stock`, que
+        # es quien enlaza pedido y albarán).
+        'sale_stock',
     ],
     'data': [
         'security/ir.model.access.csv',

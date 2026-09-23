@@ -121,6 +121,35 @@
                                    invisible="not visar_upsell_cash_at"/>
                         </group>
                     </group>
+                    <!-- Inventario por ruta (23-sep-2026): qué se gastó, de dónde
+                         salió y cuánto se recorrió para llegar. -->
+                    <group string="Consumo de inventario"
+                           invisible="not visar_consumo_ids and not visar_consumo_at">
+                        <field name="visar_consumo_at" readonly="1"/>
+                        <field name="visar_consumo_ids" readonly="1" nolabel="1" colspan="2">
+                            <list>
+                                <field name="product_id"/>
+                                <field name="quantity"/>
+                                <field name="uom_name"/>
+                                <field name="employee_id"/>
+                            </list>
+                        </field>
+                        <field name="visar_consumo_move_ids" readonly="1" nolabel="1"
+                               colspan="2" invisible="not visar_consumo_move_ids">
+                            <list string="Movimientos generados">
+                                <field name="product_id"/>
+                                <field name="product_uom_qty"/>
+                                <field name="location_id"/>
+                                <field name="location_dest_id"/>
+                                <field name="state"/>
+                            </list>
+                        </field>
+                    </group>
+                    <group string="Recorrido" invisible="not visar_odometer_arrival">
+                        <field name="visar_odometer_session_id" readonly="1"/>
+                        <field name="visar_odometer_arrival" readonly="1"/>
+                        <field name="visar_km_leg" readonly="1"/>
+                    </group>
                 </page>
             </xpath>
 

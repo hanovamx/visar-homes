@@ -1061,19 +1061,37 @@ class ProjectTask(models.Model):
             return zone.pricelist_id
         return self.partner_id.property_product_pricelist
 
-    def _visar_upsell_catalog(self):
+    def _visar_upsell_catalog(self, employee=None):
         """Productos ofrecibles en campo, con su precio ya resuelto.
 
         Devuelve una lista de dicts (no un recordset) porque la plantilla necesita
         el precio calculado por variante, no solo el producto.
+
+        **Filtrado por la camioneta del técnico** (23-sep-2026): un producto que se
+        cuenta (`is_storable`) solo se ofrece si lo TRAE, y con la cantidad a la
+        vista. Vender lo que no se carga era la queja de fondo: el catálogo
+        enseñaba lo mismo a todos y el inventario nunca se enteraba.
+
+        Dos salvedades deliberadas:
+
+        - lo que Odoo NO cuenta (servicios, y consumibles sin seguimiento como la
+          estación antirroedores) se ofrece siempre: no hay existencia que mirar;
+        - un técnico SIN ubicación configurada ve el catálogo completo, como antes.
+          Que administración no haya terminado de configurarlo no es motivo para
+          dejarlo sin vender delante del cliente.
         """
         self.ensure_one()
         Template = self.env['product.template'].sudo()
         templates = Template.search(Template._visar_upsell_domain(), order='name')
         products = templates.product_variant_ids.filtered('active')
         pricelist = self._visar_upsell_pricelist()
+        location = employee._visar_field_location() if employee else None
+        existencias = location._visar_on_hand(products.filtered('is_storable')) if location else {}
         catalog = []
         for product in products:
+            cantidad = existencias.get(product.id, 0.0)
+            if location and product.is_storable and cantidad <= 0:
+                continue  # no lo trae cargado
             price = (pricelist._get_product_price(product, 1.0)
                      if pricelist else product.lst_price)
             catalog.append({
@@ -1082,6 +1100,9 @@ class ProjectTask(models.Model):
                 'description': product.description_sale or '',
                 'uom': product.uom_id.name,
                 'price': price,
+                # Solo para lo que se cuenta: en lo demás un "llevas 0" mentiría.
+                'stock_label': (product._visar_field_stock_label(cantidad)
+                                if location and product.is_storable else ''),
             })
         return catalog
 
@@ -1289,6 +1310,10 @@ class ProjectTask(models.Model):
         otra lista, pero lo que el técnico le dijo al cliente es lo que se cobra.
         """
         self.ensure_one()
+        # A PROPÓSITO sin el técnico: el catálogo se valida por lo que es VENDIBLE en
+        # campo, no por lo que hay en la camioneta. Filtrar aquí por existencia
+        # convertiría un conteo desfasado en un "no se puede vender" delante del
+        # cliente; la falta se avisa y se deja en negativo, que es lo honesto.
         catalogo = {p['id']: p['price'] for p in self._visar_upsell_catalog()}
         if product_id not in catalogo:
             return False
@@ -2208,10 +2233,12 @@ class ProjectTask(models.Model):
 
     def _visar_report_plaguicidas_section(self, record):
         """PENDIENTE (Req 7): tabla de plaguicidas utilizados con una breve
-        explicación de qué es cada uno. Requiere un modelo de plaguicidas (ficha
-        con nombre, principio activo y descripción) que hoy no existe: en la hoja
-        solo se captura el nombre por área (`x_plaguicida_nombre`), sin catálogo.
-        Devuelve None hasta que se defina ese modelo."""
+        explicación de qué es cada uno.
+
+        Desde el 23-sep-2026 el catálogo que faltaba YA EXISTE: `x_plaguicida_id`
+        apunta a un `product.product` real, cuya ficha tiene nombre y descripción.
+        Queda pendiente decidir con Visar qué texto se le enseña al cliente antes
+        de imprimirlo; hasta entonces devuelve None y el reporte no cambia."""
         return None
 
     def _visar_report_preludio_sections(self):
@@ -2301,8 +2328,11 @@ class ProjectTask(models.Model):
     _VISAR_FUM_TABLE_HEADERS = {
         'x_infestacion_activa': "Plaga activa",
         'x_plaga_ids': "Plaga detectada",
-        'x_plaguicida_nombre': "Plaguicida",
-        'x_plaguicida_dosis': "Dosis (ml)",
+        'x_plaguicida_id': "Plaguicida",
+        'x_plaguicida_otro': "Plaguicida (otro)",
+        # Sin unidad fija: desde que el plaguicida es un producto, la unidad es la
+        # suya (ml, g…) y se imprime junto a la cantidad.
+        'x_plaguicida_dosis': "Cantidad",
         'x_trampa_monitoreo': "Trampa",
         'x_accion_correctiva': "Acción correctiva",
     }

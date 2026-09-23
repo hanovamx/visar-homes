@@ -8,6 +8,7 @@
         <field name="arch" type="xml">
             <field name="pin" position="after">
                 <field name="visar_field_pin"/>
+                <field name="visar_stock_location_id"/>
             </field>
         </field>
     </record>

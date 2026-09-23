@@ -930,3 +930,48 @@ modo `estima` al contestar). Las preguntas de cada pieza las escribe Odoo
 un arreglo de lo que el cliente oye hay que comprobarlo **por las dos rutas**; el prompt
 solo gobierna la del modelo.
 
+
+## [DECIDIDA E IMPLEMENTADA — 23-sep-2026] El inventario sale de la camioneta del técnico
+
+Hasta hoy el inventario era decorativo. La hoja de fumigación ofrecía una **lista fija de
+nueve principios activos** (Cipermetrina, Fipronil…) que no eran productos de Odoo; el
+catálogo de campo enseñaba lo mismo a todos los técnicos sin mirar si lo llevaban; y
+**nada se descontaba nunca**: 43 albaranes en "Preparado" que nadie validó, salidos
+además del almacén central y no de la camioneta.
+
+Lo que se implanta: cada técnico tiene una **ubicación interna propia**
+(`hr.employee.visar_stock_location_id`, por convención `VHR/Existencias/<nombre>`). Lo
+que la app le ofrece —plaguicidas en la hoja, productos en el catálogo— sale de lo que
+HAY ahí, con la cantidad a la vista; al cerrar el servicio, lo aplicado y lo vendido
+salen de esa ubicación de verdad.
+
+**Nunca se bloquea al técnico por el inventario.** Un conteo desfasado es problema de
+administración, no del cliente que espera en la puerta: si falta existencia se descuenta
+igual (queda en negativo), se avisa en el chatter y el servicio se cierra. Por la misma
+razón, un desplegable de insumos vacío deja de ser obligatorio y el técnico tiene una
+escotilla de texto; y un técnico **sin ubicación configurada ve el catálogo completo**,
+como antes — que administración no haya terminado de configurarlo no lo deja sin vender.
+
+**El plaguicida se queda donde estaba** (dentro de cada área tratada) y no se muda a una
+sección de consumo: la dosis depende del área y de la plaga, y así se imprime en el
+reporte firmado. La sección nueva es para **lo demás** que se gasta.
+
+**El consumo de material y el odómetro cuelgan de la TAREA, no de la hoja.** Cada
+plantilla tiene su propio modelo de líneas, así que "meterlo en la hoja" obligaría a un
+modelo de consumo por plantilla —seis hoy y uno más por cada servicio nuevo—. Con un
+modelo sobre la tarea hay uno, sirve para toda hoja presente y futura, y —importante— no
+entra en el PDF firmado: lo aplicado es asunto del cliente, **el odómetro del técnico
+no**.
+
+**La gasolina no se modela como inventario.** No cargan un tanque: compran combustible.
+Lo medible en la puerta son los **kilómetros**, y se toman en tres lecturas que caen donde
+el técnico ya pulsa algo: al entrar con su PIN (el **ancla** del día), al confirmar
+llegada a cada servicio, y al cerrar la jornada. Cada tramo sale por resta y se le carga
+al servicio **al que se iba** — el viaje es suyo.
+
+Las tres lecturas son **obligatorias**, y la razón no es el celo: los tramos se calculan
+por resta, así que una lectura que falte a media jornada no deja un hueco, deja **dos**
+(el tramo de ese servicio y el del siguiente, que absorbería los dos viajes sin avisar).
+La única excepción es el cierre, que solo se puede exigir si el técnico pulsa *Salir*:
+quien abandona la pestaña pierde el viaje de vuelta, que no es de ningún cliente.
+Volver a entrar el mismo día **reutiliza la jornada abierta** y no vuelve a pedir el ancla.

@@ -1873,7 +1873,8 @@ código nuevo en la app ni en el PDF, que se arman solos a partir del arch.
   el tratamiento falla y el cliente lo reclama como garantía, así que queda constancia; método y
   **una tarjeta por zona o mueble**; cierre con indicaciones.
 
-Producto y dosis **no** van en la hoja: saldrán del inventario real (requisito aparte).
+Producto y dosis **ya salen del inventario real** desde el 23-sep-2026 — ver
+*Inventario por ruta* al final de este documento.
 
 **Visita de seguimiento incluida** (`models/seguimiento.py`). El cierre de las dos hojas pregunta
 si se requiere, con la **fecha y franja acordadas con el cliente delante** — el único momento en
@@ -1881,3 +1882,59 @@ que las dos partes están juntas. Al guardar la hoja, Odoo crea la visita en el 
 con los mismos técnicos, **sin cargo** (sin línea de pedido). Corregir la fecha la mueve;
 desmarcarla la retira mientras nadie la haya empezado; sin fecha no se crea nada y queda la nota
 para que oficina la agende.
+
+---
+
+## Inventario por ruta (23-sep-2026)
+
+`visar_field_app` 19.0.1.42.0 · `models/inventario_ruta.py`, `models/consumo_recorrido.py`
+
+**La camioneta del técnico es una ubicación de inventario.** `hr.employee.
+visar_stock_location_id` (convención: `VHR/Existencias/<nombre>`). De ahí sale todo lo
+que la app le ofrece y todo lo que se descuenta. Sin ella configurada, el técnico ve el
+catálogo completo y no se mueve nada — se avisa en el chatter, no se bloquea.
+
+**Qué se ofrece.** `product.template.visar_consumible_ok` ("Insumo aplicable en campo")
+marca lo que se puede declarar consumido; es un flag propio y no una categoría, por la
+misma razón que `visar_upsell_ok` (la categoría es contable). Se exige `is_storable`: lo
+que Odoo no cuenta no se puede descontar.
+
+| Dónde | Qué se ve |
+|---|---|
+| Hoja de fumigación, por área | `x_plaguicida_id` → producto de SU ubicación, con la existencia en la etiqueta ("Cipermetrina 20% CE — llevas 750 ml") |
+| Catálogo de venta en campo | Solo lo almacenable que trae, con "Llevas 5 Unidades". Lo que Odoo no cuenta (servicios, estación antirroedores) se ofrece siempre |
+| Tarjeta "Consumo de material" | Lo que se gasta además del plaguicida: guardapolvo instalado, trampa colocada, cebo repuesto |
+
+El desplegable filtrado vive en `_m2o_options` (`WORKSHEET_M2O_STOCK`), que es la ÚNICA
+excepción al "un m2o ofrece su modelo entero". Conserva siempre el valor ya guardado
+aunque su existencia haya bajado a cero: si no, reabrir la hoja borraría de la vista lo
+que el técnico ya había contestado. Y si el desplegable sale **vacío**, el campo deja de
+ser obligatorio (cliente y servidor comparten descriptores, así que se relaja en los dos).
+
+**Qué se mueve, y cuándo.** Al cerrar el servicio, dentro de un `try` que nunca tumba el
+cierre —la firma ya está capturada y el cliente está delante—:
+
+1. `_visar_consumo_post` — lo declarado (plaguicida por área + material) sale de la
+   camioneta hacia una ubicación virtual **"Consumo en servicio"** (`usage='production'`:
+   se consume produciendo el servicio; no es un ajuste ni una entrega al cliente).
+   Idempotente por `visar_consumo_at`.
+2. `_visar_entrega_upsell` — lo vendido en campo se entrega **desde la camioneta** y se
+   valida. Solo las líneas del adicional, no el albarán entero: en el pedido original
+   pueden convivir líneas del servicio contratado que el técnico no entrega.
+
+Si no alcanza, se descuenta igual y queda en negativo con aviso en el chatter. El
+servicio ya se prestó; el conteo lo cuadra administración.
+
+**Recorrido.** Tres lecturas del odómetro: al entrar con el PIN
+(`visar.field.session.visar_odometer_start`, el ancla del día), al confirmar llegada
+(`project.task.visar_odometer_arrival`) y al cerrar la jornada (`visar_odometer_end`, en
+`/visar/field/cerrar-jornada`). `visar_km_leg` resta la lectura anterior de la jornada y
+carga el tramo al servicio **al que se iba**. Una lectura menor que la anterior se
+rechaza (un odómetro no anda para atrás; casi siempre es un dedazo). Nada de esto entra
+en el PDF firmado.
+
+**Lo que sigue pendiente.** `_visar_report_plaguicidas_section` (Req 7) ya tiene el
+catálogo que le faltaba —el plaguicida es un producto con ficha—, pero sigue devolviendo
+None hasta decidir con Visar qué texto ve el cliente. La gasolina se mide por kilómetros;
+los tickets de carga (litros, importe, foto) quedaron **fuera de alcance** a petición de
+Visar el 23-sep-2026.

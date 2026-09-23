@@ -18,6 +18,13 @@
                         <input type="password" inputmode="numeric" name="pin" id="pin"
                                class="form-control form-control-lg text-center mb-3"
                                autocomplete="off" autofocus="autofocus" required="required"/>
+                        <!-- Ancla del recorrido del día: sin esta lectura no se puede
+                             medir el trayecto hasta el primer servicio. -->
+                        <label for="odometer" class="form-label">Kilometraje de tu vehículo</label>
+                        <input type="number" inputmode="numeric" min="0" step="1"
+                               name="odometer" id="odometer"
+                               class="form-control form-control-lg text-center mb-3"
+                               placeholder="Ej. 45120" required="required"/>
                         <button type="submit" class="btn btn-primary btn-lg">Entrar</button>
                     </form>
                 </div>
@@ -37,10 +44,12 @@
                             <h4 class="mb-0">Hola, <t t-esc="employee.name"/></h4>
                             <small class="text-muted">Mis servicios</small>
                         </div>
-                        <form action="/visar/field/logout" method="post" class="m-0">
-                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                            <button type="submit" class="btn btn-outline-secondary btn-sm">Salir</button>
-                        </form>
+                        <!-- Salir pasa por una pantalla de cierre para tomar la
+                             última lectura. Si el técnico cierra la pestaña sin pasar
+                             por ahí, lo único que se pierde es el viaje de vuelta, que
+                             no es de ningún cliente. -->
+                        <a href="/visar/field/cerrar-jornada"
+                           class="btn btn-outline-secondary btn-sm">Salir</a>
                     </div>
 
                     <!-- Alternador Lista / Mapa (por defecto: Lista) -->
@@ -215,6 +224,20 @@
                               method="post" class="m-0">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                             <input type="hidden" name="action" value="arrived"/>
+                            <!-- Se pide AQUÍ y no al terminar: el técnico está en la
+                                 camioneta, antes de tocar la puerta. Una lectura que
+                                 falte no deja un hueco, deja DOS: el tramo de este
+                                 servicio y el del siguiente. -->
+                            <label for="odometer-arrival" class="form-label small mb-1">
+                                Kilometraje al llegar
+                            </label>
+                            <input type="number" inputmode="numeric" min="0" step="1"
+                                   name="odometer" id="odometer-arrival"
+                                   class="form-control form-control-lg text-center mb-2"
+                                   t-att-placeholder="odometer_hint" required="required"/>
+                            <div t-if="odometer_error" class="alert alert-warning py-2 small">
+                                <t t-esc="odometer_error"/>
+                            </div>
                             <button type="submit" class="btn btn-primary btn-lg w-100">📍 Confirmar llegada</button>
                         </form>
 
@@ -295,6 +318,69 @@
                     <t t-if="upsell_available or upsell_state != 'vacio'">
                         <t t-call="visar_field_app.upsell_card"/>
                     </t>
+
+                    <!-- ================= Consumo de material =================
+                         Lo que se gasta ADEMÁS del plaguicida: el guardapolvo que se
+                         instala, la trampa que se coloca, el cebo que se repone. El
+                         plaguicida sigue capturándose dentro de cada área tratada de
+                         la hoja (la dosis depende del área y de la plaga, y así se
+                         imprime en el reporte firmado); esto es el resto.
+                         Se descuenta de la ubicación del técnico al cerrar. -->
+                    <div t-if="upsell_available or consumo_lines" id="consumo" class="card p-3 mb-4">
+                        <h6 class="mb-1">Consumo de material</h6>
+                        <p class="small text-muted mb-3">
+                            Lo que gastaste de tu camioneta en este servicio, aparte del
+                            plaguicida. Se descuenta de tu inventario al cerrar.
+                        </p>
+
+                        <div t-if="consumo_lines" class="list-group mb-3">
+                            <div t-foreach="consumo_lines" t-as="linea"
+                                 class="list-group-item d-flex justify-content-between align-items-center">
+                                <div class="min-w-0">
+                                    <div t-esc="linea.product_id.display_name"/>
+                                    <small class="text-muted">
+                                        <t t-esc="linea.quantity"/> <t t-esc="linea.uom_name"/>
+                                    </small>
+                                </div>
+                                <form t-if="upsell_available"
+                                      t-att-action="'/visar/field/task/%s/consumo/%s/del' % (task.id, linea.id)"
+                                      method="post" class="m-0">
+                                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                    <button type="submit" class="btn btn-outline-danger btn-sm"
+                                            aria-label="Quitar">&#215;</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <form t-if="upsell_available and consumo_options"
+                              t-att-action="'/visar/field/task/%s/consumo/add' % task.id"
+                              method="post">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <div class="row g-2">
+                                <div class="col-8">
+                                    <select name="product_id" class="form-select" required="required">
+                                        <option value="">Material…</option>
+                                        <option t-foreach="consumo_options" t-as="opcion"
+                                                t-att-value="opcion['id']">
+                                            <t t-esc="opcion['name']"/>
+                                            <t t-if="opcion['stock_label']"> — llevas <t t-esc="opcion['stock_label']"/></t>
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" name="quantity" min="0" step="any"
+                                           inputmode="decimal" class="form-control"
+                                           placeholder="Cantidad" required="required"/>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-outline-primary w-100 mt-2">
+                                Agregar consumo
+                            </button>
+                        </form>
+                        <div t-elif="upsell_available" class="alert alert-info py-2 small mb-0">
+                            No traes material cargado en tu ubicación de inventario.
+                        </div>
+                    </div>
 
                     <!-- Tratamientos que la hoja mandó a cotizar (termitas, chinches). El
                          técnico no pone el precio: solo ve en qué va oficina, por si el
@@ -881,9 +967,10 @@
 
                     <h6 t-if="service_offers and catalog" class="mb-2">Productos</h6>
                     <div t-if="not catalog and not service_offers" class="alert alert-info">
-                        No hay productos habilitados para venta en campo. Pídale a
-                        administración que marque "Vendible en campo (upsell)" en la
-                        ficha de los productos.
+                        No trae productos cargados en su ubicación de inventario, o no
+                        hay ninguno habilitado para venta en campo. Pídale a
+                        administración que le surta la camioneta o que marque
+                        "Vendible en campo (upsell)" en la ficha de los productos.
                     </div>
 
                     <form t-if="catalog"
@@ -906,6 +993,9 @@
                                         <strong t-esc="product['name']"/>
                                         <div t-if="product['description']" class="small text-muted"
                                              t-esc="product['description']"/>
+                                        <div t-if="product['stock_label']" class="small text-muted">
+                                            Llevas <t t-esc="product['stock_label']"/>
+                                        </div>
                                     </div>
                                     <span class="badge text-bg-primary text-nowrap ms-2"
                                           t-out="product['price']"
@@ -1305,4 +1395,30 @@
         </div>
     </template>
 
+    <!-- ============================================================ -->
+    <!-- Cierre de jornada: la última lectura del odómetro             -->
+    <!-- ============================================================ -->
+    <template id="field_close_day" name="Visar Campo - Cerrar jornada">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-4" style="max-width: 480px;">
+                    <a href="/visar/field/tasks" class="btn btn-link px-0 mb-2">&#8592; Volver a mis servicios</a>
+                    <h4 class="mb-3">Cerrar jornada</h4>
+                    <div t-if="odometer_error" class="alert alert-warning py-2">
+                        <t t-esc="odometer_error"/>
+                    </div>
+                    <form action="/visar/field/logout" method="post" class="card p-3">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <label for="odometer-end" class="form-label">Kilometraje al terminar</label>
+                        <input type="number" inputmode="numeric" min="0" step="1"
+                               name="odometer" id="odometer-end"
+                               class="form-control form-control-lg text-center mb-3"
+                               t-att-placeholder="odometer_hint" autofocus="autofocus"
+                               required="required"/>
+                        <button type="submit" class="btn btn-primary btn-lg">Cerrar y salir</button>
+                    </form>
+                </div>
+            </div>
+        </t>
+    </template>
 </odoo>

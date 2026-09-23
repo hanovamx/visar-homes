@@ -13,3 +13,5 @@ from . import wa_outbox
 from . import upsell_servicio
 from . import cotizacion_manual
 from . import seguimiento
+from . import inventario_ruta
+from . import consumo_recorrido

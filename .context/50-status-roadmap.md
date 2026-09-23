@@ -221,6 +221,26 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## Inventario por ruta — 23-sep-2026
+
+> `visar_field_app` **19.0.1.42.0**. Detalle en `25-field-app.md` §Inventario por ruta y la
+> decisión en `40-decisions.md`.
+
+Cada técnico gasta de **su** ubicación (`VHR/Existencias/<nombre>`): el plaguicida de la hoja
+pasó de una lista fija de nueve principios activos a un **producto** de su camioneta con la
+existencia a la vista; el catálogo de campo solo ofrece lo que trae; al cerrar el servicio lo
+aplicado y lo vendido **salen de ahí de verdad** (antes: 43 albaranes en "Preparado" que nadie
+validó nunca, y desde el almacén central). Tarjeta nueva de **consumo de material** y
+**tres lecturas de odómetro** (entrar, llegar, cerrar jornada) para medir el recorrido sin
+inventar un tanque de gasolina en el inventario.
+
+Nunca bloquea: sin existencia se descuenta igual, queda en negativo y se avisa en el chatter.
+
+**Pendiente de Visar:** surtir las camionetas con el conteo real (el despliegue deja un conteo
+de arranque de 3 piezas por producto para poder probar), y decidir si el reporte firmado
+enseña la ficha de los plaguicidas (Req 7, que ya tiene el catálogo que le faltaba). Los
+tickets de carga de gasolina quedaron fuera de alcance.
+
 ## Feedback del 14 y 15-sep — **EN PRODUCCIÓN** el 15-sep-2026
 
 > Commits de Odoo: `b9a19c2` (14-sep), `d7302ef` (15-sep). Del runtime: `2e40529`,

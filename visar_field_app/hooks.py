@@ -172,7 +172,7 @@ _FUM_BODY_EJECUCION = """
             <field name="x_cliente_no_permitio"/>
             <field name="x_infestacion_activa"/>
             <field name="x_plaga_ids" widget="many2many_tags"/>
-            <field name="x_plaguicida_nombre"/>
+            <field name="x_plaguicida_id"/>
             <field name="x_plaguicida_dosis"/>
             <field name="x_trampa_monitoreo"/>
             <field name="x_accion_correctiva"/>
@@ -191,10 +191,10 @@ _FUM_BODY_EJECUCION = """
               <field name="x_plaga_otras_ids" widget="many2many_tags" required="1"/>
               <field name="x_plaga_ids_otro"/>
               <group>
-                <field name="x_plaguicida_nombre" required="1" help="Si no aparece en la lista, selecciona 'Otro' y descríbelo."/>
-                <field name="x_plaguicida_dosis" placeholder="20"/>
+                <field name="x_plaguicida_id" required="1" help="Solo aparece lo que traes cargado en tu ubicación, con la cantidad que te queda."/>
+                <field name="x_plaguicida_dosis" placeholder="20" help="En la unidad del producto (la que aparece junto a la existencia)."/>
               </group>
-              <field name="x_plaguicida_nombre_otro"/>
+              <field name="x_plaguicida_otro" placeholder="Solo si aplicaste algo que no aparece arriba"/>
               <field name="x_trampa_monitoreo"/>
               <field name="x_accion_correctiva"/>
               <field name="x_accion_correctiva_otro"/>
@@ -676,10 +676,24 @@ def _seed_fumigacion_fields(env, tmpl, line_model, line_label, line_rel, ws_rel)
     _ensure_field(env, line_model, lid, 'x_fija', 'boolean', 'Área obligatoria')
     _ensure_field(env, line_model, lid, 'x_cliente_no_permitio', 'boolean',
                   'Cliente NO permitió que se fumigara en esta área')
+    # El plaguicida salió de ser una LISTA FIJA de principios activos y pasó a ser un
+    # producto real de la ubicación del técnico (23-sep-2026). `x_plaguicida_nombre` y
+    # su companion se quedan en el modelo —fuera del arch— porque 29 líneas de
+    # producción ya tienen respuesta y esa historia no se tira.
     _ensure_field(env, line_model, lid, 'x_plaguicida_nombre', 'selection',
-                  'Plaguicida — nombre', selection=PLAGUICIDAS)
+                  'Plaguicida — nombre (histórico)', selection=PLAGUICIDAS)
     _ensure_field(env, line_model, lid, 'x_plaguicida_nombre_otro', 'char', OTRO)
-    _ensure_field(env, line_model, lid, 'x_plaguicida_dosis', 'float', 'Plaguicida — dosis (ml)')
+    _ensure_field(env, line_model, lid, 'x_plaguicida_id', 'many2one',
+                  'Plaguicida aplicado', relation='product.product')
+    # Escotilla SIN condicional (a diferencia de los demás `_otro`): siempre visible.
+    # Si el técnico aplicó algo que no trae cargado, se anota aquí en vez de dejar la
+    # línea en blanco; queda como hueco visible para que administración lo cuadre.
+    _ensure_field(env, line_model, lid, 'x_plaguicida_otro', 'char',
+                  'Otro plaguicida (no cargado en tu ubicación)')
+    # Sin unidad en la etiqueta: la unidad la pone el PRODUCTO (ml, g…), y el
+    # desplegable ya la enseña al lado de la existencia.
+    _ensure_field(env, line_model, lid, 'x_plaguicida_dosis', 'float',
+                  'Cantidad aplicada')
     _ensure_field(env, line_model, lid, 'x_trampa_monitoreo', 'boolean',
                   'Trampa de monitoreo colocada')
     _ensure_field(env, line_model, lid, 'x_foto_evidencia', 'binary', 'Fotos de evidencia')
@@ -708,6 +722,8 @@ def _seed_fumigacion_fields(env, tmpl, line_model, line_label, line_rel, ws_rel)
     _relabel_field(env, ws, 'x_foto_ejecucion', 'Fotos generales durante la ejecución')
     _relabel_field(env, line_model, 'x_foto_evidencia', 'Fotos de evidencia')
     # Reetiquetados de la taxonomía de 2 niveles (campos que ya existen en QA/prod).
+    _relabel_field(env, line_model, 'x_plaguicida_nombre', 'Plaguicida — nombre (histórico)')
+    _relabel_field(env, line_model, 'x_plaguicida_dosis', 'Cantidad aplicada')
     _relabel_field(env, line_model, 'x_plaga_ids', 'Tipo de plaga')
     _relabel_field(env, line_model, 'x_plaga_ids_otro', "Especifica qué plaga")
     _relabel_field(env, line_model, 'x_infestacion_activa',

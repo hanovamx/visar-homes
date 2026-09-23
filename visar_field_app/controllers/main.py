@@ -38,6 +38,13 @@ SCOPES = (SCOPE_TODAY, SCOPE_ALL)
 
 # Por qué no se pudo agregar un servicio en sitio, dicho como lo necesita el técnico
 # (qué hacer ahora), no como lo dice el código de error.
+# Rechazos de la lectura del odómetro. Un odómetro no anda para atrás: cuando la
+# lectura es menor que la anterior casi siempre es un dedazo, y aceptarla estropearía
+# el tramo de este servicio y el del siguiente.
+ODOMETER_ERRORS = {
+    'menor': "El kilometraje no puede ser menor que la última lectura de tu jornada. "
+             "Revisa el número y vuelve a intentarlo.",
+}
 UPSELL_SERVICE_ERRORS = {
     'sin_m2': "Capture los metros cuadrados de lo que va a hacer.",
     'sin_zona': "No se pudo ubicar la zona del cliente (código postal). Pida a "
@@ -766,8 +773,7 @@ class VisarFieldApp(http.Controller):
             _logger.warning("Worksheet form view ilegible para %s", Model._name)
         return nodes
 
-    @staticmethod
-    def _scalar_descriptor(info, name, value, help_text='', required=False):
+    def _scalar_descriptor(self, info, name, value, help_text='', required=False):
         """Descriptor de un campo escalar (o de línea) para renderizar un control.
 
         `help_text` proviene del nodo de la vista (donde Studio guarda el "Help
@@ -806,9 +812,13 @@ class VisarFieldApp(http.Controller):
             'section_start': False,
         }
         if ftype == 'many2one' and info.get('relation'):
-            comodel = request.env[info['relation']].sudo()
-            desc['options'] = comodel.search_read([], ['display_name'], limit=200)
+            desc['options'] = self._m2o_options(info['relation'], name, value)
             desc['value_id'] = value.id if value else False
+            # Un desplegable de insumos VACÍO (camioneta sin surtir) no puede seguir
+            # siendo obligatorio: dejaría al técnico sin poder guardar la hoja por
+            # algo que no está en su mano. Se relaja y queda la escotilla de texto.
+            if name in self.WORKSHEET_M2O_STOCK and not desc['options']:
+                desc['required'] = False
         elif ftype == 'many2many' and info.get('relation'):
             comodel = request.env[info['relation']].sudo()
             desc['options'] = comodel.search_read([], ['display_name'], limit=200)
@@ -821,6 +831,47 @@ class VisarFieldApp(http.Controller):
             # etiquetas HTML (p. ej. <p>…</p>) con que Odoo envuelve el valor.
             desc['value'] = html2plaintext(value) if value else ''
         return desc
+
+    # Campos m2o cuyo desplegable NO es "todo el modelo", sino los insumos que el
+    # técnico trae en SU ubicación de inventario (23-sep-2026).
+    WORKSHEET_M2O_STOCK = ('x_plaguicida_id',)
+
+    def _m2o_options(self, relation, name, value):
+        """Opciones de un desplegable many2one.
+
+        Por defecto, el modelo entero: los catálogos `x_visar_*` de las hojas son
+        listas cortas sembradas por nosotros.
+
+        La excepción son los INSUMOS (`WORKSHEET_M2O_STOCK`): ahí se ofrece solo lo
+        que el técnico lleva cargado, con la existencia en la etiqueta
+        ("Cipermetrina — llevas 750 ml"), porque la hoja va a descontar de esa
+        ubicación al cerrar el servicio.
+
+        El valor YA GUARDADO se conserva siempre, aunque su existencia haya bajado
+        a cero entre el guardado y ahora: si no, reabrir la hoja borraría de la
+        vista lo que el técnico ya había contestado.
+        """
+        comodel = request.env[relation].sudo()
+        if name not in self.WORKSHEET_M2O_STOCK:
+            return comodel.search_read([], ['display_name'], limit=200)
+
+        Template = request.env['product.template'].sudo()
+        productos = Template.search(
+            Template._visar_consumible_domain()).product_variant_ids.filtered('active')
+        employee = self._current_employee()
+        location = employee._visar_field_location() if employee else None
+        existencias = location._visar_on_hand(productos) if location else {}
+        opciones = []
+        for producto in productos:
+            cantidad = existencias.get(producto.id, 0.0)
+            if location and cantidad <= 0 and producto != value:
+                continue
+            etiqueta = producto.display_name
+            if location and cantidad > 0:
+                etiqueta = "%s — llevas %s" % (
+                    etiqueta, producto._visar_field_stock_label(cantidad))
+            opciones.append({'id': producto.id, 'display_name': etiqueta})
+        return opciones
 
     def _declared_conditional(self, name, meta):
         """Condición de visibilidad DECLARADA en `WORKSHEET_CONDITIONAL`, o None.
@@ -1531,23 +1582,71 @@ class VisarFieldApp(http.Controller):
         if not employee:
             return request.redirect('/visar/field?error=1')
 
-        shift = request.env['visar.field.session'].sudo().create({
-            'employee_id': employee.id,
-            'note': request.httprequest.user_agent.string[:120]
-            if request.httprequest.user_agent else False,
-        })
+        # Jornada del día: si ya hay una abierta (se le murió el teléfono, cerró
+        # sesión sin querer) se REUTILIZA y no se le vuelve a pedir el odómetro —
+        # su ancla ya está tomada y pedirla otra vez rompería los tramos del día.
+        Session = request.env['visar.field.session'].sudo()
+        shift = Session.search(
+            [('employee_id', '=', employee.id), ('state', '=', 'open')],
+            limit=1, order='date_start desc')
+        if not shift:
+            shift = Session.create({
+                'employee_id': employee.id,
+                'note': request.httprequest.user_agent.string[:120]
+                if request.httprequest.user_agent else False,
+                'visar_odometer_start': self._odometer_value(post.get('odometer')),
+            })
         request.session[SESSION_EMPLOYEE] = employee.id
         request.session[SESSION_SHIFT] = shift.id
         return request.redirect('/visar/field/tasks')
 
+    @staticmethod
+    def _odometer_value(raw):
+        """Lectura del odómetro como entero, o 0 si no vino o no es un número."""
+        try:
+            return max(int(float(raw)), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _current_shift(self):
+        """Jornada abierta del técnico identificado, o un recordset vacío."""
+        shift_id = request.session.get(SESSION_SHIFT)
+        if not shift_id:
+            return request.env['visar.field.session'].sudo().browse()
+        return request.env['visar.field.session'].sudo().browse(shift_id).exists()
+
+    @http.route('/visar/field/cerrar-jornada', type='http', auth='public',
+                website=True, sitemap=False)
+    def field_close_day(self, **kw):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        shift = self._current_shift()
+        return request.render('visar_field_app.field_close_day', {
+            'employee': employee,
+            'odometer_hint': self._odometer_hint(shift),
+            'odometer_error': ODOMETER_ERRORS.get(kw.get('oerr') or ''),
+        })
+
+    @staticmethod
+    def _odometer_hint(shift):
+        """Marca de agua del campo: la última lectura conocida de la jornada."""
+        ultimo = shift._visar_odometer_last() if shift else 0
+        return ("Mayor o igual a %s" % ultimo) if ultimo else "Ej. 45120"
+
     @http.route('/visar/field/logout', type='http', auth='public', website=True,
                 methods=['POST'], csrf=True)
     def field_logout(self, **post):
-        shift_id = request.session.get(SESSION_SHIFT)
-        if shift_id:
-            shift = request.env['visar.field.session'].sudo().browse(shift_id).exists()
-            if shift and shift.state == 'open':
-                shift.action_close()
+        shift = self._current_shift()
+        if shift and shift.state == 'open':
+            # La lectura de cierre se EXIGE aquí porque aquí sí hay un botón que
+            # pulsar. Menor que la última conocida se rechaza: un odómetro no anda
+            # para atrás y el error casi siempre es un dedazo.
+            lectura = self._odometer_value(post.get('odometer'))
+            if lectura < shift._visar_odometer_last():
+                return request.redirect('/visar/field/cerrar-jornada?oerr=menor')
+            shift.visar_odometer_end = lectura
+            shift.action_close()
         request.session.pop(SESSION_EMPLOYEE, None)
         request.session.pop(SESSION_SHIFT, None)
         return request.redirect('/visar/field')
@@ -1710,8 +1809,38 @@ class VisarFieldApp(http.Controller):
                                   if task.visar_waiting_start else ''),
             'close_error': kw.get('close_error'),
             'upsell_msg': kw.get('upsell'),
+            'odometer_hint': self._odometer_hint(self._current_shift()),
+            'odometer_error': ODOMETER_ERRORS.get(kw.get('oerr') or ''),
+            # Material consumido: se captura aquí y no en la hoja (un modelo, no uno
+            # por plantilla) y NO sale en el PDF firmado.
+            'consumo_lines': task.sudo().visar_consumo_ids,
+            'consumo_options': self._consumo_options(employee),
         })
         return request.render('visar_field_app.field_task_detail', values)
+
+    def _consumo_options(self, employee):
+        """Materiales que el técnico puede declarar consumidos: los que trae.
+
+        Misma regla que el plaguicida de la hoja (`_m2o_options`): lo que hay en su
+        ubicación, con la existencia a la vista.
+        """
+        Template = request.env['product.template'].sudo()
+        productos = Template.search(
+            Template._visar_consumible_domain()).product_variant_ids.filtered('active')
+        location = employee._visar_field_location() if employee else None
+        existencias = location._visar_on_hand(productos) if location else {}
+        opciones = []
+        for producto in productos:
+            cantidad = existencias.get(producto.id, 0.0)
+            if location and cantidad <= 0:
+                continue
+            opciones.append({
+                'id': producto.id,
+                'name': producto.display_name,
+                'stock_label': (producto._visar_field_stock_label(cantidad)
+                                if location else ''),
+            })
+        return opciones
 
     # ==================================================================
     # Captura: fotos por campo (galería viva sobre campos-foto principales)
@@ -1984,6 +2113,15 @@ class VisarFieldApp(http.Controller):
                 task._visar_notify_client(text, event='enroute', params=params)
             task._visar_set_stage(1)  # En camino
         elif action == 'arrived':
+            # El tramo se le carga al servicio al que se IBA: el viaje es suyo.
+            shift = self._current_shift()
+            lectura = self._odometer_value(post.get('odometer'))
+            if shift and lectura < shift._visar_odometer_last():
+                return request.redirect(
+                    '/visar/field/task/%s?oerr=menor' % task.id)
+            if shift and lectura:
+                task.sudo().write({'visar_odometer_arrival': lectura,
+                                   'visar_odometer_session_id': shift.id})
             # La espera arranca AUTOMÁTICamente al llegar (antes era un botón manual):
             # se sella el inicio y los minutos por defecto, y se avisa al cliente que
             # tiene esa ventana para recibir. El flujo cae directo en 'esperando'.
@@ -2007,6 +2145,50 @@ class VisarFieldApp(http.Controller):
             task._visar_flag_reschedule(employee)
             return request.redirect('/visar/field/tasks')
         return request.redirect('/visar/field/task/%s' % task.id)
+
+    # ==================================================================
+    # Consumo de material (sección propia, fuera de la hoja de trabajo)
+    # ==================================================================
+    # Se captura mientras el servicio está EN EJECUCIÓN, igual que el upsell: lo
+    # que se gastó se anota en el momento, no de memoria al cerrar.
+    @http.route('/visar/field/task/<int:task_id>/consumo/add', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_consumo_add(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._task_for_employee(task_id, employee)
+        if not task or self._task_flow_state(task) not in ('en_ejecucion', 'esperando'):
+            return request.redirect('/visar/field/task/%s' % task_id)
+        # Se valida contra lo OFRECIDO: un id suelto en el POST no puede acabar
+        # convertido en un movimiento de inventario.
+        permitidos = {o['id'] for o in self._consumo_options(employee)}
+        try:
+            product_id = int(post.get('product_id') or 0)
+            cantidad = float(post.get('quantity') or 0)
+        except (TypeError, ValueError):
+            return request.redirect('/visar/field/task/%s#consumo' % task.id)
+        if product_id in permitidos and cantidad > 0:
+            request.env['visar.field.consumo'].sudo().create({
+                'task_id': task.id,
+                'product_id': product_id,
+                'quantity': cantidad,
+                'employee_id': employee.id,
+            })
+        return request.redirect('/visar/field/task/%s#consumo' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/consumo/<int:line_id>/del',
+                type='http', auth='public', website=True, methods=['POST'], csrf=True)
+    def field_consumo_del(self, task_id, line_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._task_for_employee(task_id, employee)
+        if task and self._task_flow_state(task) in ('en_ejecucion', 'esperando'):
+            linea = request.env['visar.field.consumo'].sudo().browse(line_id).exists()
+            if linea and linea.task_id == task:
+                linea.unlink()
+        return request.redirect('/visar/field/task/%s#consumo' % task_id)
 
     # ==================================================================
     # Cierre del servicio (firma nativa + atribución + etapa + timesheet)
@@ -2050,6 +2232,15 @@ class VisarFieldApp(http.Controller):
             'worksheet_signature': signature,       # campos NATIVOS (reporte)
             'worksheet_signed_by': signed_by,
         })
+        # Inventario: lo aplicado sale de la camioneta del técnico y lo vendido se
+        # entrega desde ahí. Va DESPUÉS del cierre y entre `try` a propósito — la
+        # firma ya está capturada y el cliente está delante: un inventario mal
+        # configurado no puede tumbar el cierre del servicio.
+        try:
+            task.sudo()._visar_consumo_post(employee)
+            task.sudo()._visar_entrega_upsell(employee)
+        except Exception:  # noqa: BLE001 - el cierre manda; el inventario se cuadra después
+            _logger.exception("Inventario del servicio %s: no se pudo descontar", task.id)
         return request.redirect('/visar/field/task/%s?saved=1' % task.id)
 
     # ==================================================================
@@ -2119,7 +2310,7 @@ class VisarFieldApp(http.Controller):
         return request.render('visar_field_app.field_upsell_catalog', {
             'employee': employee,
             'task': task,
-            'catalog': task._visar_upsell_catalog(),
+            'catalog': task._visar_upsell_catalog(employee),
             'service_offers': task._visar_upsell_service_offers(),
             'service_error': UPSELL_SERVICE_ERRORS.get(kw.get('serr') or ''),
             'upsell_zone': zone.name if zone else '',

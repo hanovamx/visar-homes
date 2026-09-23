@@ -25,6 +25,23 @@
         </field>
     </record>
 
+    <!-- Insumo aplicable en campo (23-sep-2026). Fuera del `invisible="not sale_ok"`
+         del bloque de arriba a propósito: un plaguicida se CONSUME, no se vende, y
+         casi ninguno lleva la casilla de Ventas encendida. -->
+    <record id="product_template_form_visar_consumible" model="ir.ui.view">
+        <field name="name">product.template.form.visar.consumible</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='options']/span[@name='sale_option']" position="after">
+                <span class="d-inline-flex" name="visar_consumible_option">
+                    <field name="visar_consumible_ok"/>
+                    <label for="visar_consumible_ok"/>
+                </span>
+            </xpath>
+        </field>
+    </record>
+
     <!-- Tratamientos que se cotizan a mano (22-sep-2026): qué servicio de la hoja de
          trabajo pide su cotización. En la pestaña de Ventas, con el resto de lo que
          decide cómo se vende el producto. -->
@@ -48,6 +65,8 @@
             <filter name="filter_to_sell" position="after">
                 <filter name="visar_upsell_ok" string="Vendible en campo (upsell)"
                         domain="[('visar_upsell_ok', '=', True)]"/>
+                <filter name="visar_consumible_ok" string="Insumo aplicable en campo"
+                        domain="[('visar_consumible_ok', '=', True)]"/>
             </filter>
         </field>
     </record>
