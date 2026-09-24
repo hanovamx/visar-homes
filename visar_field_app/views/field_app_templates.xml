@@ -18,13 +18,6 @@
                         <input type="password" inputmode="numeric" name="pin" id="pin"
                                class="form-control form-control-lg text-center mb-3"
                                autocomplete="off" autofocus="autofocus" required="required"/>
-                        <!-- Ancla del recorrido del día: sin esta lectura no se puede
-                             medir el trayecto hasta el primer servicio. -->
-                        <label for="odometer" class="form-label">Kilometraje de tu vehículo</label>
-                        <input type="number" inputmode="numeric" min="0" step="1"
-                               name="odometer" id="odometer"
-                               class="form-control form-control-lg text-center mb-3"
-                               placeholder="Ej. 45120" required="required"/>
                         <button type="submit" class="btn btn-primary btn-lg">Entrar</button>
                     </form>
                 </div>
@@ -44,12 +37,10 @@
                             <h4 class="mb-0">Hola, <t t-esc="employee.name"/></h4>
                             <small class="text-muted">Mis servicios</small>
                         </div>
-                        <!-- Salir pasa por una pantalla de cierre para tomar la
-                             última lectura. Si el técnico cierra la pestaña sin pasar
-                             por ahí, lo único que se pierde es el viaje de vuelta, que
-                             no es de ningún cliente. -->
-                        <a href="/visar/field/cerrar-jornada"
-                           class="btn btn-outline-secondary btn-sm">Salir</a>
+                        <form action="/visar/field/logout" method="post" class="m-0">
+                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">Salir</button>
+                        </form>
                     </div>
 
                     <!-- Alternador Lista / Mapa (por defecto: Lista) -->
@@ -202,6 +193,31 @@
                         📍 Abrir en Google Maps
                     </a>
 
+                    <!-- Guardar borrador, ARRIBA (24-sep-2026). Vive fuera del
+                         formulario de la hoja y lo envía por el atributo `form=`: al
+                         final de una hoja larga el técnico tenía que bajar por todas
+                         las tarjetas para guardar lo que ya había capturado. Sigue
+                         siendo el MISMO submit —mismos campos, mismas fotos, más
+                         `draft=1`—, así que no se duplica lógica ninguna. -->
+                    <t t-if="has_worksheet_template and worksheet_available and not worksheet_locked">
+                        <button type="submit" form="visar-worksheet-form"
+                                name="draft" value="1" formnovalidate="formnovalidate"
+                                class="btn btn-outline-secondary w-100 mb-1 o_visar_ws_draft_btn">
+                            Guardar borrador (sin validar)
+                        </button>
+                        <!-- Redacción intacta A PROPÓSITO. Esta plantilla tiene una
+                             COPIA por website (COW, `website_id=1`) con su propio arch
+                             traducido: al reescribir la frase, Odoo la emparejó por
+                             parecido con la traducción es_MX vieja y el técnico seguía
+                             leyendo la anterior. Cambiar texto aquí exige comprobarlo
+                             en la página servida, no solo en el fichero. -->
+                        <div class="form-text mb-3">
+                            El borrador guarda lo que ya capturó —incluidas las fotos—
+                            sin exigir los campos obligatorios. La firma sigue
+                            habilitándose solo al guardar la hoja completa.
+                        </div>
+                    </t>
+
                     <!-- ================= Flujo en sitio (etapas nativas) ================= -->
                     <div class="o_visar_flow mb-3">
                         <t t-set="status_action"
@@ -224,20 +240,6 @@
                               method="post" class="m-0">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                             <input type="hidden" name="action" value="arrived"/>
-                            <!-- Se pide AQUÍ y no al terminar: el técnico está en la
-                                 camioneta, antes de tocar la puerta. Una lectura que
-                                 falte no deja un hueco, deja DOS: el tramo de este
-                                 servicio y el del siguiente. -->
-                            <label for="odometer-arrival" class="form-label small mb-1">
-                                Kilometraje al llegar
-                            </label>
-                            <input type="number" inputmode="numeric" min="0" step="1"
-                                   name="odometer" id="odometer-arrival"
-                                   class="form-control form-control-lg text-center mb-2"
-                                   t-att-placeholder="odometer_hint" required="required"/>
-                            <div t-if="odometer_error" class="alert alert-warning py-2 small">
-                                <t t-esc="odometer_error"/>
-                            </div>
                             <button type="submit" class="btn btn-primary btn-lg w-100">📍 Confirmar llegada</button>
                         </form>
 
@@ -363,7 +365,7 @@
                                         <option t-foreach="consumo_options" t-as="opcion"
                                                 t-att-value="opcion['id']">
                                             <t t-esc="opcion['name']"/>
-                                            <t t-if="opcion['stock_label']"> — llevas <t t-esc="opcion['stock_label']"/></t>
+                                            <t t-if="opcion['stock_label']"> — disponible <t t-esc="opcion['stock_label']"/></t>
                                         </option>
                                     </select>
                                 </div>
@@ -680,16 +682,6 @@
                              solo incluye el `name` del botón que envió. -->
                         <button t-if="not worksheet_locked" type="submit"
                                 class="btn btn-outline-primary w-100">Guardar hoja de trabajo</button>
-                        <button t-if="not worksheet_locked" type="submit"
-                                name="draft" value="1" formnovalidate="formnovalidate"
-                                class="btn btn-outline-secondary w-100 mt-2 o_visar_ws_draft_btn">
-                            Guardar borrador (sin validar)
-                        </button>
-                        <div t-if="not worksheet_locked" class="form-text mt-1">
-                            El borrador guarda lo que ya capturó —incluidas las fotos—
-                            sin exigir los campos obligatorios. La firma sigue
-                            habilitándose solo al guardar la hoja completa.
-                        </div>
                     </form>
 
                     <!-- Firma del cliente (campos nativos) + cierre.
@@ -994,7 +986,7 @@
                                         <div t-if="product['description']" class="small text-muted"
                                              t-esc="product['description']"/>
                                         <div t-if="product['stock_label']" class="small text-muted">
-                                            Llevas <t t-esc="product['stock_label']"/>
+                                            Disponible: <t t-esc="product['stock_label']"/>
                                         </div>
                                     </div>
                                     <span class="badge text-bg-primary text-nowrap ms-2"
@@ -1395,30 +1387,4 @@
         </div>
     </template>
 
-    <!-- ============================================================ -->
-    <!-- Cierre de jornada: la última lectura del odómetro             -->
-    <!-- ============================================================ -->
-    <template id="field_close_day" name="Visar Campo - Cerrar jornada">
-        <t t-call="website.layout">
-            <div id="wrap" class="oe_structure">
-                <div class="container o_visar_field py-4" style="max-width: 480px;">
-                    <a href="/visar/field/tasks" class="btn btn-link px-0 mb-2">&#8592; Volver a mis servicios</a>
-                    <h4 class="mb-3">Cerrar jornada</h4>
-                    <div t-if="odometer_error" class="alert alert-warning py-2">
-                        <t t-esc="odometer_error"/>
-                    </div>
-                    <form action="/visar/field/logout" method="post" class="card p-3">
-                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                        <label for="odometer-end" class="form-label">Kilometraje al terminar</label>
-                        <input type="number" inputmode="numeric" min="0" step="1"
-                               name="odometer" id="odometer-end"
-                               class="form-control form-control-lg text-center mb-3"
-                               t-att-placeholder="odometer_hint" autofocus="autofocus"
-                               required="required"/>
-                        <button type="submit" class="btn btn-primary btn-lg">Cerrar y salir</button>
-                    </form>
-                </div>
-            </div>
-        </t>
-    </template>
 </odoo>

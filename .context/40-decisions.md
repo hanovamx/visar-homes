@@ -963,7 +963,9 @@ modelo sobre la tarea hay uno, sirve para toda hoja presente y futura, y —impo
 entra en el PDF firmado: lo aplicado es asunto del cliente, **el odómetro del técnico
 no**.
 
-**La gasolina no se modela como inventario.** No cargan un tanque: compran combustible.
+**La gasolina no se modela como inventario** (medición retirada el 24-sep-2026 a
+petición de Visar: *"por ahora ignoremos lo del kilometraje"*. Lo que sigue explica por
+qué se hizo así y queda como referencia si se retoma — el código está en `f2ce6e9`.) No cargan un tanque: compran combustible.
 Lo medible en la puerta son los **kilómetros**, y se toman en tres lecturas que caen donde
 el técnico ya pulsa algo: al entrar con su PIN (el **ancla** del día), al confirmar
 llegada a cada servicio, y al cerrar la jornada. Cada tramo sale por resta y se le carga

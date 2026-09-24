@@ -1100,7 +1100,7 @@ class ProjectTask(models.Model):
                 'description': product.description_sale or '',
                 'uom': product.uom_id.name,
                 'price': price,
-                # Solo para lo que se cuenta: en lo demás un "llevas 0" mentiría.
+                # Solo para lo que se cuenta: en lo demás un "disponible 0" mentiría.
                 'stock_label': (product._visar_field_stock_label(cantidad)
                                 if location and product.is_storable else ''),
             })

@@ -230,9 +230,8 @@ Cada técnico gasta de **su** ubicación (`VHR/Existencias/<nombre>`): el plagui
 pasó de una lista fija de nueve principios activos a un **producto** de su camioneta con la
 existencia a la vista; el catálogo de campo solo ofrece lo que trae; al cerrar el servicio lo
 aplicado y lo vendido **salen de ahí de verdad** (antes: 43 albaranes en "Preparado" que nadie
-validó nunca, y desde el almacén central). Tarjeta nueva de **consumo de material** y
-**tres lecturas de odómetro** (entrar, llegar, cerrar jornada) para medir el recorrido sin
-inventar un tanque de gasolina en el inventario.
+validó nunca, y desde el almacén central). Tarjeta nueva de **consumo de material**. Las tres lecturas de odómetro que llevaba esta
+entrega se **retiraron el 24-sep** a petición de Visar (código en `f2ce6e9` si se retoma).
 
 Nunca bloquea: sin existencia se descuenta igual, queda en negativo y se avisa en el chatter.
 

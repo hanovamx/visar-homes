@@ -7,8 +7,7 @@ Lo que se protege aquí:
   y no el almacén entero;
 - que al cerrar el servicio la existencia baje de verdad, una sola vez;
 - que un conteo desfasado NO impida cerrar: se descuenta igual, queda en negativo
-  y se avisa (el servicio ya se prestó, el cliente está en la puerta);
-- que el recorrido se le cargue al servicio al que se iba.
+  y se avisa (el servicio ya se prestó, el cliente está en la puerta).
 """
 from odoo.tests import tagged
 
@@ -200,48 +199,3 @@ class TestEntregaDeAdicionales(CasoInventario):
         tarea = self._tarea(self._pedido())
         self.assertTrue(tarea._visar_upsell_add(self.empleado, self.extra.id, 1))
         self.assertFalse(tarea._visar_entrega_upsell(self.empleado))
-
-
-@tagged('post_install', '-at_install')
-class TestRecorrido(CasoInventario):
-
-    def _jornada(self, inicio):
-        return self.env['visar.field.session'].create({
-            'employee_id': self.empleado.id, 'visar_odometer_start': inicio})
-
-    def test_el_primer_tramo_se_mide_desde_el_arranque_del_dia(self):
-        jornada = self._jornada(45000)
-        tarea = self._tarea()
-        tarea.write({'visar_odometer_session_id': jornada.id,
-                     'visar_odometer_arrival': 45012})
-
-        self.assertEqual(tarea.visar_km_leg, 12,
-                         "sin el ancla de la mañana el primer viaje no se podría medir")
-
-    def test_cada_tramo_se_mide_desde_la_llegada_anterior(self):
-        jornada = self._jornada(45000)
-        primera = self._tarea()
-        primera.write({'visar_odometer_session_id': jornada.id,
-                       'visar_odometer_arrival': 45012})
-        segunda = self._tarea()
-        segunda.write({'visar_odometer_session_id': jornada.id,
-                       'visar_odometer_arrival': 45030})
-
-        self.assertEqual(segunda.visar_km_leg, 18,
-                         "el viaje es del servicio al que se iba")
-        self.assertEqual(primera.visar_km_leg, 12, "el tramo anterior no cambia")
-
-    def test_la_ultima_lectura_es_el_suelo_de_la_siguiente(self):
-        jornada = self._jornada(45000)
-        tarea = self._tarea()
-        tarea.write({'visar_odometer_session_id': jornada.id,
-                     'visar_odometer_arrival': 45030})
-
-        self.assertEqual(jornada._visar_odometer_last(), 45030)
-
-    def test_sin_lectura_no_se_inventa_un_tramo(self):
-        jornada = self._jornada(45000)
-        tarea = self._tarea()
-        tarea.visar_odometer_session_id = jornada.id
-
-        self.assertEqual(tarea.visar_km_leg, 0.0)

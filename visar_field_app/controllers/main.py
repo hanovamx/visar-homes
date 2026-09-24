@@ -38,13 +38,6 @@ SCOPES = (SCOPE_TODAY, SCOPE_ALL)
 
 # Por qué no se pudo agregar un servicio en sitio, dicho como lo necesita el técnico
 # (qué hacer ahora), no como lo dice el código de error.
-# Rechazos de la lectura del odómetro. Un odómetro no anda para atrás: cuando la
-# lectura es menor que la anterior casi siempre es un dedazo, y aceptarla estropearía
-# el tramo de este servicio y el del siguiente.
-ODOMETER_ERRORS = {
-    'menor': "El kilometraje no puede ser menor que la última lectura de tu jornada. "
-             "Revisa el número y vuelve a intentarlo.",
-}
 UPSELL_SERVICE_ERRORS = {
     'sin_m2': "Capture los metros cuadrados de lo que va a hacer.",
     'sin_zona': "No se pudo ubicar la zona del cliente (código postal). Pida a "
@@ -844,7 +837,7 @@ class VisarFieldApp(http.Controller):
 
         La excepción son los INSUMOS (`WORKSHEET_M2O_STOCK`): ahí se ofrece solo lo
         que el técnico lleva cargado, con la existencia en la etiqueta
-        ("Cipermetrina — llevas 750 ml"), porque la hoja va a descontar de esa
+        ("Cipermetrina — disponible 750 ml"), porque la hoja va a descontar de esa
         ubicación al cerrar el servicio.
 
         El valor YA GUARDADO se conserva siempre, aunque su existencia haya bajado
@@ -868,7 +861,7 @@ class VisarFieldApp(http.Controller):
                 continue
             etiqueta = producto.display_name
             if location and cantidad > 0:
-                etiqueta = "%s — llevas %s" % (
+                etiqueta = "%s — disponible %s" % (
                     etiqueta, producto._visar_field_stock_label(cantidad))
             opciones.append({'id': producto.id, 'display_name': etiqueta})
         return opciones
@@ -1582,71 +1575,23 @@ class VisarFieldApp(http.Controller):
         if not employee:
             return request.redirect('/visar/field?error=1')
 
-        # Jornada del día: si ya hay una abierta (se le murió el teléfono, cerró
-        # sesión sin querer) se REUTILIZA y no se le vuelve a pedir el odómetro —
-        # su ancla ya está tomada y pedirla otra vez rompería los tramos del día.
-        Session = request.env['visar.field.session'].sudo()
-        shift = Session.search(
-            [('employee_id', '=', employee.id), ('state', '=', 'open')],
-            limit=1, order='date_start desc')
-        if not shift:
-            shift = Session.create({
-                'employee_id': employee.id,
-                'note': request.httprequest.user_agent.string[:120]
-                if request.httprequest.user_agent else False,
-                'visar_odometer_start': self._odometer_value(post.get('odometer')),
-            })
+        shift = request.env['visar.field.session'].sudo().create({
+            'employee_id': employee.id,
+            'note': request.httprequest.user_agent.string[:120]
+            if request.httprequest.user_agent else False,
+        })
         request.session[SESSION_EMPLOYEE] = employee.id
         request.session[SESSION_SHIFT] = shift.id
         return request.redirect('/visar/field/tasks')
 
-    @staticmethod
-    def _odometer_value(raw):
-        """Lectura del odómetro como entero, o 0 si no vino o no es un número."""
-        try:
-            return max(int(float(raw)), 0)
-        except (TypeError, ValueError):
-            return 0
-
-    def _current_shift(self):
-        """Jornada abierta del técnico identificado, o un recordset vacío."""
-        shift_id = request.session.get(SESSION_SHIFT)
-        if not shift_id:
-            return request.env['visar.field.session'].sudo().browse()
-        return request.env['visar.field.session'].sudo().browse(shift_id).exists()
-
-    @http.route('/visar/field/cerrar-jornada', type='http', auth='public',
-                website=True, sitemap=False)
-    def field_close_day(self, **kw):
-        employee = self._current_employee()
-        if not employee:
-            return request.redirect('/visar/field')
-        shift = self._current_shift()
-        return request.render('visar_field_app.field_close_day', {
-            'employee': employee,
-            'odometer_hint': self._odometer_hint(shift),
-            'odometer_error': ODOMETER_ERRORS.get(kw.get('oerr') or ''),
-        })
-
-    @staticmethod
-    def _odometer_hint(shift):
-        """Marca de agua del campo: la última lectura conocida de la jornada."""
-        ultimo = shift._visar_odometer_last() if shift else 0
-        return ("Mayor o igual a %s" % ultimo) if ultimo else "Ej. 45120"
-
     @http.route('/visar/field/logout', type='http', auth='public', website=True,
                 methods=['POST'], csrf=True)
     def field_logout(self, **post):
-        shift = self._current_shift()
-        if shift and shift.state == 'open':
-            # La lectura de cierre se EXIGE aquí porque aquí sí hay un botón que
-            # pulsar. Menor que la última conocida se rechaza: un odómetro no anda
-            # para atrás y el error casi siempre es un dedazo.
-            lectura = self._odometer_value(post.get('odometer'))
-            if lectura < shift._visar_odometer_last():
-                return request.redirect('/visar/field/cerrar-jornada?oerr=menor')
-            shift.visar_odometer_end = lectura
-            shift.action_close()
+        shift_id = request.session.get(SESSION_SHIFT)
+        if shift_id:
+            shift = request.env['visar.field.session'].sudo().browse(shift_id).exists()
+            if shift and shift.state == 'open':
+                shift.action_close()
         request.session.pop(SESSION_EMPLOYEE, None)
         request.session.pop(SESSION_SHIFT, None)
         return request.redirect('/visar/field')
@@ -1809,8 +1754,6 @@ class VisarFieldApp(http.Controller):
                                   if task.visar_waiting_start else ''),
             'close_error': kw.get('close_error'),
             'upsell_msg': kw.get('upsell'),
-            'odometer_hint': self._odometer_hint(self._current_shift()),
-            'odometer_error': ODOMETER_ERRORS.get(kw.get('oerr') or ''),
             # Material consumido: se captura aquí y no en la hoja (un modelo, no uno
             # por plantilla) y NO sale en el PDF firmado.
             'consumo_lines': task.sudo().visar_consumo_ids,
@@ -2113,15 +2056,6 @@ class VisarFieldApp(http.Controller):
                 task._visar_notify_client(text, event='enroute', params=params)
             task._visar_set_stage(1)  # En camino
         elif action == 'arrived':
-            # El tramo se le carga al servicio al que se IBA: el viaje es suyo.
-            shift = self._current_shift()
-            lectura = self._odometer_value(post.get('odometer'))
-            if shift and lectura < shift._visar_odometer_last():
-                return request.redirect(
-                    '/visar/field/task/%s?oerr=menor' % task.id)
-            if shift and lectura:
-                task.sudo().write({'visar_odometer_arrival': lectura,
-                                   'visar_odometer_session_id': shift.id})
             # La espera arranca AUTOMÁTICamente al llegar (antes era un botón manual):
             # se sella el inicio y los minutos por defecto, y se avisa al cliente que
             # tiene esa ventana para recibir. El flujo cae directo en 'esperando'.

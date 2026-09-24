@@ -1887,7 +1887,7 @@ para que oficina la agende.
 
 ## Inventario por ruta (23-sep-2026)
 
-`visar_field_app` 19.0.1.42.0 · `models/inventario_ruta.py`, `models/consumo_recorrido.py`
+`visar_field_app` 19.0.1.43.0 · `models/inventario_ruta.py`, `models/consumo_material.py`
 
 **La camioneta del técnico es una ubicación de inventario.** `hr.employee.
 visar_stock_location_id` (convención: `VHR/Existencias/<nombre>`). De ahí sale todo lo
@@ -1901,8 +1901,8 @@ que Odoo no cuenta no se puede descontar.
 
 | Dónde | Qué se ve |
 |---|---|
-| Hoja de fumigación, por área | `x_plaguicida_id` → producto de SU ubicación, con la existencia en la etiqueta ("Cipermetrina 20% CE — llevas 750 ml") |
-| Catálogo de venta en campo | Solo lo almacenable que trae, con "Llevas 5 Unidades". Lo que Odoo no cuenta (servicios, estación antirroedores) se ofrece siempre |
+| Hoja de fumigación, por área | `x_plaguicida_id` → producto de SU ubicación, con la existencia en la etiqueta ("Cipermetrina 20% CE — disponible 750 ml") |
+| Catálogo de venta en campo | Solo lo almacenable que trae, con "Disponible: 5 Unidades". Lo que Odoo no cuenta (servicios, estación antirroedores) se ofrece siempre |
 | Tarjeta "Consumo de material" | Lo que se gasta además del plaguicida: guardapolvo instalado, trampa colocada, cebo repuesto |
 
 El desplegable filtrado vive en `_m2o_options` (`WORKSHEET_M2O_STOCK`), que es la ÚNICA
@@ -1925,16 +1925,19 @@ cierre —la firma ya está capturada y el cliente está delante—:
 Si no alcanza, se descuenta igual y queda en negativo con aviso en el chatter. El
 servicio ya se prestó; el conteo lo cuadra administración.
 
-**Recorrido.** Tres lecturas del odómetro: al entrar con el PIN
-(`visar.field.session.visar_odometer_start`, el ancla del día), al confirmar llegada
-(`project.task.visar_odometer_arrival`) y al cerrar la jornada (`visar_odometer_end`, en
-`/visar/field/cerrar-jornada`). `visar_km_leg` resta la lectura anterior de la jornada y
-carga el tramo al servicio **al que se iba**. Una lectura menor que la anterior se
-rechaza (un odómetro no anda para atrás; casi siempre es un dedazo). Nada de esto entra
-en el PDF firmado.
+**Recorrido (odómetro): retirado el 24-sep-2026.** Se implantó el día anterior —tres
+lecturas (entrar con el PIN, confirmar llegada, cerrar jornada) para medir la gasolina
+por kilómetros en vez de inventar un tanque en el inventario— y Visar pidió quitarlo del
+flujo del técnico por ahora. La implementación completa está en el commit `f2ce6e9` por
+si se retoma; las columnas quedaron huérfanas en la BD, sin campo que las lea.
+
+**Guardar borrador, arriba** (24-sep-2026). El botón vive FUERA del formulario de la hoja
+y lo envía con el atributo `form="visar-worksheet-form"`: al final de una hoja larga el
+técnico tenía que bajar por todas las tarjetas para guardar lo ya capturado. Es el mismo
+submit (mismos campos, mismas fotos, más `draft=1`), no una segunda ruta.
 
 **Lo que sigue pendiente.** `_visar_report_plaguicidas_section` (Req 7) ya tiene el
 catálogo que le faltaba —el plaguicida es un producto con ficha—, pero sigue devolviendo
 None hasta decidir con Visar qué texto ve el cliente. La gasolina se mide por kilómetros;
-los tickets de carga (litros, importe, foto) quedaron **fuera de alcance** a petición de
-Visar el 23-sep-2026.
+la medición por kilómetros se retiró a petición de Visar el 24-sep-2026 (y los tickets
+de carga ya estaban fuera de alcance desde el día anterior).

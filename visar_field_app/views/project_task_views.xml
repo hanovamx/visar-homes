@@ -145,11 +145,6 @@
                             </list>
                         </field>
                     </group>
-                    <group string="Recorrido" invisible="not visar_odometer_arrival">
-                        <field name="visar_odometer_session_id" readonly="1"/>
-                        <field name="visar_odometer_arrival" readonly="1"/>
-                        <field name="visar_km_leg" readonly="1"/>
-                    </group>
                 </page>
             </xpath>
 
