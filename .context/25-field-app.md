@@ -1876,6 +1876,21 @@ código nuevo en la app ni en el PDF, que se arman solos a partir del arch.
 Producto y dosis **ya salen del inventario real** desde el 23-sep-2026 — ver
 *Inventario por ruta* al final de este documento.
 
+**Diseño de jardín** (24-sep-2026) es el tercer servicio de este circuito y el primero que
+no es un tratamiento de plagas. Se vendía como adicional a precio fijo y resultó que el
+precio depende del levantamiento (superficie, suelo, acceso, qué se instala), así que pasó
+al mismo camino: la hoja de la valoración marca *Diseño de jardín*, administración cotiza,
+y al pagarse nace la visita en su proyecto con su hoja de 3 páginas (Levantamiento,
+Ejecución del diseño, Cierre). Lo instalado se anota como texto —especie, cantidad,
+unidad— y **no** como producto de inventario: el catálogo no tiene dadas de alta las
+plantas y obligar a darlas de alta para cerrar una hoja frenaría la obra; lo que sí está
+en inventario (sustrato, tubería) se descuenta por la tarjeta *Consumo de material*.
+Su visita de seguimiento se justifica por **prendimiento**, no porque vuelva la plaga
+(`_seg_body` recibe el motivo de cada servicio).
+
+Por eso la lista del sembrador se llama ahora `SERVICIOS_COTIZADOS` y no `TRATAMIENTOS`,
+y la función que los engancha, `wire_quoted_service_projects`.
+
 **Visita de seguimiento incluida** (`models/seguimiento.py`). El cierre de las dos hojas pregunta
 si se requiere, con la **fecha y franja acordadas con el cliente delante** — el único momento en
 que las dos partes están juntas. Al guardar la hoja, Odoo crea la visita en el mismo proyecto,

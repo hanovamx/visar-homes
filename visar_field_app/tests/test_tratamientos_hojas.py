@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Hojas, proyectos y visita de seguimiento de los tratamientos (22-sep-2026).
+"""Hojas y proyectos de los servicios que se cotizan a mano (22 y 24-sep-2026).
 
-Termitas y chinches tienen hoja propia y proyecto propio: sin proyecto, una
-cotización pagada crea la cita pero nunca la visita del técnico. Y la revisión
-incluida se acuerda en la puerta: con la fecha en la hoja, Odoo crea la visita.
+Termitas, chinches y diseño de jardín tienen hoja propia y proyecto propio: sin
+proyecto, una cotización pagada crea la cita pero nunca la visita del técnico. Y la
+revisión incluida se acuerda en la puerta: con la fecha en la hoja, Odoo crea la
+visita.
 """
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -12,7 +13,8 @@ from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
 from odoo.addons.visar_field_app.hooks import (
-    CHINCHES_NAME, TERMITAS_NAME, TRATAMIENTOS, seed_worksheet_templates)
+    CHINCHES_NAME, JARDIN_NAME, SERVICIOS_COTIZADOS, TERMITAS_NAME,
+    seed_worksheet_templates)
 
 
 @tagged('post_install', '-at_install')
@@ -22,8 +24,9 @@ class TestHojasDeTratamiento(TransactionCase):
     def _plantilla(self, nombre):
         return self.env['worksheet.template'].search([('name', '=', nombre)], limit=1)
 
-    def test_las_dos_hojas_existen_con_sus_paginas(self):
-        for nombre, paginas in ((TERMITAS_NAME, 3), (CHINCHES_NAME, 4)):
+    def test_las_hojas_existen_con_sus_paginas(self):
+        for nombre, paginas in ((TERMITAS_NAME, 3), (CHINCHES_NAME, 4),
+                                (JARDIN_NAME, 3)):
             plantilla = self._plantilla(nombre)
             self.assertTrue(plantilla, "falta la plantilla %s" % nombre)
             arch = self.env[plantilla.model_id.model].get_view(view_type='form')['arch']
@@ -47,8 +50,8 @@ class TestHojasDeTratamiento(TransactionCase):
                       'x_requiere_seguimiento'):
             self.assertIn(campo, modelo._fields, campo)
 
-    def test_cada_tratamiento_tiene_proyecto_con_su_hoja_y_su_producto(self):
-        for nombre_proyecto, nombre_producto, nombre_hoja in TRATAMIENTOS:
+    def test_cada_servicio_cotizado_tiene_proyecto_hoja_y_producto(self):
+        for nombre_proyecto, nombre_producto, nombre_hoja in SERVICIOS_COTIZADOS:
             proyecto = self.env['project.project'].search(
                 [('name', '=', nombre_proyecto)], limit=1)
             self.assertTrue(proyecto, nombre_proyecto)
@@ -60,6 +63,32 @@ class TestHojasDeTratamiento(TransactionCase):
                 self.assertEqual(producto.service_tracking, 'task_global_project')
                 self.assertEqual(producto.project_id, proyecto,
                                  "una cotización pagada nace como visita aquí")
+
+    def test_la_hoja_de_jardin_pide_el_levantamiento_y_lo_instalado(self):
+        modelo = self.env[self._plantilla(JARDIN_NAME).model_id.model]
+        for campo in ('x_superficie_m2', 'x_tipo_suelo', 'x_exposicion_sol',
+                      'x_riego_existente', 'x_acceso_maquinaria',
+                      'x_elementos_instalados', 'x_indicaciones_cliente',
+                      'x_garantia_explicada', 'x_requiere_seguimiento'):
+            self.assertIn(campo, modelo._fields, campo)
+        linea = self.env[modelo._fields['x_elementos_instalados'].comodel_name]
+        for campo in ('x_elemento', 'x_especie', 'x_cantidad', 'x_unidad',
+                      'x_foto_evidencia'):
+            self.assertIn(campo, linea._fields, campo)
+
+    def test_el_jardin_no_arrastra_los_campos_de_plaga(self):
+        """No es un tratamiento: preguntarle al jardinero por el plaguicida o por
+        el tipo de termita sería ruido en la hoja."""
+        modelo = self.env[self._plantilla(JARDIN_NAME).model_id.model]
+        for campo in ('x_tipo_termita', 'x_nivel_infestacion', 'x_plaga_ids'):
+            self.assertNotIn(campo, modelo._fields, campo)
+
+    def test_el_seguimiento_del_jardin_explica_su_propio_motivo(self):
+        plantilla = self._plantilla(JARDIN_NAME)
+        arch = self.env[plantilla.model_id.model].get_view(view_type='form')['arch']
+        self.assertIn("prendi", arch,
+                      "el jardín se revisa por prendimiento, no porque vuelva la plaga")
+        self.assertNotIn("la plaga no volvió", arch)
 
     def test_sembrar_dos_veces_no_duplica_nada(self):
         antes = self.env['worksheet.template'].search_count([])

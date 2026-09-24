@@ -105,6 +105,19 @@ HABITACIONES = ["Recámara principal", "Recámara secundaria", "Sala", "Comedor"
                 "Cuarto de servicio", "Otro"]
 METODO_CHINCHE = ["Vapor", "Aspirado", "Químico residual", "Polvo desecante",
                   "Otro"]
+# --- Diseño de jardín (24-sep-2026) ---
+# Tercer servicio que se cotiza a mano. NO es una plaga: se vendía como adicional a
+# precio fijo y resultó que el precio depende del levantamiento (superficie, suelo,
+# acceso, qué se instala), así que pasa al mismo circuito que termitas y chinches.
+TIPO_SUELO = ["Arcilloso", "Arenoso", "Mixto", "Con escombro o relleno", "Otro"]
+EXPOSICION_SOL = ["Sol directo", "Media sombra", "Sombra"]
+RIEGO_EXISTENTE = ["No hay", "Manguera", "Aspersión", "Goteo", "Otro"]
+ELEMENTOS_JARDIN = ["Plantas o arbustos", "Árbol", "Pasto en rollo", "Pasto sembrado",
+                    "Piedra decorativa", "Corteza o mulch", "Tierra o sustrato",
+                    "Sistema de riego", "Iluminación", "Macetas o jardineras",
+                    "Otro"]
+UNIDAD_ELEMENTO = ["Piezas", "m²", "Metros lineales", "Bultos o costales"]
+
 # La franja, y no una hora exacta: la app solo sabe capturar fechas, y al cliente
 # se le promete una ventana igual que en el agendado.
 FRANJA = ["Mañana (9:00 - 13:00)", "Tarde (13:00 - 17:00)"]
@@ -128,6 +141,7 @@ COMBO_NAME = "Fumigación + Mantenimiento de áreas verdes (App v2)"
 # Tratamientos que se cotizan a mano (22-sep-2026). Hoja propia y proyecto propio:
 # no son fumigación —otro bicho, otro método, otra evidencia— y el tablero de
 # gestión se lee mejor separado.
+JARDIN_NAME = "Diseño de jardín (App v2)"
 TERMITAS_NAME = "Tratamiento antitermita (App v2)"
 CHINCHES_NAME = "Tratamiento antichinches (App v2)"
 FUM_LINE = "x_visar_area_tratada_v2"
@@ -138,6 +152,7 @@ VISITA_LINE = "x_visar_zona_evidencia"
 # línea de las plantillas individuales.
 FUM_LINE_COMBO = "x_visar_area_tratada_combo"
 JAR_LINE_COMBO = "x_visar_labor_combo"
+JARDIN_LINE = "x_visar_elemento_jardin"
 TERM_LINE = "x_visar_punto_termita"
 CHIN_LINE = "x_visar_zona_chinche"
 FACTOR_MODEL = "x_visar_factor_riesgo"
@@ -256,10 +271,22 @@ _FUM_BODY_CIERRE = """
 # delante, que es el único momento en que las dos partes están juntas. Con la fecha
 # puesta, Odoo crea la visita (ver `models/seguimiento.py`); sin ella, oficina la
 # agenda a mano.
-_SEG_BODY = """
-          <field name="x_requiere_seguimiento" help="La mayoría de estos tratamientos necesita una segunda visita para confirmar que la plaga no volvió."/>
+def _seg_body(motivo):
+    """Los tres campos del acuerdo de seguimiento, con el POR QUÉ propio de cada
+    servicio: al técnico de jardín no le sirve leer que la plaga puede volver."""
+    return """
+          <field name="x_requiere_seguimiento" help="%s"/>
           <field name="x_fecha_seguimiento" help="Acuérdala con el cliente antes de irte: con la fecha puesta, la visita se crea sola y sin costo."/>
-          <field name="x_franja_seguimiento"/>"""
+          <field name="x_franja_seguimiento"/>""" % motivo
+
+
+_SEG_BODY = _seg_body(
+    "La mayoría de estos tratamientos necesita una segunda visita para confirmar"
+    " que la plaga no volvió.")
+# El jardín no se revisa por plaga sino por prendimiento: si lo plantado agarró.
+_SEG_BODY_JARDIN = _seg_body(
+    "El jardín se revisa a las pocas semanas para confirmar que lo plantado"
+    " prendió y ajustar el riego.")
 
 _TERM_BODY_INSPECCION = """
         <group>
@@ -392,6 +419,66 @@ COMBO_ARCH = _arch([
     ("Áreas verdes — Inspección inicial", _JAR_BODY_INSPECCION),
     ("Áreas verdes — Ejecución", _JAR_BODY_EJECUCION),
     ("Cierre", _JAR_BODY_CIERRE),
+])
+
+# --- Diseño de jardín ---
+# El levantamiento se captura AUNQUE el servicio ya venga cotizado: entre la
+# valoración y el día de la obra pueden cambiar las condiciones (llovió, hay
+# escombro nuevo, ya no cabe la maquinaria), y eso es lo que explica un ajuste de
+# alcance delante del cliente.
+_JARD_BODY_LEVANTAMIENTO = """
+        <group>
+          <field name="x_superficie_m2" required="1" placeholder="0" help="Metros cuadrados que se van a intervenir hoy."/>
+          <field name="x_tipo_suelo" required="1" help="Manda la preparación: un suelo con escombro necesita retiro y sustrato antes de plantar."/>
+          <field name="x_tipo_suelo_otro"/>
+          <field name="x_exposicion_sol" required="1" help="Decide qué especies sobreviven en esta zona."/>
+          <field name="x_riego_existente" required="1"/>
+          <field name="x_riego_existente_otro"/>
+          <field name="x_acceso_maquinaria" help="Desmárcalo si no entra maquinaria: el trabajo se hace a mano y toma más tiempo."/>
+          <field name="x_foto_inicial" widget="image" required="1" help="Foto general del área antes de empezar."/>
+          <field name="x_descripcion_zona" placeholder="Ej. Patio trasero con escombro de obra y pasto seco en dos terceras partes"/>
+        </group>
+      """
+
+_JARD_BODY_EJECUCION = """
+        <group>
+          <field name="x_foto_ejecucion" widget="image" required="1" help="Foto del trabajo en curso."/>
+        </group>
+        <field name="x_elementos_instalados" help="Agrega cada elemento que instalaste, con su cantidad y su foto.">
+          <list>
+            <field name="x_elemento"/>
+            <field name="x_especie"/>
+            <field name="x_cantidad"/>
+            <field name="x_unidad"/>
+          </list>
+          <form>
+            <group>
+              <field name="x_elemento" required="1"/>
+              <field name="x_elemento_otro"/>
+              <field name="x_especie" placeholder="Ej. Buganvilia, pasto San Agustín, gravilla blanca"/>
+              <field name="x_cantidad" required="1" placeholder="0"/>
+              <field name="x_unidad" required="1"/>
+              <field name="x_foto_evidencia" widget="image" required="1"/>
+              <field name="x_observacion" placeholder="Ej. Se plantó a 40 cm de la barda por la raíz"/>
+            </group>
+          </form>
+        </field>
+      """
+
+_JARD_BODY_CIERRE = """
+        <group>
+          <field name="x_indicaciones_cliente" required="1" placeholder="Ej. Regar cada tercer día los primeros 15 días; no pisar el pasto en rollo una semana."/>
+          <field name="x_garantia_explicada" help="Que el cliente sepa qué cubre la garantía de prendimiento y qué no."/>
+          <field name="x_area_limpia"/>
+          <field name="x_foto_final" widget="image" required="1" help="Foto del resultado, desde el mismo ángulo que la inicial si se puede."/>""" + _SEG_BODY_JARDIN + """
+          <field name="x_comments"/>
+        </group>
+      """
+
+JARDIN_ARCH = _arch([
+    ("Levantamiento", _JARD_BODY_LEVANTAMIENTO),
+    ("Ejecución del diseño", _JARD_BODY_EJECUCION),
+    ("Cierre", _JARD_BODY_CIERRE),
 ])
 
 TERMITAS_ARCH = _arch([
@@ -792,6 +879,72 @@ def _seed_seguimiento_fields(env, ws, wid):
                   'Horario acordado', selection=FRANJA)
 
 
+def _seed_jardin_fields(env, tmpl):
+    """Campos de la hoja de Diseño de jardín.
+
+    Sin catálogo de plaguicidas ni de plagas: aquí no se aplica nada, se INSTALA.
+    Lo que se instala se anota como texto (especie, cantidad, unidad) y no como
+    producto de inventario a propósito — el catálogo de Visar no tiene dadas de
+    alta las plantas, y obligar a darlas de alta para poder cerrar una hoja
+    frenaría la obra. Lo que SÍ está en inventario (sustrato, tubería de riego)
+    se descuenta por la tarjeta "Consumo de material" de la visita, que funciona
+    con cualquier hoja.
+    """
+    ws, wid = tmpl.model_id.model, tmpl.model_id.id
+
+    line = _ensure_model(env, JARDIN_LINE, "Elemento instalado (Diseño de jardín)", [
+        (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',
+                'ttype': 'many2one', 'relation': ws, 'required': True,
+                'on_delete': 'cascade'}),
+        (0, 0, {'name': 'x_sequence', 'field_description': 'Secuencia',
+                'ttype': 'integer'}),
+    ])
+    _acls(env, JARDIN_LINE, line.id)
+    env.cr.flush()
+    lid = line.id
+    _ensure_field(env, JARDIN_LINE, lid, 'x_elemento', 'selection', 'Elemento',
+                  selection=ELEMENTOS_JARDIN)
+    _ensure_field(env, JARDIN_LINE, lid, 'x_elemento_otro', 'char', OTRO)
+    _ensure_field(env, JARDIN_LINE, lid, 'x_especie', 'char', 'Especie o material')
+    _ensure_field(env, JARDIN_LINE, lid, 'x_cantidad', 'float', 'Cantidad')
+    _ensure_field(env, JARDIN_LINE, lid, 'x_unidad', 'selection', 'Unidad',
+                  selection=UNIDAD_ELEMENTO)
+    _ensure_field(env, JARDIN_LINE, lid, 'x_foto_evidencia', 'binary',
+                  'Fotos del elemento instalado')
+    _ensure_field(env, JARDIN_LINE, lid, 'x_observacion', 'char', 'Observación')
+
+    _ensure_field(env, ws, wid, 'x_superficie_m2', 'float',
+                  'Superficie a intervenir (m²)')
+    _ensure_field(env, ws, wid, 'x_tipo_suelo', 'selection', 'Tipo de suelo',
+                  selection=TIPO_SUELO)
+    _ensure_field(env, ws, wid, 'x_tipo_suelo_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_exposicion_sol', 'selection',
+                  'Exposición al sol', selection=EXPOSICION_SOL)
+    _ensure_field(env, ws, wid, 'x_riego_existente', 'selection',
+                  'Riego existente', selection=RIEGO_EXISTENTE)
+    _ensure_field(env, ws, wid, 'x_riego_existente_otro', 'char', OTRO)
+    _ensure_field(env, ws, wid, 'x_acceso_maquinaria', 'boolean',
+                  '¿Hay acceso para maquinaria?')
+    _ensure_field(env, ws, wid, 'x_foto_inicial', 'binary',
+                  'Fotos del área antes de empezar')
+    _ensure_field(env, ws, wid, 'x_descripcion_zona', 'text',
+                  'Descripción del área')
+    _ensure_field(env, ws, wid, 'x_foto_ejecucion', 'binary',
+                  'Fotos durante la ejecución')
+    _ensure_field(env, ws, wid, 'x_elementos_instalados', 'one2many',
+                  'Elementos instalados', relation=JARDIN_LINE,
+                  relation_field='x_worksheet_id')
+    _ensure_field(env, ws, wid, 'x_indicaciones_cliente', 'text',
+                  'Cuidados que se le explicaron al cliente')
+    _ensure_field(env, ws, wid, 'x_garantia_explicada', 'boolean',
+                  '¿Se explicó la garantía de prendimiento?')
+    _ensure_field(env, ws, wid, 'x_area_limpia', 'boolean',
+                  '¿Se entregó el área limpia?')
+    _ensure_field(env, ws, wid, 'x_foto_final', 'binary', 'Fotos del resultado')
+    _seed_seguimiento_fields(env, ws, wid)
+    _relabel_comments(env, ws, "Observaciones finales del técnico")
+
+
 def _seed_termitas_fields(env, tmpl):
     ws, wid = tmpl.model_id.model, tmpl.model_id.id
     _ensure_tag(env, ESTRUCTURA_MODEL, "Estructura afectada — termitas (Visar)",
@@ -1017,6 +1170,12 @@ def _seed_termitas(env):
     return _finish_template(env, tmpl, TERMITAS_ARCH, TERMITAS_NAME)
 
 
+def _seed_jardin(env):
+    tmpl = _get_template(env, JARDIN_NAME)
+    _seed_jardin_fields(env, tmpl)
+    return _finish_template(env, tmpl, JARDIN_ARCH, JARDIN_NAME)
+
+
 def _seed_chinches(env):
     tmpl = _get_template(env, CHINCHES_NAME)
     _seed_chinches_fields(env, tmpl)
@@ -1030,7 +1189,8 @@ def seed_worksheet_templates(env):
     _seed_visita(env)
     combo = _seed_combo(env)
     wire_combined_project(env, combo)
-    wire_treatment_projects(env, _seed_termitas(env), _seed_chinches(env))
+    wire_quoted_service_projects(
+        env, _seed_termitas(env), _seed_chinches(env), _seed_jardin(env))
 
 
 # ======================================================================
@@ -1089,14 +1249,18 @@ def wire_combined_project(env, combo_template=None):
 # distintas, con hoja distinta, y el tablero se lee mejor separado. Sin proyecto,
 # una cotización pagada crea la cita pero NUNCA la visita del técnico: el producto
 # no sabe dónde nacer.
-TRATAMIENTOS = [
+# Servicios que se cotizan a mano y nacen como su propia visita al pagarse. Se
+# llamaba TRATAMIENTOS hasta el 24-sep-2026, cuando entró el diseño de jardín: no
+# es un tratamiento, pero recorre exactamente el mismo circuito.
+SERVICIOS_COTIZADOS = [
     # (nombre del proyecto, nombre EXACTO del producto, nombre de la plantilla)
     ("Tratamiento antitermita", "Tratamiento antitermita", TERMITAS_NAME),
     ("Tratamiento antichinches", "Tratamiento antichinches de cama", CHINCHES_NAME),
+    ("Diseño de jardín", "Diseño e instalación de áreas verdes", JARDIN_NAME),
 ]
 
 
-def wire_treatment_projects(env, *_plantillas):
+def wire_quoted_service_projects(env, *_plantillas):
     """Crea el proyecto FSM de cada tratamiento, le pone su hoja y engancha el
     producto. Idempotente y respetuoso con lo elegido a mano.
 
@@ -1110,7 +1274,7 @@ def wire_treatment_projects(env, *_plantillas):
     Worksheet = env['worksheet.template'].sudo()
     native = env.ref(NATIVE_TEMPLATE_XMLID, raise_if_not_found=False)
     creados = Project.browse()
-    for nombre_proyecto, nombre_producto, nombre_hoja in TRATAMIENTOS:
+    for nombre_proyecto, nombre_producto, nombre_hoja in SERVICIOS_COTIZADOS:
         hoja = Worksheet.search([('name', '=', nombre_hoja)], limit=1)
         producto = Template.with_context(active_test=False).search(
             [('name', '=', nombre_producto)], limit=1)
@@ -1132,7 +1296,15 @@ def wire_treatment_projects(env, *_plantillas):
                 _logger.info("Proyecto %s -> plantilla %s", nombre_proyecto, nombre_hoja)
         # El producto solo se engancha si NADIE lo configuró: cambiar a qué
         # proyecto va un servicio ya vendido movería las visitas de sitio.
-        if producto.service_tracking == 'no' and not producto.project_id:
+        #
+        # La segunda condición cubre un estado A MEDIAS que trae producción (lo tenía
+        # "Diseño e instalación de áreas verdes" el 24-sep-2026): `service_tracking`
+        # puesto en "crear tarea en proyecto" pero SIN proyecto. Eso no es una
+        # elección humana que respetar, es una configuración rota —al pagarse no
+        # puede crear la visita en ningún lado—, así que se completa.
+        a_medias = (producto.service_tracking == 'task_global_project'
+                    and not producto.project_id)
+        if (producto.service_tracking == 'no' and not producto.project_id) or a_medias:
             producto.write({'service_tracking': 'task_global_project',
                             'project_id': project.id})
             _logger.info("Producto %s -> crea visita en %s", nombre_producto,

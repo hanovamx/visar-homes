@@ -795,6 +795,22 @@ class VisarAgentTools(models.AbstractModel):
         return "Programada" if date >= now else "Realizada"
 
     @api.model
+    def _agent_local_date(self, date, tz):
+        """Fecha UTC -> 'YYYY-MM-DD' en la zona del cliente, o None.
+
+        El `date` del servicio viaja en UTC, y el runtime lo usa para saber de
+        qué cita habla quien escribe "la del 2 de octubre". Restarle el día a la
+        cadena UTC funciona casi siempre y falla en la cita de la tarde: las
+        18:00 de Monterrey son las 00:00 del día siguiente en UTC, y ahí el
+        agente movería la cita equivocada sin que nada lo avise. El día que el
+        cliente nombra es el que ve en `date_label`, así que se calcula igual.
+        """
+        if not date:
+            return None
+        return fields.Datetime.context_timestamp(
+            self.with_context(tz=tz), date).date().isoformat()
+
+    @api.model
     def _agent_format_date(self, date, tz):
         """Fecha UTC -> texto en espanol y zona horaria local, o None."""
         if not date:
@@ -904,6 +920,7 @@ class VisarAgentTools(models.AbstractModel):
             entries.append({
                 'service': self._agent_task_label(tarea),
                 'date': date.isoformat() if date else None,
+                'date_local': self._agent_local_date(date, tz),
                 'date_label': self._agent_format_date(date, tz),
                 'status': self._agent_task_status(tarea, date, now),
                 'zone': (evento.visar_zone_id.name
@@ -981,6 +998,7 @@ class VisarAgentTools(models.AbstractModel):
                 # (la lista no llegaba, 7 al 9-sep-2026).
                 'service': line.product_id.product_tmpl_id.name,
                 'date': date.isoformat() if date else None,
+                'date_local': self._agent_local_date(date, tz),
                 'date_label': self._agent_format_date(date, tz),
                 'status': self._agent_service_status(line, date, now),
                 'zone': event.visar_zone_id.name if event and event.visar_zone_id else None,

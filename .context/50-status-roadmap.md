@@ -221,6 +221,17 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## Diseño de jardín se cotiza a mano — 24-sep-2026
+
+> `visar_field_app` **19.0.1.44.0**. Tercer servicio del circuito de cotización manual
+> (termitas, chinches, jardín) y el primero que no es plaga.
+
+Tenía precio fijo y se vendía como adicional en campo; el precio depende del
+levantamiento, así que pasó al circuito de cotización. Hoja propia de 3 páginas, proyecto
+propio, y el producto enganchado para que una cotización pagada nazca como visita. El
+producto estaba **a medias** en producción (`service_tracking` puesto, sin proyecto): no
+podía crear visita en ningún lado, y el sembrador ahora completa ese caso.
+
 ## Inventario por ruta — 23-sep-2026
 
 > `visar_field_app` **19.0.1.42.0**. Detalle en `25-field-app.md` §Inventario por ruta y la
