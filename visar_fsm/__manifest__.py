@@ -17,7 +17,7 @@ Integración con Field Service Management para VISAR:
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Field Service',
-    'version': '19.0.1.4.0',
+    'version': '19.0.1.4.1',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',

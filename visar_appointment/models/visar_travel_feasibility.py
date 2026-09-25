@@ -242,7 +242,17 @@ class AppointmentType(models.Model):
         """
         if not event:
             return None
-        partners = self._visar_travel_stop_partners(event)
+        return self._visar_travel_partner_coords(
+            self._visar_travel_stop_partners(event))
+
+    @api.model
+    def _visar_travel_partner_coords(self, partners):
+        """(lat, lng) del primer partner que las tenga, o el centroide de su CP.
+
+        Se separó de `_visar_travel_stop_coords` para poder preguntar por unas
+        coordenadas sin tener una cita delante: una tarea de campo asignada a
+        mano puede no tener cita detrás, y su domicilio es el del cliente.
+        """
         # Primero, coordenadas de verdad: las tres fuentes en orden de fiabilidad.
         for partner in partners:
             if partner.partner_latitude or partner.partner_longitude:
@@ -372,13 +382,13 @@ class AppointmentType(models.Model):
     # ------------------------------------------------------------------
 
     @api.model
-    def _visar_travel_slot_fits(self, stops, start_utc, stop_utc, durations,
-                                budget_minutes):
-        """¿Cabe `[start_utc, stop_utc)` entre las paradas de ese día?
+    def _visar_travel_vecinas(self, stops, start_utc, stop_utc):
+        """(anterior, siguiente, solapa) — qué paradas rodean a este tramo.
 
-        `durations` es {índice de parada: (minutos_hacia_la_parada,
-        minutos_desde_la_parada)}, ya resueltos. Aritmética pura: ninguna llamada
-        de red pasa por aquí.
+        Se saca del predicado para que el AVISO de una cita ya asignada
+        (`_visar_travel_avisos`) pueda decir *contra qué parada* no cuadra sin
+        volver a recorrer el día por su cuenta. Dos recorridos con la misma
+        intención divergen en cuanto alguien toque uno.
         """
         anterior = siguiente = None
         for index, (s_start, s_stop, _coords) in enumerate(stops):
@@ -388,9 +398,24 @@ class AppointmentType(models.Model):
                 siguiente = index
                 break
             else:
-                # Se solapa con un compromiso. La capacidad ya debería haberlo
-                # excluido; si llega aquí, no se adivina: no cabe.
-                return False
+                return None, None, True
+        return anterior, siguiente, False
+
+    @api.model
+    def _visar_travel_slot_fits(self, stops, start_utc, stop_utc, durations,
+                                budget_minutes):
+        """¿Cabe `[start_utc, stop_utc)` entre las paradas de ese día?
+
+        `durations` es {índice de parada: (minutos_hacia_la_parada,
+        minutos_desde_la_parada)}, ya resueltos. Aritmética pura: ninguna llamada
+        de red pasa por aquí.
+        """
+        anterior, siguiente, solapa = self._visar_travel_vecinas(
+            stops, start_utc, stop_utc)
+        if solapa:
+            # Se solapa con un compromiso. La capacidad ya debería haberlo
+            # excluido; si llega aquí, no se adivina: no cabe.
+            return False
 
         if anterior is not None:
             viaje = (durations.get(anterior) or (None, None))[1]
@@ -448,6 +473,99 @@ class AppointmentType(models.Model):
             if conocidos and max(conocidos) > cluster_minutes:
                 return False
         return True
+
+    @api.model
+    def _visar_travel_avisos(self, destination, resources, start_utc, stop_utc,
+                             tz_info=None, ignorar_event_id=None, budget=None):
+        """Motivos por los que ESTA cita rompe las reglas de ruta. `[]` = ninguno.
+
+        Es la misma pregunta que el filtro de horarios, hecha al revés. El filtro
+        la hace ANTES, sobre un candidato, y la respuesta es no ofrecerlo; aquí la
+        cita ya existe —la asignó alguien a mano en Odoo— y la respuesta es
+        contarlo. **Nunca bloquea nada** (decisión de Visar, 24-sep-2026): una
+        ruta apretada puede ser justo lo que oficina quiso, y un aviso que impide
+        guardar se convierte en un aviso que alguien apaga.
+
+        Se apoya en los dos predicados de siempre, sin reimplementar la
+        aritmética: si el aviso y el filtro pudieran no coincidir, el aviso no
+        serviría para nada.
+
+        Degrada igual que el filtro (§5.4): sin coordenadas, sin token, con Mapbox
+        caído o pasado el tope de llamadas **no dice nada**. Callarse es correcto;
+        inventarse un aviso, no.
+        """
+        if not (destination and resources and start_utc and stop_utc):
+            return []
+        if not self._visar_travel_enabled():
+            return []
+        tz_info = tz_info or pytz.timezone(
+            self.env.context.get('tz') or 'America/Monterrey')
+        budget = budget if budget is not None else {
+            'calls': 0, 'max_calls': self._visar_travel_max_calls()}
+        presupuesto = self._visar_travel_minutes()
+        radio = self._visar_travel_cluster_minutes()
+        dia = pytz.utc.localize(start_utc).astimezone(tz_info).date()
+        ventana = (start_utc - relativedelta(days=1),
+                   stop_utc + relativedelta(days=1))
+        stops_by_day = self.with_context(
+            visar_ignore_event_id=ignorar_event_id
+        )._visar_travel_stops_by_day(resources, tz_info, ventana)
+
+        def hora(momento):
+            return pytz.utc.localize(momento).astimezone(tz_info).strftime('%H:%M')
+
+        avisos = []
+        for resource in resources:
+            stops = stops_by_day.get((resource.id, dia)) or []
+            if not stops:
+                # Un día sin otras paradas cumple las dos reglas: no hay traslado
+                # que quitarle a nadie ni zona del día que respetar.
+                continue
+            durations = self._visar_travel_durations(
+                stops, destination, budget, tz_info)
+            if not durations:
+                continue
+
+            if not self._visar_travel_slot_fits(
+                    stops, start_utc, stop_utc, durations, presupuesto):
+                anterior, siguiente, solapa = self._visar_travel_vecinas(
+                    stops, start_utc, stop_utc)
+                if solapa:
+                    avisos.append(
+                        "%s ya tiene otro servicio a esa hora." % resource.name)
+                for index, sentido, etiqueta in (
+                        (anterior, 1, "desde"), (siguiente, 0, "hasta")):
+                    if index is None:
+                        continue
+                    viaje = (durations.get(index) or (None, None))[sentido]
+                    if viaje is None:
+                        continue
+                    if sentido:
+                        hueco = (start_utc - stops[index][1]).total_seconds() / 60.0
+                        vecina = hora(stops[index][1])
+                    else:
+                        hueco = (stops[index][0] - stop_utc).total_seconds() / 60.0
+                        vecina = hora(stops[index][0])
+                    margen = presupuesto + hueco
+                    if viaje > margen:
+                        avisos.append(
+                            "%s no alcanza a llegar: son %d min de camino %s su "
+                            "servicio de las %s y el margen es de %d min."
+                            % (resource.name, viaje, etiqueta, vecina, margen))
+
+            if not self._visar_travel_day_clustered(stops, durations, radio):
+                lejos, minutos = None, 0
+                for index in range(len(stops)):
+                    viaje = durations.get(index)
+                    conocidos = [m for m in (viaje or ()) if m is not None]
+                    if conocidos and max(conocidos) > minutos:
+                        lejos, minutos = index, max(conocidos)
+                if lejos is not None:
+                    avisos.append(
+                        "Ese día %s trae ruta en otra zona: su servicio de las %s "
+                        "queda a %d min de aquí, y la ruta del día se arma a %d min."
+                        % (resource.name, hora(stops[lejos][0]), minutos, radio))
+        return avisos
 
     @api.model
     def _visar_travel_day_tier(self, slots, stops_by_day):

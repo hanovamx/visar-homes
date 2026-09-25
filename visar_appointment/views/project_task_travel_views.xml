@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- El aviso de ruta, arriba del todo. Es un RECUADRO y no un campo suelto a
+         propósito: quien asigna no va a ir a buscarlo, y el aviso solo sirve si
+         se lee en el momento. No bloquea nada; la tarea ya se guardó. -->
+    <record id="project_task_view_form_visar_ruta" model="ir.ui.view">
+        <field name="name">project.task.form.visar.ruta</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_form2"/>
+        <field name="priority">210</field>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="before">
+                <div class="alert alert-warning mb-0" role="alert"
+                     invisible="not visar_ruta_aviso">
+                    <strong>Ojo con la ruta de este servicio.</strong>
+                    <field name="visar_ruta_aviso" readonly="1" nolabel="1"
+                           class="mb-0"/>
+                    <span class="text-muted">
+                        Es un aviso: el servicio queda asignado igual.
+                    </span>
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Para poder verlos todos juntos: es la pregunta que sigue a "¿cuántos
+         hay?", y sin filtro habría que abrir las tareas de una en una. -->
+    <record id="project_task_view_search_visar_ruta" model="ir.ui.view">
+        <field name="name">project.task.search.visar.ruta</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="industry_fsm.project_task_view_search_fsm"/>
+        <field name="arch" type="xml">
+            <search position="inside">
+                <filter string="Con aviso de ruta" name="visar_ruta_aviso"
+                        domain="[('visar_ruta_aviso', '!=', False)]"/>
+            </search>
+        </field>
+    </record>
+
+</odoo>

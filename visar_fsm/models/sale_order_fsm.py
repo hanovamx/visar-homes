@@ -19,9 +19,15 @@ class SaleOrderLine(models.Model):
         )
 
         if visar_service_lines:
-            task_by_project = self._visar_create_grouped_tasks(visar_service_lines)
-            self._visar_assign_addon_tasks(visar_service_lines, task_by_project)
-            for order in self.mapped('order_id'):
+            # `visar_sin_aviso_ruta`: estas tareas nacen de una reserva, y ese
+            # camino YA paso por el filtro de traslados al listar el horario
+            # (`visar_appointment/models/project_task_travel.py`). Revisarlas otra
+            # vez seria pagar una llamada a Mapbox dentro del cobro para
+            # confirmar lo que ya se sabe.
+            callado = self.with_context(visar_sin_aviso_ruta=True)
+            task_by_project = callado._visar_create_grouped_tasks(visar_service_lines)
+            callado._visar_assign_addon_tasks(visar_service_lines, task_by_project)
+            for order in callado.mapped('order_id'):
                 order._visar_enrich_fsm_tasks(list(task_by_project.values()))
 
         return super()._timesheet_service_generation()

@@ -21,7 +21,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.22.0',
+    'version': '19.0.2.22.1',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
@@ -40,6 +40,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
         'data/visar_questions_data.xml',
         'data/sale_automatic_invoice.xml',
         'data/slot_hold_cron.xml',
+        'views/project_task_travel_views.xml',
         'views/appointment_type_views.xml',
         'views/appointment_resource_views.xml',
         'views/calendar_event_views.xml',
