@@ -221,6 +221,16 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## El ahorro de la póliza, en todas las opciones — 25-sep-2026
+
+> `visar_appointment` **19.0.2.24.0**. Decisión y cifras en `40-decisions.md`.
+
+La etiqueta "Ahorras $…" del paso 7 salía solo en la mensual: se comparaba el total del
+periodo contra UNA visita de contado, así que en la semestral (6 visitas) y la anual (12)
+la resta daba negativo y se quedaba en cero. Ahora se compara contra las mismas visitas
+(34.50 / 207 / 414, el mismo 5%), con el porcentaje en la etiqueta. Arregla web y agente
+de una vez: los dos leen `saving` / `saving_percent` del mismo sitio.
+
 ## Texto propio en "Elegir fecha y hora" — 25-sep-2026
 
 > `visar_appointment` **19.0.2.23.0**. Decisión y porqués en `40-decisions.md`.

@@ -1102,6 +1102,11 @@ class AppointmentType(models.Model):
                 extra_addons=extras, plan=plan)
             if not quote:
                 continue
+            # Visitas que cubre UN periodo de facturación del plan (1 en la mensual,
+            # 6 en la semestral, 12 en la anual). Lo deriva el plan de lo que el
+            # cliente paga, no un campo que se pueda leer al revés — ver
+            # `sale.subscription.plan._visar_visits_per_period`.
+            visitas = plan._visar_visits_per_period()
             offers.append({
                 'plan': plan,
                 'plan_id': plan.id,
@@ -1120,15 +1125,28 @@ class AppointmentType(models.Model):
                 'addons_total': quote['addons_total'],
                 'upfront_service_total': quote['upfront_service_total'],
                 'upfront_total': quote['upfront_total'],
-                # Ahorro frente a contratar el mismo servicio una sola vez: se compara
-                # solo la parte recurrente, que es la única que la póliza abarata.
-                'saving': max(0.0, contado - quote['recurring_total']),
+                # Ahorro frente a comprar las MISMAS visitas de contado, una por una.
+                # Solo la parte recurrente, que es la única que la póliza abarata.
+                #
+                # Y ahí estaba el error (visto el 25-sep-2026): se comparaba el total
+                # del PERIODO contra UNA visita de contado. Eso solo cuadra cuando el
+                # periodo trae una visita: en la mensual salía 34.50, y en la semestral
+                # (6 visitas, 3,933) y la anual (12 visitas, 7,866) la resta daba
+                # negativo, el `max(0, …)` la dejaba en cero y el cliente veía la
+                # etiqueta de ahorro SOLO en la mensual —justo lo que reportó Visar—.
+                # Con las tres listas al mismo 5%, el ahorro real es 34.50 / 207 / 414.
+                'saving': max(0.0, contado * visitas - quote['recurring_total']),
                 # Y en porcentaje, que es como se dice en el chat: los pesos no
-                # se pueden juzgar sin saber sobre qué. Se calcula aquí porque
-                # aquí está la base; la descripción solo lo redacta.
+                # se pueden juzgar sin saber sobre qué. Sobre la MISMA base que el
+                # ahorro, o el porcentaje saldría disparatado en los planes largos.
                 'saving_percent': (
-                    max(0.0, contado - quote['recurring_total']) / contado * 100.0
-                    if contado else 0.0),
+                    max(0.0, contado * visitas - quote['recurring_total'])
+                    / (contado * visitas) * 100.0
+                    if contado and visitas else 0.0),
+                # Cuántas visitas cubre el periodo: es lo que hace comparable el
+                # precio, y la plantilla lo necesita para no prometer un ahorro
+                # "al mes" cuando es de todo el año.
+                'visits_per_period': visitas,
                 'quote': quote,
             })
         return offers

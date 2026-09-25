@@ -1001,3 +1001,36 @@ que mejor te acomode"). Un título fijo que no le corresponde estorbaba más que
 
 El mismo saneado que el nativo (`sanitize_attributes=False`): los dos se editan con el
 mismo editor, así que un texto que se pega en uno tiene que sobrevivir igual en el otro.
+
+## [DECIDIDA E IMPLEMENTADA — 25-sep-2026] El ahorro de la póliza se mide sobre las mismas visitas
+
+La etiqueta *"Ahorras $…"* del paso 7 salía **solo en la suscripción mensual**, y Visar lo
+reportó como que el descuento no aparecía en las demás opciones.
+
+La causa no era la plantilla —que pinta la etiqueta para cualquier oferta con ahorro—
+sino la base de la comparación: se restaba el total del **periodo de facturación** menos
+**UNA** visita de contado. Eso solo cuadra cuando el periodo trae una visita. Medido en un
+clon de producción, con las tres listas al mismo 5%:
+
+| Plan | Visitas/periodo | Periodo | Antes | Ahora |
+|---|---|---|---|---|
+| Suscripción Mensual | 1 | 655.50 | 34.50 | 34.50 |
+| Suscripción semestral | 6 | 3,933.00 | **0.00** | 207.00 |
+| Suscripción anual | 12 | 7,866.00 | **0.00** | 414.00 |
+
+En los planes largos la resta daba negativo, el `max(0, …)` la dejaba en cero y la
+etiqueta desaparecía. Ahora se compara contra **las mismas visitas** compradas de contado
+(`contado × visitas_del_periodo`), y el porcentaje sale sobre esa misma base — sacarlo
+sobre una sola visita daría cifras disparatadas en los planes largos.
+
+Las visitas por periodo las deriva el plan (`_visar_visits_per_period`: meses del periodo
+÷ meses entre visitas), no un campo que se pueda leer al revés — esa es la lección de
+"Visitas incluidas", que se quitó el 22-sep por haberse leído así.
+
+**Un solo sitio arregla web y chat:** la descripción que lee el agente
+(`_visar_wizard_poliza_description`) sale de los mismos `saving` / `saving_percent`, así
+que los tres planes dicen "Ahorro del 5%" en WhatsApp sin tocar nada del agente.
+
+En la web la etiqueta ahora lleva **importe y porcentaje** ("Ahorras $414 (5%)"): entre un
+plan mensual y uno anual los pesos no son comparables —el de la anual es de todo el año— y
+el porcentaje es lo que de verdad se puede juzgar de un vistazo.
