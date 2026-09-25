@@ -561,6 +561,55 @@ def _acls(env, model_name, model_id):
                 'perm_create': perms[2], 'perm_unlink': perms[3]})
 
 
+def _ensure_catalog_menu(env, model_name, label):
+    """Da menú propio a un catálogo de etiquetas, bajo Servicio externo →
+    Configuración (junto a las plantillas de hoja de trabajo).
+
+    Existe porque el catálogo de "Servicios identificados" NO tenía forma de
+    abrirse: sin acción ni menú, agregar una opción exigía entrar a una hoja de
+    trabajo y crearla desde el desplegable. Visar intentó dar de alta un
+    tratamiento nuevo el 25-sep-2026 y se quedó sin poder hacerlo.
+
+    Dos cosas que se probaron y NO sirven, por si alguien quiere "hacerlo bien":
+
+    - **En XML**, como cualquier acción: `ir.actions.act_window` valida que
+      `res_model` exista (`_check_model`), y estos modelos son MANUALES y nacen en
+      este mismo sembrador —que corre DESPUÉS de los ficheros de datos—, así que en
+      una instalación limpia el módulo no se instalaría.
+    - **Con `xmlid`** desde aquí: al terminar la actualización, Odoo borra los
+      `ir.model.data` de su propio módulo que no vengan de un fichero de datos.
+      Medido: la migración los creaba y 19 segundos después ya no existían.
+
+    Así que van SIN xmlid, igual que los modelos y campos que siembra `_ensure_model`,
+    y la idempotencia es por búsqueda. Contrapartida asumida: desinstalar el módulo
+    los deja huérfanos, lo mismo que ya pasa con los modelos manuales.
+    """
+    modelo = env['ir.model'].sudo().search([('model', '=', model_name)], limit=1)
+    padre = env.ref('industry_fsm.fsm_menu_settings', raise_if_not_found=False)
+    if not modelo or not padre:
+        return
+    Accion = env['ir.actions.act_window'].sudo()
+    accion = Accion.search([('res_model', '=', model_name)], limit=1)
+    if not accion:
+        accion = Accion.create({
+            'name': label,
+            'res_model': model_name,
+            'view_mode': 'list,form',
+            'help': "<p class='o_view_nocontent_smiling_face'>Agrega una opción</p>"
+                    "<p>Estas son las opciones que el técnico puede marcar en la "
+                    "hoja de trabajo. Para que una de ellas pida cotización, el "
+                    "nombre tiene que coincidir con el del producto en "
+                    "<b>Se cotiza cuando la hoja marca</b>: así se enlazan.</p>",
+        })
+        _logger.info("Accion creada para el catalogo %s", model_name)
+    Menu = env['ir.ui.menu'].sudo()
+    enlace = 'ir.actions.act_window,%s' % accion.id
+    if not Menu.search([('action', '=', enlace)], limit=1):
+        Menu.create({'name': label, 'parent_id': padre.id,
+                     'action': enlace, 'sequence': 25})
+        _logger.info("Menu creado para el catalogo %s", model_name)
+
+
 def _ensure_model(env, model_name, label, extra_fields):
     Model = env['ir.model'].sudo()
     rec = Model.search([('model', '=', model_name)], limit=1)
@@ -1112,6 +1161,9 @@ def _seed_visita(env):
     ws, wid = tmpl.model_id.model, tmpl.model_id.id
 
     _ensure_tag(env, SERVICIO_MODEL, "Servicio identificado (Visar)", SERVICIOS_ID)
+    # Con menú propio: es el catálogo que hay que ampliar para dar de alta un
+    # servicio especializado nuevo (ver `_ensure_catalog_menu`).
+    _ensure_catalog_menu(env, SERVICIO_MODEL, "Servicios identificados (valoración)")
 
     line = _ensure_model(env, VISITA_LINE, "Zona de evidencia (Visita)", [
         (0, 0, {'name': 'x_worksheet_id', 'field_description': 'Worksheet',

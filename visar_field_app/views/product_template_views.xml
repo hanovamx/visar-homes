@@ -42,16 +42,28 @@
         </field>
     </record>
 
-    <!-- Tratamientos que se cotizan a mano (22-sep-2026): qué servicio de la hoja de
-         trabajo pide su cotización. En la pestaña de Ventas, con el resto de lo que
-         decide cómo se vende el producto. -->
+    <!-- Servicios que se cotizan a mano (22-sep-2026): qué servicio de la hoja de
+         trabajo pide su cotización.
+
+         COLOCACIÓN CORREGIDA el 25-sep-2026. Estaba "dentro" del grupo de la pestaña
+         Ventas, y ahí caía como ÚLTIMA fila suelta, debajo de "Tienda de comercio
+         electrónico" y "Medios de comercio electrónico": Visar no lo encontró y no
+         pudo configurar un servicio nuevo. Ahora va junto a `service_tracking` y
+         `project_id` en Información general, que son los otros dos ajustes que hay
+         que poner para un servicio cotizado — los tres juntos y en el orden en que se
+         llenan.
+
+         Solo en productos de tipo Servicio: en un plaguicida o una malla no significa
+         nada y estorbaría en la ficha. -->
     <record id="product_template_form_visar_quote" model="ir.ui.view">
         <field name="name">product.template.form.visar.quote</field>
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
-            <xpath expr="//page[@name='sales']//group[@name='sale']" position="inside">
-                <field name="visar_quote_trigger" placeholder="p. ej. Termitas"/>
+            <xpath expr="//page[@name='general_information']//field[@name='project_id']"
+                   position="after">
+                <field name="visar_quote_trigger" placeholder="p. ej. Termitas"
+                       invisible="type != 'service'"/>
             </xpath>
         </field>
     </record>
@@ -67,6 +79,8 @@
                         domain="[('visar_upsell_ok', '=', True)]"/>
                 <filter name="visar_consumible_ok" string="Insumo aplicable en campo"
                         domain="[('visar_consumible_ok', '=', True)]"/>
+                <filter name="visar_quote_trigger" string="Se cotiza a mano"
+                        domain="[('visar_quote_trigger', '!=', False)]"/>
             </filter>
         </field>
     </record>

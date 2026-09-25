@@ -1956,3 +1956,40 @@ catálogo que le faltaba —el plaguicida es un producto con ficha—, pero sigu
 None hasta decidir con Visar qué texto ve el cliente. La gasolina se mide por kilómetros;
 la medición por kilómetros se retiró a petición de Visar el 24-sep-2026 (y los tickets
 de carga ya estaban fuera de alcance desde el día anterior).
+
+---
+
+## Configurar un servicio cotizado nuevo (25-sep-2026)
+
+Visar intentó dar de alta un tratamiento antialacranes y **no pudo pasar del primer
+paso**. Dos huecos de descubribilidad, los dos corregidos:
+
+- **`visar_quote_trigger` ("Se cotiza cuando la hoja marca")** estaba insertado *dentro*
+  del grupo de la pestaña Ventas, y ahí caía como **última fila suelta**, debajo de
+  "Tienda de comercio electrónico" y "Medios de comercio electrónico". Ahora vive en
+  **Información general, justo después de Proyecto**, junto a `service_tracking` y
+  `project_id` — los otros dos ajustes que hay que poner para un servicio cotizado, en el
+  orden en que se llenan. Solo visible en productos de tipo Servicio.
+- **El catálogo "Servicios identificados"** (`x_visar_servicio_identificado`) no tenía
+  acción ni menú: agregar una opción exigía entrar a una hoja de trabajo y crearla desde
+  el desplegable. Ahora tiene menú en **Servicio externo → Configuración**, junto a las
+  plantillas de hoja (`_ensure_catalog_menu` en `hooks.py`).
+
+**Por qué ese menú se siembra en Python y sin xmlid** (las dos alternativas se probaron y
+no sirven):
+
+| Intento | Qué pasa |
+|---|---|
+| Acción en XML, como cualquier otra | `ir.actions.act_window._check_model` exige que `res_model` exista, y estos modelos son manuales y nacen en el propio sembrador, que corre DESPUÉS de los ficheros de datos: una instalación limpia no se instalaría |
+| Sembrada con `xmlid` | Al terminar la actualización Odoo borra los `ir.model.data` de su propio módulo que no vengan de un fichero de datos. Medido: la migración los creaba y 19 s después ya no existían |
+
+Va sin xmlid, igual que los modelos y campos de `_ensure_model`, con idempotencia por
+búsqueda. Contrapartida asumida: desinstalar deja el menú huérfano, lo mismo que ya pasa
+con los modelos manuales.
+
+**Además, para la lista:** filtro *"Se cotiza a mano"* en la búsqueda de productos, para
+revisar de un vistazo cuáles siguen este circuito.
+
+**Ojo con el paso que nadie ve:** el enlace producto ↔ etiqueta es **por nombre**
+(minúsculas y sin espacios al comparar). Si no coinciden, la hoja marca el servicio y no
+nace ninguna cotización, sin error visible.
