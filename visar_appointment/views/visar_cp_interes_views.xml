@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         visar.cp.interes - de dónde nos escriben, y de dónde no podemos
+         atender.
+
+         El modelo vive aquí (pegado a las zonas y al cuestionario que lo
+         alimentan); el menú vive en visar_whatsapp_agent, que es donde
+         entra quien va a mirarlo. Ver el docstring de visar_cp_interes.py.
+         ============================================================== -->
+
+    <record id="visar_cp_interes_view_list" model="ir.ui.view">
+        <field name="name">visar.cp.interes.list</field>
+        <field name="model">visar.cp.interes</field>
+        <field name="arch" type="xml">
+            <!-- `numeros_distintos` va con decoración: es la columna que decide
+                 una expansión, no `consultas`. -->
+            <list string="Códigos postales consultados" create="false">
+                <field name="name"/>
+                <field name="municipality"/>
+                <field name="state_name" optional="show"/>
+                <field name="zone_id"/>
+                <field name="served" widget="boolean_toggle" readonly="1"/>
+                <field name="numeros_distintos" sum="Números"/>
+                <field name="consultas" sum="Consultas" optional="show"/>
+                <field name="primera" optional="hide"/>
+                <field name="ultima"/>
+                <field name="geo_status" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_view_form" model="ir.ui.view">
+        <field name="name">visar.cp.interes.form</field>
+        <field name="model">visar.cp.interes</field>
+        <field name="arch" type="xml">
+            <form string="Código postal consultado">
+                <sheet>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="served">
+                        <strong>Fuera de cobertura.</strong>
+                        Este código postal no está en el catálogo de zonas, así
+                        que nadie pudo agendar desde aquí. Los números de abajo
+                        son la gente que lo intentó.
+                    </div>
+
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                        <h3><field name="municipality" readonly="1"
+                                   placeholder="Municipio por determinar"/></h3>
+                    </div>
+
+                    <group>
+                        <group string="Dónde">
+                            <field name="state_name"/>
+                            <field name="zone_id"/>
+                            <field name="served"/>
+                            <field name="geo_status"/>
+                            <field name="lat" invisible="not lat"/>
+                            <field name="lng" invisible="not lng"/>
+                        </group>
+                        <group string="Cuánta gente">
+                            <field name="numeros_distintos"/>
+                            <field name="consultas"/>
+                            <field name="primera"/>
+                            <field name="ultima"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Interesados" name="interesados">
+                            <!-- Los internos se ven aquí (marcados) aunque no
+                                 cuenten: saber que una fila era del equipo es
+                                 más útil que no tener la fila. -->
+                            <field name="line_ids" readonly="1">
+                                <list create="false">
+                                    <field name="fecha"/>
+                                    <field name="phone"/>
+                                    <field name="origen"/>
+                                    <field name="motivo"/>
+                                    <field name="interno" widget="boolean_toggle"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_view_search" model="ir.ui.view">
+        <field name="name">visar.cp.interes.search</field>
+        <field name="model">visar.cp.interes</field>
+        <field name="arch" type="xml">
+            <search string="Códigos postales consultados">
+                <field name="name" string="Código postal"/>
+                <field name="municipality"/>
+                <filter name="sin_cobertura" string="Sin cobertura"
+                        domain="[('served', '=', False)]"/>
+                <filter name="con_cobertura" string="Con cobertura"
+                        domain="[('served', '=', True)]"/>
+                <separator/>
+                <!-- "Con gente de verdad": lo que queda al descontar al equipo y
+                     las corridas de prueba. Sin este filtro la lista de una base
+                     recién estrenada parece tener demanda que no tiene. -->
+                <filter name="con_interesados" string="Con interesados reales"
+                        domain="[('numeros_distintos', '>', 0)]"/>
+                <filter name="recientes" string="Últimos 30 días"
+                        domain="[('ultima', '>=', (context_today() - datetime.timedelta(days=30)).strftime('%Y-%m-%d'))]"/>
+                <separator/>
+                <filter name="por_geocodificar" string="Sin ubicar todavía"
+                        domain="[('geo_status', 'in', ['pendiente', 'sin_datos'])]"/>
+                <!-- Odoo pinta solo el encabezado "Agrupar por": el RNG de search no
+                     admite ni `string` ni `expand` en <group>. -->
+                <group>
+                    <filter name="group_municipio" string="Municipio"
+                            context="{'group_by': 'municipality'}"/>
+                    <filter name="group_estado" string="Estado"
+                            context="{'group_by': 'state_name'}"/>
+                    <filter name="group_zona" string="Zona"
+                            context="{'group_by': 'zone_id'}"/>
+                    <filter name="group_cobertura" string="Cobertura"
+                            context="{'group_by': 'served'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_view_graph" model="ir.ui.view">
+        <field name="name">visar.cp.interes.graph</field>
+        <field name="model">visar.cp.interes</field>
+        <field name="arch" type="xml">
+            <graph string="Interesados por código postal" type="bar" sample="1">
+                <field name="municipality" type="row"/>
+                <field name="numeros_distintos" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_view_pivot" model="ir.ui.view">
+        <field name="name">visar.cp.interes.pivot</field>
+        <field name="model">visar.cp.interes</field>
+        <field name="arch" type="xml">
+            <pivot string="Interesados por código postal" sample="1">
+                <field name="municipality" type="row"/>
+                <field name="served" type="col"/>
+                <field name="numeros_distintos" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_action" model="ir.actions.act_window">
+        <field name="name">Códigos postales</field>
+        <field name="res_model">visar.cp.interes</field>
+        <field name="view_mode">list,graph,pivot,form</field>
+        <field name="search_view_id" ref="visar_cp_interes_view_search"/>
+        <field name="context">{'search_default_con_interesados': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Todavía no hay códigos postales registrados
+            </p>
+            <p>
+                Cada vez que alguien pregunta por cobertura, pide una cotización
+                o captura su dirección —por WhatsApp o en el sitio web— su código
+                postal queda aquí, con cuánta gente distinta ha escrito de ahí.
+            </p>
+            <p>
+                Filtra por <b>Sin cobertura</b> para ver de dónde nos escriben y
+                no podemos atender: la columna que importa para decidir una
+                expansión es <b>Números distintos</b>, no <b>Consultas</b>.
+            </p>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_linea_view_list" model="ir.ui.view">
+        <field name="name">visar.cp.interes.linea.list</field>
+        <field name="model">visar.cp.interes.linea</field>
+        <field name="arch" type="xml">
+            <list string="Interesados" create="false">
+                <field name="fecha"/>
+                <field name="interes_id"/>
+                <field name="phone"/>
+                <field name="origen"/>
+                <field name="motivo"/>
+                <field name="interno" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_linea_view_search" model="ir.ui.view">
+        <field name="name">visar.cp.interes.linea.search</field>
+        <field name="model">visar.cp.interes.linea</field>
+        <field name="arch" type="xml">
+            <search string="Interesados">
+                <field name="phone"/>
+                <field name="interes_id" string="Código postal"/>
+                <!-- La pantalla entra con este filtro PUESTO (lo pone el
+                     action): los números del equipo y de las corridas de prueba
+                     no son interesados. Para verlos, se quita el filtro. -->
+                <filter name="solo_reales" string="Sin números internos"
+                        domain="[('interno', '=', False)]"/>
+                <filter name="solo_internos" string="Solo internos"
+                        domain="[('interno', '=', True)]"/>
+                <separator/>
+                <filter name="whatsapp" string="WhatsApp"
+                        domain="[('origen', '=', 'whatsapp')]"/>
+                <filter name="web" string="Sitio web"
+                        domain="[('origen', '=', 'web')]"/>
+                <!-- Odoo pinta solo el encabezado "Agrupar por": el RNG de search no
+                     admite ni `string` ni `expand` en <group>. -->
+                <group>
+                    <filter name="group_cp" string="Código postal"
+                            context="{'group_by': 'interes_id'}"/>
+                    <filter name="group_origen" string="Origen"
+                            context="{'group_by': 'origen'}"/>
+                    <filter name="group_motivo" string="Hasta dónde llegó"
+                            context="{'group_by': 'motivo'}"/>
+                    <filter name="group_fecha" string="Fecha"
+                            context="{'group_by': 'fecha:month'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_cp_interes_linea_action" model="ir.actions.act_window">
+        <field name="name">Interesados por CP</field>
+        <field name="res_model">visar.cp.interes.linea</field>
+        <field name="view_mode">list</field>
+        <field name="search_view_id" ref="visar_cp_interes_linea_view_search"/>
+        <field name="context">{'search_default_solo_reales': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Todavía no hay interesados registrados
+            </p>
+            <p>
+                Un renglón por persona, día y canal. Sirve para <b>llamarle a
+                quien preguntó</b> cuando se abra una zona nueva. Los teléfonos
+                se borran solos pasado el plazo de retención.
+            </p>
+        </field>
+    </record>
+
+</odoo>

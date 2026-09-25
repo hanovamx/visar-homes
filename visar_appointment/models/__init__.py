@@ -6,6 +6,7 @@ from . import visar_slot_hold
 from . import appointment_type
 from . import appointment_wizard_flow
 from . import visar_agent_vocabulario
+from . import visar_cp_interes
 from . import visar_travel_feasibility
 from . import calendar_booking
 from . import calendar_event

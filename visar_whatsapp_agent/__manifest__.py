@@ -14,9 +14,11 @@ abstracto `visar.agent.tools`:
 - agent_quote_service(payload): (dimension, CP, m2) -> tramo y precio.
 - agent_customer_services(payload): telefono -> servicios del cliente (lectura).
 - agent_track_lead(payload): registra la interaccion como lead de CRM en la
-  etapa 'Nuevo' (ESCRITURA acotada; unico metodo que escribe, con sudo() solo
-  sobre crm.lead). El pipeline/etapas viven en el modulo visar_crm; el avance a
-  etapas posteriores lo hace Odoo, no el runtime.
+  etapa 'Nuevo' (ESCRITURA acotada; con sudo() solo sobre crm.lead). El
+  pipeline/etapas viven en el modulo visar_crm; el avance a etapas posteriores
+  lo hace Odoo, no el runtime.
+- agent_track_cp(payload): anota de que codigo postal escribio alguien, para el
+  reporte de expansion (ESCRITURA acotada a visar.cp.interes).
 
 Salvo agent_track_lead, ningun metodo escribe ni acepta nombres de modelo,
 dominios o SQL: el agente solo puede pedir cosas concretas con parametros
@@ -29,7 +31,7 @@ Ver .context/31-whatsapp-crm-lead-mapping.md y 32-...-implementation.md.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.26.1',
+    'version': '19.0.1.27.0',
     'license': 'LGPL-3',
     # visar_appointment: motor de precios (_visar_quote_booking). visar_crm:
     # pipeline/etapas y campos de crm.lead que llena agent_track_lead.

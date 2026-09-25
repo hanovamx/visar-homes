@@ -1206,6 +1206,47 @@ class VisarAgentTools(models.AbstractModel):
         return lead, True, None
 
     @api.model
+    def agent_track_cp(self, payload):
+        """Anota de que codigo postal escribio alguien. Best-effort, nunca lanza.
+
+        `payload` = {
+          "phone":  "5218112345678",
+          "cp":     "64000",
+          "motivo": "cobertura" | "cotizacion",   # opcional, default cobertura
+          "origen": "whatsapp"                    # opcional, default whatsapp
+        }
+
+        Devuelve {"cp_id": int|None, "cp": str, "served": bool|None}.
+
+        **Por que es un metodo aparte y no un parametro de `agent_resolve_zone`.**
+        El telefono no puede viajar en la consulta de cobertura: el handler de esa
+        tool es neutral de canal a proposito (no conoce la conversacion, igual que
+        `start_booking`), y el modelo no debe poder inventarse un numero. Quien
+        sabe de quien es el mensaje es el runtime, y el runtime ya tiene un camino
+        para esto: mira los turnos del LLM y llama aparte, igual que hace con
+        `agent_track_lead` tras una cotizacion. Asi la superficie de lectura sigue
+        siendo de lectura y la escritura queda en un metodo que se ve.
+
+        El paso de la direccion NO pasa por aqui: ese lo registra Odoo solo
+        (`_visar_wizard_resolve_address`), porque ahi el CP ya esta en el
+        servidor y el web tiene que contar igual que WhatsApp.
+        """
+        payload = payload or {}
+        cp = (self.env['visar.zone.cp'].sudo()
+              ._normalize_cp(payload.get('cp')))
+        registro = self.env['visar.cp.interes']._visar_registrar(
+            cp,
+            phone=payload.get('phone'),
+            origen=payload.get('origen') or 'whatsapp',
+            motivo=payload.get('motivo') or 'cobertura',
+        )
+        return {
+            'cp_id': registro.id or None,
+            'cp': cp,
+            'served': registro.served if registro else None,
+        }
+
+    @api.model
     def agent_track_lead(self, payload):
         """Registra una interaccion de WhatsApp como lead de CRM en 'Nuevo'.
 
@@ -1977,6 +2018,15 @@ class VisarAgentTools(models.AbstractModel):
             return {'lead_id': None, 'created': False,
                     'activity_scheduled': False, 'skipped_reason': 'invalid_phone'}
 
+        # El CP de un escalamiento es el dato mas valioso del reporte de
+        # expansion, y hasta hoy se quedaba DENTRO de la nota del chatter, donde
+        # no se puede contar ni agrupar. Se registra aqui y no solo cuando el
+        # motivo es 'out_of_coverage': un CP que acabo con un humano es un CP que
+        # no se pudo resolver solo, cualquiera que fuese la razon.
+        self.env['visar.cp.interes']._visar_registrar(
+            (payload.get('context') or {}).get('cp'),
+            phone=payload.get('phone'), origen='whatsapp', motivo='escalamiento')
+
         # El grupo es opcional: al escalar puede no saberse aun que queria.
         group = self.env['visar.service.group'].browse()
         if payload.get('service_code'):
@@ -2435,7 +2485,14 @@ class VisarAgentTools(models.AbstractModel):
         §7.1 — emparejar mal un tramo cobra un tercio del precio SIN error).
         """
         payload = payload or {}
-        AptType = self._agent_flow_type()
+        # El contexto lleva de quien es la conversacion hasta el paso de la
+        # direccion, que es donde `_visar_wizard_resolve_address` registra el CP
+        # para el reporte de expansion. Va por contexto y no por parametro porque
+        # esa firma la comparte con el controlador del sitio web, que no tiene
+        # telefono a mano; sin `visar_cp_origen` se asume web, que es de donde
+        # vienen los llamadores que no lo ponen.
+        AptType = self._agent_flow_type().with_context(
+            visar_cp_phone=payload.get('phone'), visar_cp_origen='whatsapp')
         # La bandera NO viaja de ida y vuelta: se recalcula en cada llamada. Es
         # un hecho del mundo (¿existe ya este cliente?) que puede cambiar entre
         # dos mensajes -alguien lo da de alta en Odoo a media conversacion- y un

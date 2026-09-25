@@ -393,6 +393,22 @@
               action="visar_agent_base_action"
               sequence="20"/>
 
+    <!-- El reporte de codigos postales. Los modelos y las vistas viven en
+         visar_appointment (pegados a las zonas y al cuestionario que los
+         alimentan); el menu vive aqui, que es por donde entra quien lo mira. -->
+
+    <menuitem id="menu_agent_cp_interes"
+              name="Codigos postales"
+              parent="menu_agent_root"
+              action="visar_appointment.visar_cp_interes_action"
+              sequence="27"/>
+
+    <menuitem id="menu_agent_cp_interesados"
+              name="Interesados por CP"
+              parent="menu_agent_cp_interes"
+              action="visar_appointment.visar_cp_interes_linea_action"
+              sequence="10"/>
+
     <menuitem id="menu_agent_config"
               name="Configuracion"
               parent="menu_agent_root"

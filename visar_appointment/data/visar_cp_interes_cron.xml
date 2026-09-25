@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: el staff puede ajustar frecuencia/activo sin que un upgrade lo
+         pise (mismo patrón que slot_hold_cron y los crons de visar_crm). -->
+    <data noupdate="1">
+
+        <!-- Geocodificar los CP que NO están en el catálogo de zonas.
+
+             Corre aquí y no al registrar porque una llamada a Mapbox le sumaría
+             su latencia a la respuesta del cliente. Un CP sin resolver se queda
+             con sus cinco dígitos y se reintenta en la corrida siguiente. -->
+        <record id="visar_cp_interes_geocode_cron" model="ir.cron">
+            <field name="name">Visar CP: ubicar los códigos postales nuevos</field>
+            <field name="model_id" ref="model_visar_cp_interes"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_geocode()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">15</field>
+            <field name="interval_type">minutes</field>
+            <field name="active" eval="True"/>
+        </record>
+
+        <!-- Retención de los teléfonos. Es la contrapartida de guardar el número
+             de una persona: pasado el plazo (visar.cp.retencion_dias, 730 por
+             omisión) el renglón se va y los contadores bajan. -->
+        <record id="visar_cp_interes_retencion_cron" model="ir.cron">
+            <field name="name">Visar CP: retención de teléfonos consultados</field>
+            <field name="model_id" ref="model_visar_cp_interes"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_retencion()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">months</field>
+            <field name="active" eval="True"/>
+        </record>
+
+        <!-- Los parámetros van también con noupdate: un plazo o un prefijo que
+             el staff ajuste no puede volver atrás en el siguiente upgrade. -->
+        <record id="visar_cp_telefonos_internos_param" model="ir.config_parameter">
+            <field name="key">visar.cp.telefonos_internos</field>
+            <!-- 999000 es el prefijo de los teléfonos de la suite de aceptación
+                 (tests/prod/conversacion.py): 177 números que no son de nadie y
+                 que sin esto nacerían como 177 interesados. -->
+            <field name="value">999000</field>
+        </record>
+        <record id="visar_cp_retencion_dias_param" model="ir.config_parameter">
+            <field name="key">visar.cp.retencion_dias</field>
+            <field name="value">730</field>
+        </record>
+
+    </data>
+</odoo>

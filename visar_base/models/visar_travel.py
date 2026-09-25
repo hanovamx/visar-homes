@@ -287,11 +287,24 @@ class VisarMapboxService(models.AbstractModel):
         return durations
 
     @api.model
-    def _visar_mapbox_geocode(self, query, country='mx'):
-        """(lat, lng, 'exact'|'approx') para un texto, o None.
+    def _visar_mapbox_geocode_feature(self, query, country='mx', types=None,
+                                      language=None):
+        """El primer resultado crudo de Mapbox para un texto, o None.
 
-        Mismo criterio de exactitud que `visar_field_app`: `address` y `poi` son
-        nivel calle; lo demás es centroide de algo más grande.
+        Se extrajo de `_visar_mapbox_geocode` para que el reporte de códigos
+        postales pueda leer municipio y estado de la MISMA respuesta. La
+        alternativa era una segunda petición por CP: la misma llamada, pagada
+        dos veces, con dos sitios donde degradar y sin garantía de que las dos
+        coincidieran.
+
+        `types` acota qué clase de lugar se busca (p. ej. `'postcode'`). No es un
+        detalle: pidiendo "CP 06700, México" a secas, Mapbox contesta **una calle
+        de Mérida** y da por bueno un municipio a 1,500 km del real (visto el
+        25-sep-2026). Con `types='postcode'` y los cinco dígitos solos contesta
+        Ciudad de México, que es lo correcto.
+
+        `language` es el idioma de los NOMBRES que devuelve (las coordenadas no
+        cambian). Sin él, una pantalla en español acaba diciendo "Mexico City".
         """
         query = (query or '').strip()
         if not query:
@@ -299,25 +312,82 @@ class VisarMapboxService(models.AbstractModel):
         token = self._visar_mapbox_token()
         if not token:
             return None
+        params = {'access_token': token, 'limit': 1, 'country': country}
+        if types:
+            params['types'] = types
+        if language:
+            params['language'] = language
         try:
             resp = requests.get(
                 _GEOCODE_URL % requests.utils.quote(query, safe=''),
-                params={'access_token': token, 'limit': 1, 'country': country},
+                params=params,
                 timeout=self._visar_travel_timeout())
             resp.raise_for_status()
             features = resp.json().get('features') or []
         except Exception as err:  # noqa: BLE001 - red/API: degradar
             _logger.warning("Mapbox geocode falló para %r: %s", query, err)
             return None
-        if not features:
+        return features[0] if features else None
+
+    @api.model
+    def _visar_mapbox_geocode(self, query, country='mx'):
+        """(lat, lng, 'exact'|'approx') para un texto, o None.
+
+        Mismo criterio de exactitud que `visar_field_app`: `address` y `poi` son
+        nivel calle; lo demás es centroide de algo más grande.
+        """
+        feature = self._visar_mapbox_geocode_feature(query, country=country)
+        if not feature:
             return None
-        center = features[0].get('center') or []
+        center = feature.get('center') or []
         if len(center) != 2:
             return None
         lng, lat = center[0], center[1]
-        place_types = set(features[0].get('place_type') or [])
+        place_types = set(feature.get('place_type') or [])
         kind = 'exact' if place_types & {'address', 'poi'} else 'approx'
         return float(lat), float(lng), kind
+
+    @api.model
+    def _visar_mapbox_geocode_lugar(self, query, country='mx', types=None,
+                                    language='es'):
+        """{'lat', 'lng', 'municipality', 'state', 'text'} para un texto, o None.
+
+        Lo que `_visar_mapbox_geocode` tira: el municipio y el estado que Mapbox
+        cuelga del `context` del resultado. Sin ellos, un código postal fuera de
+        cobertura es una pantalla con cinco dígitos y nada más, y de "06700" no
+        se puede decidir si conviene abrir zona.
+
+        `text` es el nombre del lugar encontrado (para un código postal, el
+        código). Va en la respuesta para que quien llama pueda **comprobar que le
+        contestaron lo que preguntó**: es la diferencia entre no saber el
+        municipio y mandar a Visar a expandirse a la ciudad equivocada.
+
+        Municipio y estado pueden venir vacíos si la respuesta no los trae —la
+        Ciudad de México no trae `region`—: se devuelve lo que haya, nunca un
+        nombre inventado. Los nombres vienen en español por omisión, que es el
+        idioma de las pantallas donde se leen.
+        """
+        feature = self._visar_mapbox_geocode_feature(
+            query, country=country, types=types, language=language)
+        if not feature:
+            return None
+        center = feature.get('center') or []
+        if len(center) != 2:
+            return None
+        # `context` es la jerarquía del lugar, de lo pequeño a lo grande:
+        # 'place' es el municipio/ciudad y 'region' el estado.
+        piezas = {}
+        for entry in feature.get('context') or []:
+            tipo = str((entry or {}).get('id') or '').split('.')[0]
+            if tipo in ('place', 'region') and entry.get('text'):
+                piezas.setdefault(tipo, entry['text'])
+        return {
+            'lat': float(center[1]),
+            'lng': float(center[0]),
+            'municipality': piezas.get('place') or '',
+            'state': piezas.get('region') or '',
+            'text': (feature.get('text') or '').strip(),
+        }
 
 
 class VisarTravelCache(models.Model):

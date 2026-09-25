@@ -1248,13 +1248,40 @@ class AppointmentType(models.Model):
         CpModel = self.env['visar.zone.cp'].sudo()
         cp_record = CpModel._get_cp_record(address['zip'])
         if not cp_record or not cp_record.zone_id:
+            # El CP que alguien intentó agendar y no se pudo atender es el dato
+            # más caro del reporte de expansión: esta persona no preguntó, LLEGÓ
+            # HASTA LA DIRECCIÓN. Se registra antes de devolver el error.
+            self._visar_registrar_cp_consultado(address['zip'], 'cobertura')
             return self.env['visar.zone'], address, _(
                 'No damos servicio en el código postal %s. Contáctanos.'
             ) % address['zip']
         address['zip'] = CpModel._normalize_cp(address['zip'])
         address['city'] = cp_record.municipality or ''
         address['state'] = 'Nuevo León'
+        self._visar_registrar_cp_consultado(address['zip'], 'agendado')
         return cp_record.zone_id, address, None
+
+    @api.model
+    def _visar_registrar_cp_consultado(self, cp, motivo):
+        """Anota el CP en el reporte de interés por código postal.
+
+        Va AQUÍ y no en `_visar_wizard_answer_address` porque este método es el
+        único sitio por el que pasan los dos canales: el controlador del sitio web
+        lo llama por su cuenta (`_visar_resolve_address_zone`) y nunca entra al
+        paso del agente. Engancharlo arriba habría dejado fuera todas las
+        reservas web, que son justamente las que dicen dónde se presta servicio.
+
+        El teléfono y el canal llegan por CONTEXTO, no por parámetro: la firma la
+        comparten tres llamadores y solo uno de ellos tiene teléfono a mano
+        (`agent_booking_step`, que lo pone con `with_context`). Sin contexto se
+        asume web, que es de dónde vienen los llamadores que no lo ponen.
+        """
+        self.env['visar.cp.interes']._visar_registrar(
+            cp,
+            phone=self.env.context.get('visar_cp_phone'),
+            origen=self.env.context.get('visar_cp_origen') or 'web',
+            motivo=motivo,
+        )
 
     # ------------------------------------------------------------------
     # Normalización de la respuesta de un paso

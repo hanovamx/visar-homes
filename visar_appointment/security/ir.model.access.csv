@@ -4,3 +4,7 @@ access_visar_slot_hold_manager,visar.slot.hold.manager,model_visar_slot_hold,app
 access_visar_agent_vocabulario_user,visar.agent.vocabulario.user,model_visar_agent_vocabulario,base.group_user,1,0,0,0
 access_visar_agent_vocabulario_manager,visar.agent.vocabulario.manager,model_visar_agent_vocabulario,appointment.group_appointment_manager,1,1,1,1
 access_visar_agent_vocabulario_system,visar.agent.vocabulario.system,model_visar_agent_vocabulario,base.group_system,1,1,1,1
+access_visar_cp_interes_user,visar.cp.interes.user,model_visar_cp_interes,base.group_user,1,0,0,0
+access_visar_cp_interes_manager,visar.cp.interes.manager,model_visar_cp_interes,appointment.group_appointment_manager,1,1,1,1
+access_visar_cp_interes_linea_user,visar.cp.interes.linea.user,model_visar_cp_interes_linea,base.group_user,1,0,0,0
+access_visar_cp_interes_linea_manager,visar.cp.interes.linea.manager,model_visar_cp_interes_linea,appointment.group_appointment_manager,1,1,1,1
