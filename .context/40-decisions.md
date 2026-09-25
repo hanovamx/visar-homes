@@ -1031,9 +1031,12 @@ Las visitas por periodo las deriva el plan (`_visar_visits_per_period`: meses de
 (`_visar_wizard_poliza_description`) sale de los mismos `saving` / `saving_percent`, así
 que los tres planes dicen "Ahorro del 5%" en WhatsApp sin tocar nada del agente.
 
-En la web la etiqueta ahora lleva **importe y porcentaje** ("Ahorras $414 (5%)"): entre un
-plan mensual y uno anual los pesos no son comparables —el de la anual es de todo el año— y
-el porcentaje es lo que de verdad se puede juzgar de un vistazo.
+En la web la etiqueta lleva **solo el importe** ("Ahorras $414"). Llegó a llevar también el
+porcentaje —entre un plan mensual y uno anual los pesos no son comparables— y Visar pidió
+quitarlo el mismo día: en pantalla, con las tres opciones a la vista y su periodicidad al
+lado, el peso se compara solo y el paréntesis era ruido. `saving_percent` se sigue
+calculando porque el **agente** sí lo dice: en un chat las opciones no están una junto a
+otra y un "$414" suelto no se puede juzgar.
 
 ## [DECIDIDA E IMPLEMENTADA — 25-sep-2026] "Tu reserva" sigue a la opción elegida
 

@@ -787,17 +787,13 @@
                                                        t-att-checked="offer['plan_id'] == selected_plan_id and 'checked' or None"/>
                                                 <div>
                                                     <span class="fw-semibold" t-esc="offer['name']"/>
-                                                    <!-- El porcentaje acompaña a los pesos porque es lo que
-                                                         de verdad se puede juzgar: "ahorras $414" no dice
-                                                         nada sin saber sobre qué, y entre un plan mensual y
-                                                         uno anual los pesos no son comparables (el ahorro de
-                                                         la anual es de todo el año). -->
+                                                    <!-- Solo el monto, sin porcentaje (Visar, 25-sep-2026).
+                                                         `saving_percent` se sigue calculando: lo usa el
+                                                         agente, que lo dice en porcentaje porque en un chat
+                                                         no se puede comparar de un vistazo. -->
                                                     <span t-if="offer['saving']" class="badge text-bg-success ms-2">
                                                         Ahorras <t t-out="offer['saving']"
                                                                    t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
-                                                        <t t-if="round(offer['saving_percent']) &gt;= 1">
-                                                            (<t t-out="int(round(offer['saving_percent']))"/>%)
-                                                        </t>
                                                     </span>
                                                     <div class="small text-muted" t-esc="offer['billing_label']"/>
                                                 </div>
@@ -948,9 +944,6 @@
                                             <div t-if="offer['saving']" class="small text-success mt-1">
                                                 Ahorras <t t-out="offer['saving']"
                                                            t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
-                                                <t t-if="round(offer['saving_percent']) &gt;= 1">
-                                                    (<t t-out="int(round(offer['saving_percent']))"/>%)
-                                                </t>
                                             </div>
                                         </div>
                                     </t>

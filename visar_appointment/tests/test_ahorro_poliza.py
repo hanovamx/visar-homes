@@ -161,3 +161,23 @@ class TestReservaSigueAlPlan(TransactionCase):
         self.assertIn("quote['upfront_total']", arch)
         self.assertIn("quote['period_label']", arch,
                       "y de qué periodo es lo que se repite")
+
+    def test_la_web_dice_el_monto_y_no_el_porcentaje(self):
+        """Visar lo pidió así el 25-sep-2026: en pantalla, solo los pesos.
+
+        El porcentaje se sigue calculando y el AGENTE lo sigue diciendo — en un chat
+        no se puede comparar de un vistazo y un "$414" suelto no se juzga—, así que
+        esto vigila que los dos canales no se confundan.
+        """
+        for xmlid in ('visar_appointment.visar_wizard_poliza',
+                      'visar_appointment.visar_appointment_info_price'):
+            arch = self.env['ir.ui.view'].browse(
+                self.env.ref(xmlid).id).get_combined_arch()
+            self.assertNotIn("t-out=\"int(round(offer['saving_percent']))", arch, xmlid)
+            self.assertNotIn("saving_percent'))", arch, xmlid)
+
+        oferta = {'period_total': 450.0, 'saving': 150.0, 'saving_percent': 25.0,
+                  'currency_id': self.env.company.currency_id.id,
+                  'period_label': "al mes"}
+        texto = self.AptType._visar_wizard_poliza_description(oferta)
+        self.assertIn("25%", texto, "el agente sí lo dice en porcentaje")
