@@ -21,7 +21,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.24.0',
+    'version': '19.0.2.25.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
@@ -35,6 +35,13 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
         'hr',
         'worksheet',
     ],
+    'assets': {
+        # El recuadro "Tu reserva" del paso 7 sigue a la opción elegida. Va en el
+        # bundle del frontend porque el wizard es una página pública del website.
+        'web.assets_frontend': [
+            'visar_appointment/static/src/js/wizard_poliza.js',
+        ],
+    },
     'data': [
         'security/ir.model.access.csv',
         'data/visar_questions_data.xml',

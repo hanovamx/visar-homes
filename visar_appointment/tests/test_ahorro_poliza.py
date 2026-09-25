@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""El ahorro se compara contra las MISMAS visitas (25-sep-2026).
+"""El precio del paso 7: ahorro y recuadro "Tu reserva" (25-sep-2026).
 
 Visar reportó que la etiqueta "Ahorras $…" solo salía en la suscripción mensual.
 La causa: se comparaba el total del PERIODO contra UNA visita de contado. Eso
@@ -117,3 +117,47 @@ class TestAhorroDePoliza(TransactionCase):
 
         texto = self.Flow._visar_wizard_poliza_description(ofertas["Prueba anual"])
         self.assertTrue(texto.startswith("Ahorro del 5%"), texto)
+
+
+@tagged('post_install', '-at_install')
+class TestReservaSigueAlPlan(TransactionCase):
+    """El recuadro "Tu reserva" y la pantalla de fecha y hora tienen que seguir a la
+    opción elegida. Antes se quedaban con el precio de contado: el cliente elegía la
+    póliza anual y los dos sitios le seguían enseñando el importe de un servicio
+    único, que no es lo que iba a cobrar la liga de pago.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.AptType = cls.env['appointment.type']
+
+    def test_la_cotizacion_dice_de_que_periodo_es_su_cifra(self):
+        """Sin la periodicidad, un "7,866" suelto no se entiende, y la plantilla no
+        puede derivarla."""
+        plan = self.env['sale.subscription.plan'].create({
+            'name': "Prueba anual", 'billing_period_unit': 'year',
+            'billing_period_value': 1, 'visar_visit_interval_months': 1})
+
+        self.assertEqual(
+            self.AptType._visar_wizard_plan_period_label(plan), "al año")
+
+    def test_el_paso_7_trae_un_recuadro_por_opcion(self):
+        arch = self.env['ir.ui.view'].browse(
+            self.env.ref('visar_appointment.visar_wizard_poliza').id).get_combined_arch()
+
+        self.assertIn('data-visar-plan', arch,
+                      "cada opción necesita su propio bloque para poder alternarlos")
+        self.assertIn("offer['upfront_total']", arch,
+                      "con póliza se enseña lo que se cobra HOY, no el importe del periodo")
+        self.assertIn('Total sin póliza', arch,
+                      "y sigue existiendo el bloque de contado, que es el que se ve sin JS")
+
+    def test_la_pantalla_de_fecha_y_hora_enseña_lo_que_se_cobra_hoy(self):
+        arch = self.env['ir.ui.view'].browse(
+            self.env.ref('visar_appointment.visar_appointment_info_price').id
+        ).get_combined_arch()
+
+        self.assertIn("quote['upfront_total']", arch)
+        self.assertIn("quote['period_label']", arch,
+                      "y de qué periodo es lo que se repite")

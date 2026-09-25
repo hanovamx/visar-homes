@@ -887,20 +887,73 @@
                         <div class="col-lg-4">
                             <div class="border rounded p-3 bg-light">
                                 <h5 class="mb-3">Tu reserva</h5>
+                                <!-- UN BLOQUE POR OPCIÓN, y el JS solo alterna cuál se ve.
+
+                                     Así el importe sigue a lo que el cliente acaba de
+                                     elegir —antes se quedaba clavado en el precio de
+                                     contado, aunque eligiera la póliza anual— sin que
+                                     el navegador tenga que formatear dinero: cada cifra
+                                     la redacta QWeb con la moneda de la cotización, que
+                                     es la única que sabe resolverla (lista de la zona ->
+                                     website -> compañía). Un `toFixed` en JS se
+                                     desviaría del importe que se va a cobrar.
+
+                                     Sin JS (o si falla) se ve el bloque de la opción ya
+                                     elegida, que es lo que el servidor sabe: nunca una
+                                     pantalla en blanco. -->
                                 <t t-if="quote">
-                                    <t t-foreach="quote['lines']" t-as="line">
-                                        <div class="d-flex justify-content-between gap-2 small mb-1"
-                                             t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
-                                            <span t-esc="line['name']"/>
-                                            <span t-out="line['price']"
-                                                  t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                    <!-- `t-attf-class` y no `class` + `t-att-class`: el
+                                         segundo SUSTITUYE la clase estática y el bloque
+                                         se quedaba sin `o_visar_reserva`, así que el JS
+                                         no lo encontraba (visto al renderizarlo). Es el
+                                         patrón que usa el propio Odoo. -->
+                                    <div t-attf-class="o_visar_reserva #{'d-none' if selected_plan_id else ''}"
+                                         data-visar-plan="0">
+                                        <t t-foreach="quote['lines']" t-as="line">
+                                            <div class="d-flex justify-content-between gap-2 small mb-1"
+                                                 t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
+                                                <span t-esc="line['name']"/>
+                                                <span t-out="line['price']"
+                                                      t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                            </div>
+                                        </t>
+                                        <div class="d-flex justify-content-between pt-2 border-top">
+                                            <strong>Total sin póliza</strong>
+                                            <strong t-out="quote['total']"
+                                                    t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                        </div>
+                                    </div>
+                                    <t t-foreach="poliza_offers" t-as="offer">
+                                        <t t-set="oq" t-value="offer['quote']"/>
+                                        <div t-attf-class="o_visar_reserva #{'' if offer['plan_id'] == selected_plan_id else 'd-none'}"
+                                             t-att-data-visar-plan="offer['plan_id']">
+                                            <t t-foreach="oq['lines']" t-as="line">
+                                                <div class="d-flex justify-content-between gap-2 small mb-1"
+                                                     t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
+                                                    <span t-esc="line['name']"/>
+                                                    <span t-out="line['price']"
+                                                          t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                </div>
+                                            </t>
+                                            <div class="d-flex justify-content-between pt-2 border-top">
+                                                <strong>Hoy pagas</strong>
+                                                <strong t-out="offer['upfront_total']"
+                                                        t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                            </div>
+                                            <div class="small text-muted">
+                                                Luego <t t-out="offer['period_total']"
+                                                         t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                <t t-esc="offer['period_label']"/>
+                                            </div>
+                                            <div t-if="offer['saving']" class="small text-success mt-1">
+                                                Ahorras <t t-out="offer['saving']"
+                                                           t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                                                <t t-if="round(offer['saving_percent']) &gt;= 1">
+                                                    (<t t-out="int(round(offer['saving_percent']))"/>%)
+                                                </t>
+                                            </div>
                                         </div>
                                     </t>
-                                    <div class="d-flex justify-content-between pt-2 border-top">
-                                        <strong>Total sin póliza</strong>
-                                        <strong t-out="quote['total']"
-                                                t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
-                                    </div>
                                 </t>
                             </div>
                         </div>

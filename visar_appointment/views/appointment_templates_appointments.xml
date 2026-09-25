@@ -38,7 +38,23 @@
                         </span>
                     </div>
                 </t>
-                <div class="d-flex justify-content-between pt-1 border-top">
+                <!-- Con póliza, lo que se cobra HOY no es el importe de un periodo:
+                     la mensual cobra 3 meses de entrada. Enseñar el "al mes" como si
+                     fuera el cargo sería mentir sobre la liga de pago. Mismo criterio
+                     que `_visar_wizard_summary`. -->
+                <t t-if="quote['plan']">
+                    <div class="d-flex justify-content-between pt-1 border-top">
+                        <strong>Hoy pagas</strong>
+                        <strong t-out="quote['upfront_total']"
+                                t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                    </div>
+                    <div class="small text-muted">
+                        Luego <t t-out="quote['recurring_total']"
+                                 t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
+                        <t t-esc="quote['period_label']"/>
+                    </div>
+                </t>
+                <div t-else="" class="d-flex justify-content-between pt-1 border-top">
                     <strong>Total</strong>
                     <strong t-out="quote['total']"
                             t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>

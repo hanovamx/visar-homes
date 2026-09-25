@@ -1204,6 +1204,10 @@ class AppointmentType(models.Model):
             'currency_id': currency.id,
             'zone_name': zone.name if zone else False,
             'plan': plan or False,
+            # Cómo se dice el periodo ("al mes", "cada 6 meses", "al año"). Viaja con
+            # las cifras porque quien las pinta necesita decir de qué periodo son:
+            # un "7,866" suelto no se entiende, y la plantilla no puede derivarlo.
+            'period_label': self._visar_wizard_plan_period_label(plan) if plan else '',
             'periods': periods,
             # Servicio recurrente por periodo: lo que la póliza cobra "al mes".
             'recurring_total': recurring_total,

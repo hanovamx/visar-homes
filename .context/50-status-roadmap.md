@@ -221,6 +221,16 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## "Tu reserva" sigue a la póliza elegida — 25-sep-2026
+
+> `visar_appointment` **19.0.2.25.0**. Decisión y trampas en `40-decisions.md`.
+
+El recuadro del paso 7 se quedaba en el precio de contado, y el precio equivocado seguía
+en la pantalla de fecha y hora (ahí era un fallo: se cotizaba sin el plan elegido). Ahora
+los dos siguen la opción, y con póliza enseñan lo que se cobra HOY (la mensual cobra 3
+meses de entrada) con el "luego X al mes" debajo. Primer JS del módulo, para alternar
+bloques ya renderizados por el servidor.
+
 ## El ahorro de la póliza, en todas las opciones — 25-sep-2026
 
 > `visar_appointment` **19.0.2.24.0**. Decisión y cifras en `40-decisions.md`.

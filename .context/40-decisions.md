@@ -1034,3 +1034,28 @@ que los tres planes dicen "Ahorro del 5%" en WhatsApp sin tocar nada del agente.
 En la web la etiqueta ahora lleva **importe y porcentaje** ("Ahorras $414 (5%)"): entre un
 plan mensual y uno anual los pesos no son comparables —el de la anual es de todo el año— y
 el porcentaje es lo que de verdad se puede juzgar de un vistazo.
+
+## [DECIDIDA E IMPLEMENTADA — 25-sep-2026] "Tu reserva" sigue a la opción elegida
+
+El recuadro de la derecha del paso 7 se quedaba con el precio de contado aunque el cliente
+eligiera una póliza, y **el precio equivocado seguía hasta la pantalla de fecha y hora**.
+Eso último era un fallo de verdad: `_visar_appointment_quote_context` cotizaba **sin el
+plan**, así que después de contratar la anual el recuadro decía 690 y la liga de pago iba a
+cobrar otra cosa. Ahora pasa el plan elegido (vía `_visar_booking_poliza_plan`, que además
+comprueba que siga siendo ofrecible).
+
+**Con póliza se enseña lo que se cobra HOY**, no el importe de un periodo: la Suscripción
+Mensual cobra 3 meses de entrada (1,966.50 y no 655.50). Debajo, en gris, "luego X al
+mes". Mismo criterio que `_visar_wizard_summary`, que ya lo hacía bien.
+
+**En el paso 7 el servidor renderiza un bloque por opción** y un JS de 40 líneas alterna
+cuál se ve (`.o_visar_reserva[data-visar-plan]`). Se descartó calcular en el navegador: la
+moneda y la lista de precios las resuelve Odoo (lista de la zona → website → compañía) y
+un `toFixed` podría desviarse del importe que se va a cobrar. Sin JS se ve el bloque de la
+opción que el servidor ya tenía por elegida — se pierde la actualización en vivo, nunca el
+dato. Es el primer JS de `visar_appointment`, así que estrena su bundle de frontend.
+
+**Trampa de QWeb que costó encontrar:** `class="x"` junto a `t-att-class="y"` **sustituye**
+la clase estática, y los bloques salían sin `o_visar_reserva` — el JS no habría encontrado
+ninguno. Se vio al renderizar el fragmento, no leyendo el código. Se usa `t-attf-class`,
+que es el patrón del propio Odoo.

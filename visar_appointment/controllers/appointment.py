@@ -156,10 +156,19 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if not items:
             return {'visar_quote': False}
         zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
+        # CON el plan que el cliente ya eligió en el paso 7. Sin esto (hasta el
+        # 25-sep-2026) la pantalla de fecha y hora seguía enseñando el precio de
+        # contado después de haber contratado póliza: el cliente elegía la anual y
+        # el recuadro le decía 690, cuando la liga de pago le iba a cobrar otra
+        # cosa. `_visar_booking_poliza_plan` además comprueba que el plan siga
+        # siendo ofrecible para esta reserva, así que un plan que dejó de aplicar
+        # no arrastra su precio.
+        plan = self._visar_booking_poliza_plan(booking)
         quote = AppointmentType._visar_quote_booking(
             items, zone, quantity=int(asked_capacity or 1),
             include_roedores=self._visar_booking_has_roedores(booking),
-            extra_addons=booking.get('extras_accepted'))
+            extra_addons=booking.get('extras_accepted'),
+            plan=plan or None)
         return {'visar_quote': quote or False}
 
     # Obtiene el appointment.type maestro del wizard.
