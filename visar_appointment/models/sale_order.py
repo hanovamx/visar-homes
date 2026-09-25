@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+import logging
+
 from odoo import fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class SaleOrder(models.Model):
@@ -29,6 +33,37 @@ class SaleOrder(models.Model):
         pricelist = zone._visar_poliza_pricelist(plan)
         if pricelist:
             self.pricelist_id = pricelist
+
+    def _visar_reassert_zone_pricelist(self, zone, plan=None):
+        """Vuelve a imponer la lista de la zona (× plan) si algo la cambió, y
+        reprecia. Devuelve True si hubo que corregir.
+
+        Existe porque **tocar el cliente de la orden reprecia las líneas**: Odoo
+        recalcula `pricelist_id` desde el partner. El 25-sep-2026 eso dejó pedidos
+        de póliza con el servicio al precio de CONTADO (690 en vez de 655.50) y la
+        mensualidad adelantada al del plan — dos precios distintos para lo mismo en
+        el mismo documento, y el cliente veía 655.50 en el wizard y 690 al pagar
+        (S00348 en producción).
+
+        El arreglo de fondo es el ORDEN (fijar el cliente antes de cotizar), pero
+        esto se queda como red: cualquier recálculo futuro se corrige en vez de
+        llegar callado a una liga de pago. Avisa al log cuando actúa, para que no
+        vuelva a ser invisible.
+        """
+        self.ensure_one()
+        if not zone:
+            return False
+        esperada = zone._visar_poliza_pricelist(plan)
+        if not esperada or self.pricelist_id == esperada:
+            return False
+        _logger.warning(
+            "visar: la orden %s se quedo con la lista %s en vez de %s "
+            "(plan=%s); se corrige y se reprecia.",
+            self.name, self.pricelist_id.display_name, esperada.display_name,
+            plan.display_name if plan else None)
+        self.pricelist_id = esperada
+        self._recompute_prices()
+        return True
 
     # ------------------------------------------------------------------
     # Armado de la reserva (compartido por el wizard web y el agente WhatsApp)

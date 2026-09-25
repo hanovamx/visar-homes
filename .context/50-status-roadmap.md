@@ -221,6 +221,18 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## El carrito cobraba el precio de contado en las pólizas — 25-sep-2026
+
+> `visar_appointment` **19.0.2.27.0**. Causa y medición en `40-decisions.md`.
+
+El wizard decía 655.50 al mes y el Resumen de la orden 690: fijar el cliente DESPUÉS de
+cotizar hacía que Odoo recalculara la lista desde el partner y repreciara el servicio al
+precio de contado, dejando la mensualidad adelantada al del plan. Llegó a producción
+(S00348). Ahora el cliente se fija antes, en los dos caminos, con una red que reimpone la
+lista y avisa al log si algo la mueve.
+
+**Pendiente de Visar:** revisar S00348, que quedó con la lista de contado.
+
 ## "Tu reserva" sigue a la póliza elegida — 25-sep-2026
 
 > `visar_appointment` **19.0.2.25.0**. Decisión y trampas en `40-decisions.md`.

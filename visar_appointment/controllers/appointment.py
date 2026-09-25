@@ -1591,6 +1591,16 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         tz = (request.session.get('timezone') or
               request.env.context.get('tz') or
               calendar_booking.appointment_type_id.appointment_tz)
+        # El CLIENTE se fija ANTES de cotizar, y no después: tocar el partner hace
+        # que Odoo recalcule `pricelist_id` desde él y REPRECIE las líneas. Con el
+        # orden anterior, una póliza acababa con el servicio al precio de contado
+        # (690 en vez de 655.50) mientras la mensualidad adelantada conservaba el
+        # del plan — dos precios para lo mismo en un documento, y el cliente veía
+        # 655.50 en el wizard y 690 al pagar (S00348, 25-sep-2026).
+        customer = self._visar_booking_customer(order_sudo, calendar_booking)
+        if customer:
+            order_sudo._update_address(customer.id, ['partner_id'])
+
         lines_added = order_sudo._visar_fill_from_booking(
             booking, calendar_booking, zone, plan=plan, tz=tz)
         if not lines_added:
@@ -1598,17 +1608,11 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             return request.redirect('/appointment/%s?%s' % (
                 master.id, keep_query('*', state='failed-resource')))
 
-        # El wizard puede correrlo el cliente (portal) o el staff en su nombre; el
-        # cliente real es calendar_booking.partner_id. Se fija en la orden cuando
-        # corresponde (ver _visar_booking_customer). Debe ir ANTES de
-        # _visar_apply_delivery_address: el contacto de entrega se cuelga del
-        # commercial_partner_id de la orden, que ya sera el cliente correcto.
-        customer = self._visar_booking_customer(order_sudo, calendar_booking)
-        if customer:
-            order_sudo._update_address(customer.id, ['partner_id'])
-
         self._visar_apply_delivery_address(
             order_sudo, booking, partner_name=calendar_booking.name)
+        # Red de seguridad: si algo volvió a mover la lista, se corrige y se reprecia
+        # antes de que el cliente vea el total. Avisa al log cuando actúa.
+        order_sudo._visar_reassert_zone_pricelist(zone, plan=plan)
         return request.redirect("/shop/cart")
 
     # Construye el carrito con líneas multi-servicio y redirige al checkout de pago.
@@ -1625,6 +1629,13 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             # Una valoración nunca es póliza: soltar el plan que pudiera traer el carrito.
             order_sudo.plan_id = False
             zone = request.env['visar.zone'].sudo().browse(booking.get('zone_id'))
+            # El cliente ANTES de la lista: tocar el partner la recalcula desde él y
+            # reprecia (ver `_visar_reassert_zone_pricelist`). Aquí no hay plan, pero
+            # la lista de la ZONA se perdía igual y la valoración podía cobrarse al
+            # precio de otra lista.
+            customer = self._visar_booking_customer(order_sudo, calendar_booking)
+            if customer:
+                order_sudo._update_address(customer.id, ['partner_id'])
             order_sudo._visar_apply_zone_pricelist(zone)
             items = booking.get('items') or []
             variant_id = items[0].get('variant_id') if items else False
@@ -1656,14 +1667,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                     booking.get('appointment_type_id'),
                     keep_query('*', state='failed-resource'),
                 ))
-            # Mismo criterio que en el flujo del wizard: fijar el cliente reservado
-            # (calendar_booking.partner_id) cuando corresponde, antes de la
-            # direccion de entrega. Ver _visar_booking_customer.
-            customer = self._visar_booking_customer(order_sudo, calendar_booking)
-            if customer:
-                order_sudo._update_address(customer.id, ['partner_id'])
             self._visar_apply_delivery_address(
                 order_sudo, booking, partner_name=calendar_booking.name)
+            order_sudo._visar_reassert_zone_pricelist(zone)
             return request.redirect("/shop/cart")
 
         apt_type = calendar_booking.appointment_type_id

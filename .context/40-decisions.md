@@ -1062,3 +1062,33 @@ dato. Es el primer JS de `visar_appointment`, así que estrena su bundle de fron
 la clase estática, y los bloques salían sin `o_visar_reserva` — el JS no habría encontrado
 ninguno. Se vio al renderizar el fragmento, no leyendo el código. Se usa `t-attf-class`,
 que es el patrón del propio Odoo.
+
+## [DECIDIDA E IMPLEMENTADA — 25-sep-2026] El cliente se fija ANTES de cotizar
+
+Visar reportó que el wizard decía *"$655.50 al mes"* y el **Resumen de la orden** *"$690"*.
+Reproducido y medido paso a paso en un clon de producción:
+
+1. `_visar_fill_from_booking` armaba el pedido **bien**: lista `Tarifa Suscripción Mensual A`,
+   servicio a 655.50 y mensualidad adelantada a 655.50.
+2. Justo después, `_update_address(customer.id, ['partner_id'])` —fijar el cliente
+   reservado— hacía que **Odoo recalculara `pricelist_id` desde el partner** y
+   **repreciara** las líneas: lista `VISAR Zona A - única venta`, servicio a **690** y la
+   mensualidad adelantada intacta en 655.50.
+
+Dos precios para lo mismo en el mismo documento, y el segundo es el que va a la liga de
+pago. Llegó a producción: **S00348** (25-sep) quedó con `plan_id` de la Suscripción Mensual
+y la lista de contado; S00327 (22-sep), con la misma forma, había quedado bien — depende de
+si había cliente que reasignar, así que fallaba de forma intermitente y silenciosa.
+
+**El arreglo es el orden**: el cliente se fija **antes** de imponer la lista y cotizar, en
+los dos caminos (wizard de póliza y valoración técnica). Así el recálculo por partner
+ocurre primero y nuestra lista es la última palabra.
+
+**Y queda una red**: `_visar_reassert_zone_pricelist(zone, plan)` vuelve a imponer la lista
+y reprecia si algo la movió, avisando al log. El fallo fue invisible durante días porque
+nadie comparaba el wizard con el carrito; si un recálculo futuro vuelve a moverla, se
+corrige y además queda dicho.
+
+**Lección para lo que venga:** en este flujo, **tocar el cliente de una orden reprecia sus
+líneas**. Cualquier cosa que cambie `partner_id` tiene que ir antes de fijar precios, o
+volver a imponer la lista después.
