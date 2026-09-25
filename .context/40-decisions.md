@@ -977,3 +977,27 @@ por resta, así que una lectura que falte a media jornada no deja un hueco, deja
 La única excepción es el cierre, que solo se puede exigir si el técnico pulsa *Salir*:
 quien abandona la pestaña pierde el viaje de vuelta, que no es de ningún cliente.
 Volver a entrar el mismo día **reutiliza la jornada abierta** y no vuelve a pedir el ancla.
+
+## [DECIDIDA E IMPLEMENTADA — 25-sep-2026] Cada pantalla de la cita, con su propio texto
+
+Odoo nativo pinta `appointment.type.message_intro` **dos veces**: en la página de
+introducción ("Elige tu cita") y otra vez, bajo un encabezado *Descripción*, en la de
+**Elegir fecha y hora**. Visar lo reportó como confusión real del cliente: parece el
+mismo mensaje repetido en dos pasos, y deja de servir para lo que estaba puesto —ayudar
+a **elegir el servicio** en el primer paso—.
+
+Ahora hay un campo propio, `visar_message_datetime` ("Mensaje de la página de fecha y
+hora"), en la misma pestaña de Comunicación y justo debajo del de introducción, para que
+se vea de un golpe que son dos textos de dos pantallas distintas.
+
+**Vacío = no se pinta nada** en esa pantalla. Se descartó el respaldo al de introducción
+a propósito: sería exactamente la duplicación que se vino a quitar. El `<div>` sigue en el
+DOM con `d-none`, que es como Odoo esconde ese bloque de forma nativa para que el editor
+del sitio web lo siga encontrando.
+
+**Se quitó el encabezado *Descripción***: encabezaba un texto que describía el servicio,
+y ahora el administrador escribe una indicación para elegir horario ("Selecciona el día
+que mejor te acomode"). Un título fijo que no le corresponde estorbaba más que ayudaba.
+
+El mismo saneado que el nativo (`sanitize_attributes=False`): los dos se editan con el
+mismo editor, así que un texto que se pega en uno tiene que sobrevivir igual en el otro.

@@ -12,6 +12,16 @@
                 <field name="visar_is_master"
                        help="Tipo interno usado tras el wizard; no debe publicarse en /appointment."/>
             </xpath>
+            <!-- Texto propio de "Elegir fecha y hora" (25-sep-2026). Va justo debajo
+                 del de introducción, en la misma pestaña de Comunicación, para que se
+                 vea de un golpe que son DOS textos de dos pantallas distintas — que
+                 es lo que no se entendía cuando el de introducción salía en las dos. -->
+            <xpath expr="//page[@name='messages']//field[@name='message_intro']" position="after">
+                <separator string="Página de fecha y hora"/>
+                <field colspan="2" name="visar_message_datetime" class="border border-1 rounded"
+                       nolabel="1" options="{'height': 120}"
+                       placeholder="Vacío = en esa pantalla no se muestra ningún texto."/>
+            </xpath>
         </field>
     </record>
 

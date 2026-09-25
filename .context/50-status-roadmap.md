@@ -221,6 +221,16 @@
 > + D-07 parcial + calificación wizard).
 > Productos/variantes **no se crean en XML** — se configuran/enlazan en backend + migraciones legacy.
 
+## Texto propio en "Elegir fecha y hora" — 25-sep-2026
+
+> `visar_appointment` **19.0.2.23.0**. Decisión y porqués en `40-decisions.md`.
+
+`message_intro` salía en la página de introducción **y** en la de fecha y hora, y al
+cliente le parecía el mismo mensaje dos veces. Campo nuevo `visar_message_datetime` para
+esa pantalla; vacío no pinta nada (sin respaldo al de introducción, que era la
+duplicación original). Los cuatro criterios de aceptación comprobados sobre las páginas
+servidas, no solo en el arch.
+
 ## Diseño de jardín se cotiza a mano — 24-sep-2026
 
 > `visar_field_app` **19.0.1.44.0**. Tercer servicio del circuito de cotización manual

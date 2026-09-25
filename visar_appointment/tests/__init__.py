@@ -9,3 +9,4 @@ from . import test_reschedule_capacity
 from . import test_pago_factura
 from . import test_lista_de_precios_default
 from . import test_ruta_aviso_tarea
+from . import test_mensaje_fecha_hora

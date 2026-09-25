@@ -1,6 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- "Elegir fecha y hora": su propio texto, no el de introducción (25-sep-2026).
+
+         Odoo nativo pinta `message_intro` aquí bajo el encabezado "Descripción",
+         además de en la página de introducción. Al cliente le llega el mismo
+         mensaje dos veces, en dos pasos distintos, y deja de servir para lo que
+         estaba: ayudarle a ELEGIR el servicio en el primer paso.
+
+         Vacío = no se pinta el bloque (ni encabezado ni caja). No hay respaldo al
+         de introducción a propósito: sería volver a la duplicación de antes. -->
+    <template id="visar_appointment_datetime_message" inherit_id="appointment.appointment_info">
+        <xpath expr="//div[div[@t-field='appointment_type.message_intro']]" position="replace">
+            <div t-attf-class="o_appointment_intro border-top pt-4 mt-4 #{'d-none' if not appointment_type.active or is_html_empty(appointment_type.visar_message_datetime) else ''}">
+                <div t-field="appointment_type.visar_message_datetime"
+                     placeholder="Escribe aquí el texto de la pantalla de fecha y hora…"/>
+            </div>
+        </xpath>
+    </template>
+
     <template id="visar_appointment_info_price" inherit_id="website_appointment_sale.appointment_info">
         <xpath expr="//span[hasclass('o_appointment_details_price')]" position="replace">
             <t t-set="quote" t-value="visar_quote or False"/>

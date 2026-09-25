@@ -10,6 +10,24 @@ class AppointmentType(models.Model):
     visar_is_master = fields.Boolean(
         "Tipo de cita maestro Visar (wizard multi-servicio)",
         help="Tipo interno usado tras el wizard para horario y pago; no aparece en /appointment.")
+    # Texto propio de la pantalla "Elegir fecha y hora" (25-sep-2026).
+    #
+    # Odoo nativo pinta `message_intro` DOS VECES: en la página de introducción
+    # ("Elige tu cita") y otra vez, bajo el encabezado "Descripción", en la de
+    # fecha y hora. Al cliente le parece el mismo mensaje repetido en dos pasos y
+    # no ayuda a decidir, que era justo para lo que servía en el primero.
+    #
+    # Vacío = no se pinta NADA en esa pantalla (decisión de Visar): no cae de vuelta
+    # en el de introducción, porque eso reproduciría la duplicación que se quitó.
+    visar_message_datetime = fields.Html(
+        string="Mensaje de la página de fecha y hora", translate=True,
+        # Mismo saneado que `message_intro`: se edita con el mismo editor y desde
+        # el mismo sitio web, así que un texto que se pega en uno tiene que
+        # sobrevivir igual en el otro.
+        sanitize_attributes=False,
+        help="Texto que se le muestra al cliente en la pantalla donde elige fecha y "
+             "hora. Es independiente del mensaje de introducción: si lo dejas vacío, "
+             "en esa pantalla no aparece ningún bloque de texto.")
     visar_flow = fields.Selection(
         selection=[
             ('valuation', 'Valoración técnica (solo zona)'),
