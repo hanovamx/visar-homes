@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from odoo.exceptions import UserError, ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -72,16 +73,52 @@ class TestAgentPromptRoutes(TransactionCase):
         self.assertIsNone(self.Prompt._agent_route_body('info'))
         self.assertNotIn('info', self.Prompt._agent_route_memories())
 
-    def test_duplicados_gana_el_de_menor_secuencia(self):
-        self._memoria('info', body="la de secuencia 30", sequence=30)
-        self._memoria('info', body="la de secuencia 5", sequence=5)
-        self.assertEqual(self.Prompt._agent_route_body('info'), "la de secuencia 5")
+    def test_no_se_puede_duplicar_una_ruta(self):
+        """Las rutas las define el runtime: desde Odoo no se anaden ni se clonan.
 
-    def test_a_igualdad_de_secuencia_gana_el_mas_antiguo(self):
-        """El titular gana. En produccion el titular es siempre el de id menor."""
-        primera = self._memoria('info', body="la primera", sequence=20)
-        self._memoria('info', body="la segunda", sequence=20)
-        self.assertEqual(self.Prompt._agent_route_body('info'), primera.body)
+        Antes del 29-sep-2026 esto se permitia y se resolvia por `sequence`. El
+        problema no era el desempate -funciona- sino que el registro perdedor
+        seguia pareciendo editable: se escribia en el y no pasaba nada.
+        """
+        self._memoria('info', body="la primera")
+        with self.assertRaises(ValidationError):
+            self._memoria('info', body="la segunda")
+
+    def test_no_se_puede_duplicar_el_prompt_base(self):
+        """El caso caro: en produccion habia DOS, y mandaba el que nadie sembro."""
+        with self.assertRaises(ValidationError):
+            self.Prompt.create({'name': "Otro base", 'body': "x", 'sequence': 1})
+
+    def test_archivar_y_reemplazar_si_se_puede(self):
+        """La salida legitima: se guarda la version vieja a la vista, no se borra."""
+        vieja = self._memoria('info', body="la vieja")
+        vieja.active = False
+        nueva = self._memoria('info', body="la nueva")
+        self.assertEqual(self.Prompt._agent_route_body('info'), "la nueva")
+        # ...y desarchivar la vieja vuelve a chocar, que es el agujero que
+        # dejaria contar solo los activos si `active` no estuviera vigilado.
+        with self.assertRaises(ValidationError):
+            vieja.active = True
+        self.assertTrue(nueva.es_vigente)
+
+    def test_el_desempate_sigue_protegiendo_las_filas_viejas(self):
+        """`sequence, id` se queda, para los duplicados que la restriccion no vio.
+
+        La restriccion nacio con datos dentro: nada garantiza que no quede un
+        duplicado de antes, y el lector no puede elegir al azar. Se insertan por
+        SQL justamente porque el ORM ya no deja crearlos.
+        """
+        self.env.cr.execute("""
+            INSERT INTO visar_agent_prompt
+                   (name, body, ruta, sequence, active, create_uid, write_uid,
+                    create_date, write_date)
+            VALUES ('Legado 30', 'la de secuencia 30', 'info', 30, TRUE, 1, 1,
+                    NOW(), NOW()),
+                   ('Legado 5', 'la de secuencia 5', 'info', 5, TRUE, 1, 1,
+                    NOW(), NOW())
+        """)
+        self.Prompt.invalidate_model()
+        self.assertEqual(self.Prompt._agent_route_body('info'), "la de secuencia 5")
 
     def test_payload_de_runtime(self):
         self._memoria('info')
@@ -115,11 +152,16 @@ class TestAgentPromptRoutes(TransactionCase):
         self.assertEqual(payload['route_prompts'].get('info'), "lo de informacion")
 
     def test_es_vigente_marca_uno_por_ruta(self):
-        gana = self._memoria('info', body="gana", sequence=5)
-        pierde = self._memoria('info', body="pierde", sequence=30)
-        self.assertTrue(gana.es_vigente)
-        self.assertFalse(pierde.es_vigente)
+        """Con el catalogo cerrado, «vigente» es todo lo que hay activo."""
+        info = self._memoria('info', body="la unica")
+        self.assertTrue(info.es_vigente)
         self.assertTrue(self.base.es_vigente)
+
+    def test_los_prompts_no_se_borran(self):
+        """Borrar se lleva meses de ajuste sin copia; archivar hace lo mismo."""
+        info = self._memoria('info')
+        with self.assertRaises(UserError):
+            info.unlink()
 
 
 @tagged('post_install', '-at_install')
@@ -169,20 +211,25 @@ class TestAgentRouteMeta(TransactionCase):
                     nombre, _TOOLS,
                     f"la ruta {ruta} declara una herramienta que no existe")
 
-    def test_info_esta_marcada_como_inalcanzable(self):
-        """Ningun camino del runtime pone ya `Route.INFO`.
+    def test_todas_las_rutas_se_alcanzan(self):
+        """Incluida `info`, que estuvo marcada como muerta y no lo estaba.
 
-        Se fija para que revivir la ruta obligue a pasar por aqui: si algun dia
-        vuelve a alcanzarse y esta prueba sigue en verde, la consola estara
-        diciendo que esta muerta cuando no lo esta.
+        Entre ago-2026 y el 29-sep-2026 la pantalla le decia al consultor, en
+        rojo, que lo que escribiera en la memoria de Informacion no cambiaria
+        ninguna conversacion. En produccion era la memoria de ruta mas larga de
+        las cinco y se llega a ella por el PRIMER boton del menu de bienvenida
+        (`MAIN_MENU`, con `menu_inicial` en True por defecto).
+
+        Si algun dia se apaga `menu_inicial`, `info` si queda sin camino y esta
+        prueba es la que tiene que obligar a volver aqui.
         """
-        info = self._uno('info')
-        self.assertFalse(info.alcanzable)
-        self.assertTrue(info.motivo_muerta, "y se dice POR QUE")
-
-    def test_las_demas_rutas_si_se_alcanzan(self):
-        for ruta in ('reception', 'schedule', 'existing', 'other'):
+        for ruta in ('reception', 'info', 'schedule', 'existing', 'other'):
             self.assertTrue(self._uno(ruta).alcanzable, ruta)
+
+    def test_ninguna_ruta_alega_estar_muerta(self):
+        """`motivo_muerta` solo se pinta con `alcanzable` en False."""
+        for ruta in ('reception', 'info', 'schedule', 'existing', 'other'):
+            self.assertFalse(self._uno(ruta).motivo_muerta, ruta)
 
     def test_agendar_solo_expone_una_herramienta(self):
         """La diferencia que esta pantalla existe para contar.
@@ -209,17 +256,24 @@ class TestAgentRouteMeta(TransactionCase):
         un campo que no se pinta, y aunque funcione deja el aviso en un color que
         hay que saber interpretar. Esta prueba fija que el estado es un VALOR.
         """
-        self.assertEqual(self._uno('info').estado, 'inalcanzable')
         self.assertEqual(self._uno('schedule').estado, 'viva')
 
-        # Y el registro eclipsado -hay otro con menor secuencia- se distingue de
-        # la ruta muerta: se arreglan de forma distinta.
-        primera = self._uno('other')
-        primera.sequence = 5
-        segunda = self._uno('other')
-        segunda.sequence = 50
-        self.assertEqual(primera.estado, 'viva')
-        self.assertEqual(segunda.estado, 'eclipsada')
+        # `eclipsada` se queda aunque el catalogo cerrado ya no permita crear un
+        # duplicado por ORM: puede quedar uno de antes de la restriccion, y ese
+        # registro TIENE que poder decir en palabras que no se usa. Se fabrica
+        # por SQL porque es la unica forma que queda de llegar a este estado.
+        self._uno('other').sequence = 5
+        self.env.cr.execute("""
+            INSERT INTO visar_agent_prompt
+                   (name, body, ruta, sequence, active, create_uid, write_uid,
+                    create_date, write_date)
+            VALUES ('Legado eclipsado', 'x', 'other', 50, TRUE, 1, 1,
+                    NOW(), NOW())
+            RETURNING id
+        """)
+        legado = self.Prompt.browse(self.env.cr.fetchone()[0])
+        self.Prompt.invalidate_model()
+        self.assertEqual(legado.estado, 'eclipsada')
 
     def test_el_prompt_base_no_tiene_metadatos_de_ruta(self):
         """Con `ruta` vacia los campos quedan en blanco.

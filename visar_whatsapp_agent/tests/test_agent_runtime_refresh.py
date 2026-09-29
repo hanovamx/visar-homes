@@ -36,9 +36,16 @@ class TestAgentRuntimeRefresh(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.registro = cls.env['visar.agent.prompt'].sudo().create({
-            'name': "Prompt de prueba", 'body': "hola",
-        })
+        # El catalogo de prompts es CERRADO (`_check_ruta_unica`): un base mas
+        # no se puede crear. Lo que se prueba aqui es el BOTON del mixin, no el
+        # prompt, asi que sirve el que ya existe -y si no hubiera, se archiva
+        # nada y se crea el unico-.
+        Prompt = cls.env['visar.agent.prompt'].sudo()
+        cls.registro = Prompt.search([('ruta', '=', False)], limit=1)
+        if not cls.registro:
+            cls.registro = Prompt.create({
+                'name': "Prompt de prueba", 'body': "hola",
+            })
 
     def test_refresca_las_dos_caches(self):
         """Prompt y catálogo: las dos cachés que separan a Odoo del chat."""

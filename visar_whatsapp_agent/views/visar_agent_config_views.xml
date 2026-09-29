@@ -22,10 +22,9 @@
                  color. "Inalcanzable" se entiende sin saber que el rojo
                  significa algo. La decoracion de fila se queda como refuerzo,
                  apoyada en `estado`, que si es una columna visible. -->
-            <list string="Rutas del agente"
+            <list string="Rutas del agente" create="false" delete="false"
                   decoration-danger="estado == 'inalcanzable'"
                   decoration-muted="estado == 'eclipsada'">
-                <field name="sequence" widget="handle"/>
                 <field name="ruta"/>
                 <field name="disparador" string="Como se llega"/>
                 <field name="herramientas_num" string="Herramientas"/>
@@ -58,7 +57,7 @@
         <field name="name">visar.agent.prompt.route.form</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <form string="Ruta del agente">
+            <form string="Ruta del agente" create="false" delete="false">
                 <header>
                     <!-- El runtime cachea esto 15 minutos. Sin este boton, el
                          camino para verlo aplicado era un `curl` desde una
@@ -87,7 +86,7 @@
 
                     <group>
                         <field name="ruta"/>
-                        <field name="sequence"/>
+                        <field name="sequence" readonly="1"/>
                         <field name="active"/>
                         <field name="es_vigente" readonly="1"/>
                         <field name="estado" widget="badge"
@@ -169,8 +168,7 @@
         <field name="name">visar.agent.prompt.base.list</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <list string="Prompt base" decoration-muted="not es_vigente">
-                <field name="sequence" widget="handle"/>
+            <list string="Prompt base" create="false" delete="false" decoration-muted="not es_vigente">
                 <field name="name"/>
                 <field name="caracteres" string="Caracteres"/>
                 <field name="es_vigente" string="En uso" readonly="1"/>
@@ -183,7 +181,7 @@
         <field name="name">visar.agent.prompt.base.form</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <form string="Prompt base">
+            <form string="Prompt base" create="false" delete="false">
                 <header>
                     <!-- El runtime cachea esto 15 minutos. Sin este boton, el
                          camino para verlo aplicado era un `curl` desde una
@@ -207,7 +205,7 @@
 
                     <group>
                         <field name="ruta" invisible="1"/>
-                        <field name="sequence"/>
+                        <field name="sequence" readonly="1"/>
                         <field name="active"/>
                         <field name="es_vigente" readonly="1"/>
                         <field name="caracteres" readonly="1"/>

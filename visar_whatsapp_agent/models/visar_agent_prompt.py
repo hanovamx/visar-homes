@@ -28,7 +28,8 @@ minutos: el unico sintoma es que el agente se vuelve vago.
 """
 import logging
 
-from odoo import api, fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import UserError, ValidationError
 
 _logger = logging.getLogger(__name__)
 
@@ -94,17 +95,31 @@ ROUTE_META = {
         'garantias': (),
         'alcanzable': True,
     },
+    # ⚠️ Estuvo marcada `alcanzable: False` entre ago-2026 y el 29-sep-2026, y
+    # era FALSO: la pantalla le decia en rojo al consultor que lo que escribiera
+    # aqui no cambiaba ninguna conversacion, mientras en produccion esta era la
+    # memoria de ruta mas larga y mas editada de las cinco. Se alcanza por dos
+    # caminos vivos, los dos en `_menu_inicial` (`app/config.py`, por defecto
+    # True y sin sobrescribir en el `.env` de produccion):
+    #   * el boton "Informacion", que es el PRIMERO del menu de bienvenida
+    #     (`MAIN_MENU` en `app/routing/menu.py`) -> `agent.py` pone la ruta;
+    #   * escribir el nombre de la opcion en el primer mensaje
+    #     ("informacion", "info") -> `route_by_name`.
+    # Lo que si dejo de existir es la entrada por TEXTO LIBRE: desde que el LLM
+    # enruta, "cuanto cuesta fumigar" se contesta en Recepcion sin cambiar de
+    # ruta, porque `quote_service` y `resolve_zone` no estan en `ROUTE_TOOLS`.
     'info': {
-        'disparador': "Ninguno - ya no se asigna",
-        'cuando': "Solo se alcanza si un cliente toca un boton de un mensaje "
-                  "anterior a ago-2026. Ningun camino del runtime pone esta ruta.",
-        'cuando_no': "",
+        'disparador': "El boton «Informacion» del menu de bienvenida, o escribir "
+                      "su nombre en el primer mensaje",
+        'cuando': "Cuando el cliente ELIGE «Informacion» en el saludo inicial. Ojo: "
+                  "una duda de precios escrita en palabras propias («¿cuanto cuesta "
+                  "fumigar 120 m2?») NO entra aqui — se contesta en Recepcion, "
+                  "porque cotizar no cambia de ruta.",
+        'cuando_no': "Dudas de precio formuladas en texto libre (van por Recepcion) · "
+                     "agendar · consultar un servicio que ya tiene",
         'tools': _TODAS,
         'garantias': (),
-        'alcanzable': False,
-        'motivo_muerta': "Desde que el LLM enruta, atender una duda de servicios o "
-                         "precios ocurre en Recepcion y no cambia de ruta. Editar "
-                         "esta memoria no cambia nada de lo que ve un cliente.",
+        'alcanzable': True,
     },
     'schedule': {
         'disparador': "El modelo llama start_booking()",
@@ -162,8 +177,13 @@ class VisarAgentPrompt(models.Model):
     # No puede ser `required`: `False` ES el valor del prompt base, y es lo que
     # hace que el registro que ya existia en produccion quede bien colocado sin
     # que la migracion escriba una sola fila.
+    # `readonly=True` desde el 29-sep-2026, y no como atributo de vista: el
+    # catalogo es CERRADO, y mover un registro de una ruta a otra es otra forma
+    # de fabricar el duplicado que `_check_ruta_unica` prohibe. Los `readonly`
+    # de Odoo solo atan al cliente web: las semillas XML y las migraciones
+    # siguen escribiendo el campo por ORM sin estorbo.
     ruta = fields.Selection(
-        ROUTES, string="Ruta", index=True,
+        ROUTES, string="Ruta", index=True, readonly=True,
         help="Vacio = PROMPT BASE: se inyecta desde el primer mensaje de toda "
              "conversacion. Con ruta = memoria de esa ruta: se anade DESPUES "
              "del base y solo mientras la conversacion este ahi.")
@@ -294,6 +314,72 @@ class VisarAgentPrompt(models.Model):
                 record.estado = 'eclipsada'
             else:
                 record.estado = 'viva'
+
+    # ------------------------------------------------------------------
+    # El catalogo es CERRADO: seis registros, uno por ruta mas el base
+    # ------------------------------------------------------------------
+    #
+    # Las rutas no son datos, son codigo: cada una existe porque el runtime la
+    # pone (`ROUTE_TOOLS` en `app/odoo/tools.py`) y porque tiene herramientas
+    # declaradas alla. Una ruta creada desde Odoo no la alcanzaria ninguna
+    # conversacion nunca. Un registro DE MAS en una ruta que si existe es peor:
+    # no falla, gana por `sequence` y sustituye en silencio al que se estaba
+    # editando.
+    #
+    # Que esto no es teorico lo demuestra produccion: el 29-sep-2026 habia DOS
+    # prompts base, y el que mandaba (38 631 caracteres, `sequence` 1) no era el
+    # que el modulo habia sembrado (17 485, `sequence` 2). Funcionaba, pero
+    # nadie podia saberlo sin mirar la tabla.
+
+    @api.constrains('ruta', 'active')
+    def _check_ruta_unica(self):
+        """Un solo registro ACTIVO por ruta, y un solo prompt base activo.
+
+        Cuenta solo los activos, y no es dejadez: archivar-y-reemplazar es un
+        camino legitimo -se guarda la version vieja a la vista en vez de
+        perderla-, y contar los archivados lo prohibiria. El hueco que eso
+        abriria -desarchivar el viejo y volver a tener dos candidatos- lo tapa
+        `active` estando en el `@api.constrains`: desarchivar es un `write` que
+        vuelve a pasar por aqui, y falla en ese momento con el mismo mensaje.
+
+        Un registro archivado no se valida contra nadie: si no, archivar UNO de
+        dos duplicados fallaria, que es justo la salida que hay que dejar
+        abierta.
+        """
+        for record in self:
+            if not record.active:
+                continue
+            otros = self.search_count([
+                ('ruta', '=', record.ruta or False),
+                ('id', '!=', record.id),
+            ])
+            if not otros:
+                continue
+            if record.ruta:
+                etiqueta = dict(ROUTES).get(record.ruta, record.ruta)
+                raise ValidationError(_(
+                    "Ya hay una memoria para la ruta «%(ruta)s». Las rutas las "
+                    "define el codigo del runtime, asi que no se pueden anadir "
+                    "ni duplicar: edita la que ya existe.", ruta=etiqueta))
+            raise ValidationError(_(
+                "Ya hay un prompt base. Solo puede haber uno: si hubiera dos, el "
+                "runtime leeria el de menor secuencia y el otro dejaria de "
+                "aplicarse sin avisar. Edita el que ya existe."))
+
+    def unlink(self):
+        """No se borra: se archiva.
+
+        Borrar una memoria de ruta no la 'apaga' —el runtime cae a la copia de
+        respaldo que lleva dentro (`ROUTE_PROMPTS` en `app/prompts.py`), que es
+        del dia del despliegue— y ademas se lleva por delante el texto que un
+        consultor fue afinando durante meses, sin copia. Archivar hace lo mismo
+        de cara al agente y deja el texto a la vista.
+        """
+        raise UserError(_(
+            "Los prompts no se borran: son un catalogo fijo (el base y una "
+            "memoria por ruta). Si quieres que una deje de aplicarse, "
+            "desmarca «Activo»; el runtime usara su copia de respaldo y el "
+            "texto se queda aqui por si hay que volver."))
 
     # ------------------------------------------------------------------
     # Lectores para el RPC. NINGUNO puede levantar (ver el `except`).

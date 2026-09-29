@@ -1092,3 +1092,60 @@ corrige y además queda dicho.
 **Lección para lo que venga:** en este flujo, **tocar el cliente de una orden reprecia sus
 líneas**. Cualquier cosa que cambie `partner_id` tiene que ir antes de fijar precios, o
 volver a imponer la lista después.
+
+---
+
+## [IMPLEMENTADO — 29-sep-2026] Los prompts del agente son un catálogo CERRADO
+
+`visar.agent.prompt` era una lista abierta: cualquiera podía pulsar *Nuevo*. Pero las
+rutas **no son datos, son código** — cada una existe porque el runtime la asigna
+(`ROUTE_TOOLS` en `app/odoo/tools.py`) y porque tiene herramientas declaradas allá. Una
+ruta creada desde Odoo no la alcanzaría ninguna conversación nunca.
+
+El daño real no es la ruta inventada, es el **registro de más en una ruta que sí existe**:
+no falla, gana por `sequence` y sustituye en silencio al que se estaba editando.
+
+**Y ya había pasado.** El 29-sep-2026 producción tenía **dos** prompts base, y el que
+mandaba (38 631 caracteres, `sequence` 1) no era el que el módulo había sembrado (17 485,
+`sequence` 2). Funcionaba — pero nadie podía saber cuál se aplicaba sin leer la tabla.
+
+Lo que se cierra:
+
+- `_check_ruta_unica`: un registro **activo** por ruta, y un solo prompt base. Cuenta solo
+  los activos a propósito, porque archivar-y-reemplazar es legítimo; el hueco que eso
+  abriría lo tapa `active` estando en el `@api.constrains` — desarchivar vuelve a validar.
+- `unlink()` levanta: borrar una memoria se lleva meses de ajuste sin copia, y el runtime
+  cae a su respaldo del día del despliegue. Se archiva.
+- `ruta` es `readonly` (mover un registro de ruta es otra forma de duplicar).
+- Las vistas pierden *Nuevo* y *Eliminar*, y el asa de arrastre: con un registro por ruta,
+  reordenar no cambiaba nada. `sequence` se queda visible en solo lectura porque sigue
+  siendo el desempate de filas anteriores a la restricción.
+- La migración `19.0.1.28.0` archiva los eclipsados con el mismo criterio del runtime
+  (`sequence, id`), así que **para el agente no cambia nada**: sobrevive el que ya se
+  estaba usando.
+
+> **No se le pone xmlid al prompt base**, aunque sería lo natural para protegerlo. Un
+> `ir.model.data` creado en una migración y no respaldado por un archivo de datos lo
+> **vacía Odoo al final del `-u`** (comprobado el 25-sep con `_ensure_catalog_menu`). La
+> restricción hace el trabajo sin ese riesgo.
+
+### La ruta `info` NO estaba muerta, y la pantalla lo decía en rojo
+
+`ROUTE_META['info']` tenía `alcanzable: False` desde ago-2026, así que el formulario le
+decía al consultor que *"lo que escribas aquí no cambiará ninguna conversación"*. Era
+falso: en producción era la memoria de ruta **más larga y más editada** de las cinco.
+
+Se alcanza por dos caminos vivos, los dos bajo `menu_inicial` (`app/config.py`, por
+defecto `True` y **sin sobrescribir en el `.env` de producción**):
+
+- el botón **«Información»**, que es el **primero** de `MAIN_MENU`;
+- escribir el nombre de la opción en el primer mensaje (`route_by_name`).
+
+Lo que sí dejó de existir es la entrada por **texto libre**: desde que el LLM enruta,
+«¿cuánto cuesta fumigar 120 m²?» se contesta en **Recepción** sin cambiar de ruta, porque
+`quote_service` y `resolve_zone` no están en `ROUTE_TOOLS`. Eso es lo que hay que escribir
+en la memoria de Recepción, no en la de Información.
+
+**Lección:** un metadato copiado del runtime caduca sin avisar y la pantalla lo repite con
+autoridad. `test_todas_las_rutas_se_alcanzan` es lo que obliga a volver aquí si algún día
+se apaga `menu_inicial`.
