@@ -141,8 +141,22 @@
         <field name="name">visar.cp.interes.graph</field>
         <field name="model">visar.cp.interes</field>
         <field name="arch" type="xml">
-            <graph string="Interesados por código postal" type="bar" sample="1">
+            <!-- `consultas` va PRIMERA y por eso es la medida que se pinta al
+                 abrir. `numeros_distintos` queda en el desplegable de Medidas,
+                 que es donde tiene sentido: es la que manda para decidir una
+                 expansión, pero vale cero en todo lo que venga del sitio web
+                 (ese paso no pide teléfono). Poniéndola de medida única, la
+                 gráfica se abría con TODAS las barras en cero teniendo datos
+                 dentro — el mismo error que el filtro por omisión, una capa más
+                 abajo (29-sep-2026).
+
+                 Sin `sample`: con un filtro que no devuelve nada, Odoo pinta
+                 barras INVENTADAS de ejemplo. En una pantalla que se usa para
+                 decidir a qué ciudad expandirse, eso es una captura de pantalla
+                 esperando a que alguien la crea. Mejor vacío y que se vea. -->
+            <graph string="Interesados por código postal" type="bar">
                 <field name="municipality" type="row"/>
+                <field name="consultas" type="measure"/>
                 <field name="numeros_distintos" type="measure"/>
             </graph>
         </field>
@@ -152,9 +166,13 @@
         <field name="name">visar.cp.interes.pivot</field>
         <field name="model">visar.cp.interes</field>
         <field name="arch" type="xml">
-            <pivot string="Interesados por código postal" sample="1">
+            <!-- La tabla dinámica SÍ puede con las dos medidas a la vez, y
+                 enseñarlas juntas es lo que hace entendible que una sea cero y la
+                 otra no: consultas hubo, teléfono no siempre. -->
+            <pivot string="Interesados por código postal">
                 <field name="municipality" type="row"/>
                 <field name="served" type="col"/>
+                <field name="consultas" type="measure"/>
                 <field name="numeros_distintos" type="measure"/>
             </pivot>
         </field>

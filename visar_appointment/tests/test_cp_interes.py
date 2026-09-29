@@ -370,6 +370,45 @@ class TestCpInteres(TransactionCase):
         self.assertIn(fila, visibles,
                       "una reserva web tiene que verse al abrir la pantalla")
 
+    def test_la_grafica_no_se_abre_en_cero_con_datos_dentro(self):
+        """La medida que se pinta al abrir tiene que ser una que NO sea siempre cero.
+
+        Mismo error que el filtro por omisión, una capa más abajo: con
+        `numeros_distintos` como medida única, la gráfica se abría con todas las
+        barras en cero teniendo consultas dentro, porque las reservas web no dejan
+        teléfono. La primera medida declarada es la que Odoo pinta.
+        """
+        import lxml.etree as ET
+        self.Interes._visar_registrar(CP_DESCONOCIDO, origen='web', motivo='agendado')
+        fila = self._fila(CP_DESCONOCIDO)
+        self.assertEqual(fila.numeros_distintos, 0)
+        self.assertGreater(fila.consultas, 0)
+        for xmlid in ('visar_appointment.visar_cp_interes_view_graph',
+                      'visar_appointment.visar_cp_interes_view_pivot'):
+            arch = ET.fromstring(self.env.ref(xmlid).arch)
+            medidas = [f.get('name') for f in arch.iter('field')
+                       if f.get('type') == 'measure']
+            self.assertTrue(medidas, "%s no declara medidas" % xmlid)
+            self.assertEqual(
+                medidas[0], 'consultas',
+                "la primera medida de %s es la que se pinta al abrir" % xmlid)
+            self.assertIn('numeros_distintos', medidas,
+                          "y la otra tiene que seguir disponible")
+
+    def test_las_analiticas_no_inventan_datos_de_ejemplo(self):
+        """`sample="1"` hace que Odoo pinte barras FALSAS cuando no hay registros.
+
+        En una pantalla que se usa para decidir a qué ciudad expandirse, eso es una
+        captura de pantalla esperando a que alguien la crea.
+        """
+        import lxml.etree as ET
+        for xmlid in ('visar_appointment.visar_cp_interes_view_graph',
+                      'visar_appointment.visar_cp_interes_view_pivot'):
+            arch = ET.fromstring(self.env.ref(xmlid).arch)
+            self.assertNotIn(
+                arch.get('sample'), ('1', 'true', 'True'),
+                "%s no puede pintar datos de ejemplo" % xmlid)
+
     def test_un_cp_solo_interno_sigue_escondido_al_abrir(self):
         """La otra mitad: lo que el filtro SÍ tiene que esconder."""
         self.Interes._visar_registrar(CP_DESCONOCIDO, phone='5219990001234')
