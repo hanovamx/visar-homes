@@ -12,14 +12,22 @@ falta un desarrollador, un bump de versión, un `-u` y reiniciar odoo. El
 8-sep-2026 tres de los cuatro fallos reportados desde producción fueron una
 palabra que faltaba, y cada uno costó un despliegue.
 
-Este modelo es la capa de encima:
+Este modelo ES el vocabulario, desde el 29-sep-2026:
 
-    lo que el agente ve  =  las palabras del código  +  las de aquí
+    lo que el agente ve  =  la fila de aquí, si la hay
+                            las palabras del código, si no
 
-**Solo suma, nunca quita.** El código es el piso: es lo que afirman las pruebas
-y lo que sobrevive a una base nueva. Si una palabra del código clasifica mal,
-eso es un arreglo de código con su prueba; quitarla desde una pantalla dejaría
-el repositorio verde mientras producción hace otra cosa.
+Hasta esa fecha solo **sumaba**, y el código no se podía tocar desde la
+pantalla. La razón era buena —el código es lo que afirman las pruebas y lo que
+sirve en una base recién creada— pero el precio se vio en producción: los
+diccionarios de fábrica eran **invisibles** desde Odoo y esta pantalla llevaba
+meses **con cero filas**. Lo único que ofrecía era añadir a ciegas sobre una
+lista que no se podía leer, así que nadie la usó nunca.
+
+El código no desaparece: queda como **suelo recuperable**. Se enseña al lado en
+`palabras_originales`, el botón «Restaurar valores originales» lo devuelve, y
+una ranura nueva que un desarrollador añada sigue funcionando antes de
+sembrarse. Archivar una fila también vuelve a los valores de fábrica.
 
 **Se aplica en el siguiente paso, sin reiniciar nada.** `agent_booking_step` es
 una llamada RPC viva, no una caché: en cuanto se guarda, el paso siguiente ya
@@ -29,6 +37,10 @@ pintarla; se nota a partir de la respuesta siguiente.
 """
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+
+from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
+    _visar_vocab_norm,
+)
 
 # Etiquetas de los pasos PARA EL CONSULTOR, que no son las que ve el cliente:
 # aquí hace falta saber de qué pregunta se habla, no cómo se le formula. Las
@@ -61,21 +73,33 @@ class VisarAgentVocabulario(models.Model):
         help="La clave de la opción dentro del paso. En 'Servicio' es el "
              "código del grupo (fumigacion, corte); en 'Extras' y 'Póliza', "
              "la salida se llama no_gracias.")
+    # Sin `required`: vaciar una opción es una respuesta legítima ahora que la
+    # fila manda —significa "esta opción no reconoce ninguna palabra"—, y hay
+    # una de fábrica así (`valuation.continuar`, que el autopiloto contesta
+    # solo). Con `required` no se habría podido sembrar.
     palabras = fields.Text(
-        string="Palabras del cliente", required=True,
+        string="Palabras del cliente",
         help="Una palabra o frase por línea, tal y como la escribe el cliente. "
              "Valen las raíces: 'cucarach' cubre cucaracha y cucarachas. Se "
              "comparan sin acentos y sin distinguir mayúsculas, y solo al "
              "principio de una palabra: 'rata' no coincide dentro de 'barata'.")
     active = fields.Boolean(
         string="Activo", default=True,
-        help="Archivar una fila deja de aplicar sus palabras en el siguiente "
-             "mensaje. Es la forma de apagar una palabra que resultó mala idea "
-             "sin perder de vista que se probó.")
+        help="Archivar una fila devuelve esa opción a los valores de fábrica en "
+             "el siguiente mensaje, sin perder de vista lo que se había "
+             "probado. Es la marcha atrás rápida.")
     palabras_efectivas = fields.Text(
         string="Lo que el agente reconoce", compute='_compute_palabras_efectivas',
-        help="Las del código más las de esta pantalla, ya sin repetidas. Es "
-             "exactamente lo que se le manda al agente para esa opción.")
+        help="Exactamente lo que se le manda al agente para esa opción, ya sin "
+             "repetidas. Si la fila está archivada, son las de fábrica.")
+    palabras_originales = fields.Text(
+        string="Valores de fábrica", compute='_compute_palabras_originales',
+        help="Las que trae el código para esta opción. No cambian al editar: "
+             "son la referencia y lo que devuelve «Restaurar valores "
+             "originales».")
+    es_original = fields.Boolean(
+        string="Sin cambios", compute='_compute_palabras_originales',
+        help="Si esta opción sigue exactamente como viene de fábrica.")
     opciones_validas = fields.Char(
         string="Opciones de este paso", compute='_compute_opciones_validas')
 
@@ -100,36 +124,91 @@ class VisarAgentVocabulario(models.Model):
     def _compute_palabras_efectivas(self):
         """Lo que el agente va a reconocer de verdad, no lo que se escribió aquí.
 
-        Existe para que no haya que creerse la fusión: una palabra que ya venía
-        en el código no aparece dos veces, una repetida tampoco, y una fila
-        archivada se ve que no cuenta. Un campo que solo dijera "guardado"
+        La diferencia importa en dos casos y por eso el campo se queda aunque la
+        fila ya mande: una palabra repetida (con o sin acentos) se cuenta una
+        sola vez, y una fila **archivada** enseña los valores de fábrica, que es
+        lo que el agente usará de verdad. Un campo que solo dijera "guardado"
         estaría verde sin estarlo.
 
-        Suma las demás filas de la misma opción, porque el agente también las
-        suma: dos consultores pueden estar enseñándole palabras a la vez.
+        Pasa por el MISMO `_visar_vocabulario` que el cuestionario, no por una
+        copia: si la regla cambia, este campo cambia con ella o no sirve.
         """
         Flow = self.env['appointment.type']
         for registro in self:
             if not (registro.paso and registro.opcion):
                 registro.palabras_efectivas = ''
                 continue
-            otras = self.search([
-                ('paso', '=', registro.paso),
-                ('opcion', '=', registro.opcion),
-                ('id', '!=', registro._origin.id or 0),
-            ])
-            anadidas = []
-            for fila in otras:
-                anadidas += Flow._visar_vocabulario_lineas(fila.palabras)
-            if registro.active:
-                anadidas += Flow._visar_vocabulario_lineas(registro.palabras)
+            overlay = ({(registro.paso, registro.opcion):
+                        Flow._visar_vocabulario_lineas(registro.palabras)}
+                       if registro.active else {})
             registro.palabras_efectivas = '\n'.join(Flow._visar_vocabulario(
-                {(registro.paso, registro.opcion): anadidas},
+                overlay, registro.paso, registro.opcion))
+
+    @api.depends('paso', 'opcion', 'palabras')
+    def _compute_palabras_originales(self):
+        """Las de fábrica, y si esta fila sigue igual que ellas.
+
+        Se comparan ya normalizadas y sin orden: reordenar líneas o cambiar un
+        acento no es un cambio de vocabulario, y marcarlo como "modificado"
+        mandaría a alguien a buscar una diferencia que no existe.
+        """
+        Flow = self.env['appointment.type']
+        for registro in self:
+            if not (registro.paso and registro.opcion):
+                registro.palabras_originales = ''
+                registro.es_original = True
+                continue
+            originales = Flow._visar_vocabulario_originales(
+                registro.paso, registro.opcion)
+            registro.palabras_originales = '\n'.join(originales)
+            actuales = Flow._visar_vocabulario_lineas(registro.palabras)
+            registro.es_original = (
+                {_visar_vocab_norm(p) for p in actuales}
+                == {_visar_vocab_norm(p) for p in originales})
+
+    def action_restaurar_originales(self):
+        """Devuelve la opción a los valores que trae el código.
+
+        Es la mitad que hace reversible dejar que la pantalla mande. Sin esto,
+        borrar una palabra de fábrica por error sería irreparable sin un
+        desarrollador —y el motivo por el que esto sumaba en vez de sustituir.
+        """
+        Flow = self.env['appointment.type']
+        for registro in self:
+            registro.palabras = '\n'.join(Flow._visar_vocabulario_originales(
                 registro.paso, registro.opcion))
+        return True
 
     # ------------------------------------------------------------------
     # Validación
     # ------------------------------------------------------------------
+
+    @api.constrains('paso', 'opcion', 'active')
+    def _check_una_fila_por_opcion(self):
+        """Una sola fila activa por opción.
+
+        Mientras esto solo sumaba, dos filas eran inofensivas —se concatenaban—
+        y el docstring lo daba por bueno ("dos consultores pueden estar
+        enseñándole palabras a la vez"). Ahora la fila ES la verdad, así que dos
+        filas son dos verdades y el agente usaría una de las dos sin decir cuál.
+        """
+        for registro in self:
+            if not registro.active:
+                continue
+            repetidas = self.search_count([
+                ('paso', '=', registro.paso),
+                ('opcion', '=', registro.opcion),
+                ('id', '!=', registro.id),
+            ])
+            if repetidas:
+                raise ValidationError(_(
+                    "Ya hay una fila para «%(opcion)s» en el paso "
+                    "«%(paso)s». Edita esa: ahora la fila sustituye a los "
+                    "valores de fábrica, así que dos filas serían dos "
+                    "vocabularios distintos para la misma opción.",
+                    opcion=registro.opcion or '',
+                    paso=_VISAR_PASO_ETIQUETAS.get(registro.paso, registro.paso),
+                ))
 
     @api.constrains('paso', 'opcion')
     def _check_opcion(self):

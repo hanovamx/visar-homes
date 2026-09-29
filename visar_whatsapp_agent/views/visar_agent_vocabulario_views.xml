@@ -13,10 +13,17 @@
         <field name="name">visar.agent.vocabulario.list</field>
         <field name="model">visar.agent.vocabulario</field>
         <field name="arch" type="xml">
-            <list string="Vocabulario del cliente" editable="bottom">
+            <!-- Sin `editable="bottom"`: las palabras son un texto de varias
+                 lineas y en una celda de lista se editan a ciegas. El
+                 formulario ensena al lado los valores de fabrica y lo que el
+                 agente reconoce de verdad, que es lo que hace falta para
+                 decidir si quitar una palabra. -->
+            <list string="Vocabulario del cliente" create="false"
+                  decoration-info="not es_original">
                 <field name="paso"/>
                 <field name="opcion"/>
                 <field name="palabras"/>
+                <field name="es_original" string="Sin cambios" widget="boolean"/>
                 <field name="active" column_invisible="1"/>
             </list>
         </field>
@@ -32,6 +39,9 @@
                 <filter name="archivadas" string="Archivadas"
                         domain="[('active', '=', False)]"/>
                 <separator/>
+                <!-- Sin filtro por `es_original`: es calculado y NO
+                     almacenado, y Odoo rechaza la vista entera si aparece en un
+                     dominio. Se ve en la columna y en el color de la fila. -->
                 <filter name="por_paso" string="Paso"
                         context="{'group_by': 'paso'}"/>
             </search>
@@ -42,7 +52,14 @@
         <field name="name">visar.agent.vocabulario.form</field>
         <field name="model">visar.agent.vocabulario</field>
         <field name="arch" type="xml">
-            <form string="Vocabulario del cliente">
+            <form string="Vocabulario del cliente" create="false">
+                <header>
+                    <button name="action_restaurar_originales" type="object"
+                            string="Restaurar valores originales"
+                            invisible="es_original"
+                            confirm="Se reemplazan las palabras de esta opcion por las que trae el codigo. Lo que hayas anadido aqui se pierde."
+                            help="Devuelve esta opcion exactamente a como viene de fabrica."/>
+                </header>
                 <sheet>
                     <!-- Sin boton de "Aplicar ahora" A PROPOSITO: esto no pasa
                          por ninguna cache. `agent_booking_step` es una llamada
@@ -56,6 +73,12 @@
                         las palabras con las que se pinto; se nota a partir de
                         la respuesta siguiente.
                     </div>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="active">
+                        <strong>Esta fila esta archivada.</strong> El agente
+                        esta usando los <em>valores de fabrica</em> de esta
+                        opcion, no lo que dice aqui abajo.
+                    </div>
 
                     <group>
                         <group>
@@ -66,6 +89,7 @@
                         </group>
                         <group>
                             <field name="active"/>
+                            <field name="es_original" readonly="1"/>
                         </group>
                     </group>
 
@@ -79,18 +103,29 @@
                             <code>rata</code> no coincide dentro de
                             <em>barata</em>.
                             <br/>
-                            Estas palabras <strong>se suman</strong> a las que
-                            ya trae el sistema; no se puede quitar una desde
-                            aqui.
+                            Esta lista es <strong>la que manda</strong>: lo que
+                            quites de aqui deja de reconocerse, aunque viniera
+                            de fabrica. El boton de arriba lo devuelve todo.
                         </div>
                         <field name="palabras" nolabel="1" colspan="2"
                                placeholder="azotea&#10;la azotea&#10;el techo"/>
                     </group>
 
+                    <group string="Valores de fabrica" invisible="es_original">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            Lo que trae el codigo para esta opcion. No cambia al
+                            editar: es la referencia, y es lo que devuelve
+                            <strong>Restaurar valores originales</strong>.
+                        </div>
+                        <field name="palabras_originales" nolabel="1" colspan="2"
+                               readonly="1"/>
+                    </group>
+
                     <group string="Lo que el agente reconoce">
                         <div class="alert alert-secondary" role="alert" colspan="2">
-                            Las del sistema mas las de arriba, ya sin repetidas.
-                            Es exactamente lo que se le manda al agente.
+                            Exactamente lo que se le manda al agente para esta
+                            opcion, ya sin repetidas. Si la fila esta archivada,
+                            son las de fabrica.
                         </div>
                         <field name="palabras_efectivas" nolabel="1" colspan="2"
                                readonly="1"/>
@@ -104,15 +139,23 @@
         <field name="name">Vocabulario</field>
         <field name="res_model">visar.agent.vocabulario</field>
         <field name="view_mode">list,form</field>
+        <!-- Agrupado por paso de entrada: son 17 opciones repartidas en siete
+             preguntas distintas, y en una lista plana no se sabe cual es cual.
+             Agrupadas, cada pregunta del cuestionario es una seccion. -->
+        <field name="context">{'search_default_por_paso': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                Ensenale una palabra al agente
+                Aqui no hay ninguna opcion
             </p>
             <p>
                 El cuestionario reconoce las palabras con las que la gente pide
                 de verdad cada cosa: nadie escribe <em>"Correctivo"</em>, escribe
-                que tiene alacranes. Aqui se anaden las que falten, sin tocar
-                codigo y sin desplegar.
+                que tiene alacranes. Esta pantalla es esa lista, y se edita sin
+                tocar codigo y sin desplegar.
+            </p>
+            <p>
+                Si esta vacia, el agente sigue funcionando con los valores de
+                fabrica —pero nadie podra ajustarlos desde aqui.
             </p>
         </field>
     </record>

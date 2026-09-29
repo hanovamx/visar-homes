@@ -1149,3 +1149,63 @@ en la memoria de Recepción, no en la de Información.
 **Lección:** un metadato copiado del runtime caduca sin avisar y la pantalla lo repite con
 autoridad. `test_todas_las_rutas_se_alcanzan` es lo que obliga a volver aquí si algún día
 se apaga `menu_inicial`.
+
+---
+
+## [IMPLEMENTADO — 29-sep-2026] El Vocabulario manda; el código pasa a ser el suelo recuperable
+
+`visar.agent.vocabulario` nació **aditivo**: `lo que el agente ve = palabras del código +
+las de la pantalla`, y no había forma de quitar una palabra de fábrica. La razón era
+buena y está escrita en su docstring: el código es lo que afirman las pruebas y lo que
+sobrevive a una base nueva; quitar una palabra desde una pantalla dejaría el repositorio
+verde mientras producción hace otra cosa.
+
+**El precio se vio al mirar la tabla: producción llevaba meses con CERO filas.** La
+pantalla no se usó nunca. Y se entiende — lo único que ofrecía era añadir a ciegas sobre
+una lista de 17 diccionarios que desde Odoo **no se podían leer**.
+
+Regla nueva:
+
+| situación | qué reconoce el agente |
+|---|---|
+| hay fila activa | **sus palabras, y solo esas** |
+| no hay fila, o está archivada | las del código (fábrica) |
+
+Lo que mantiene la propiedad buena del diseño viejo: **el código sigue siendo el suelo, y
+es recuperable**. `palabras_originales` lo enseña al lado, `es_original` dice si esta fila
+está tocada, y el botón **Restaurar valores originales** lo devuelve. Archivar también
+vuelve a fábrica, que es la marcha atrás rápida. Una ranura que un desarrollador añada al
+código sigue funcionando antes de sembrarse.
+
+Detalles que no son adorno:
+
+- **Una clave presente en el overlay manda aunque su lista venga vacía.** Si se saltaran
+  las vacías —como hacía la versión aditiva— vaciar una opción desde la pantalla
+  resucitaría en silencio las palabras del código: guardas, no falla, y el agente sigue
+  haciendo lo de antes. Hay una prueba para esto.
+- **Una sola fila activa por opción** (`_check_una_fila_por_opcion`). Mientras esto sumaba,
+  dos filas eran inofensivas y el docstring lo daba por bueno. Ahora serían dos verdades.
+- `palabras` deja de ser `required`: vaciar es legítimo, y hay una ranura de fábrica así
+  (`valuation.continuar`, que el autopiloto contesta solo).
+- La migración `19.0.2.29.0` siembra las 17 ranuras con **exactamente** lo que decía el
+  código, y respeta las filas que ya existieran. **Es un no-op de comportamiento**: en
+  producción no había ninguna fila, así que antes mandaba el código y después manda una
+  copia literal del código.
+
+### La pantalla
+
+Agrupada por paso (`search_default_por_paso`): son 17 opciones repartidas en siete
+preguntas, y en una lista plana no se sabe cuál es cuál. Sin `editable="bottom"` —las
+palabras son texto de varias líneas y en una celda se editan a ciegas—, sin *Nuevo* (las
+ranuras las define el código), y con una columna *Sin cambios* que dice de un vistazo qué
+se ha tocado.
+
+> Sin filtro por `es_original`: es calculado y **no almacenado**, y Odoo rechaza la vista
+> entera si aparece en un dominio — el mismo tropiezo que ya está anotado para
+> `es_vigente` y `alcanzable` en las vistas de prompts.
+
+**Hallazgo al sembrar:** seis de las siete opciones de `plagas` (rastreros, voladores,
+roedores, protección general, termitas, chinches) **no tienen ni un sinónimo** en el
+código: se reconocen solo por las raíces de su etiqueta. Eran invisibles, así que nadie
+podía saberlo. Ahora son seis filas vacías a la vista, y llenarlas ya no cuesta un
+despliegue.

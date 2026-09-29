@@ -1806,13 +1806,33 @@ class AppointmentType(models.Model):
         return salida
 
     @api.model
+    def _visar_vocabulario_originales(self, paso, clave):
+        """Las palabras DE FABRICA de una opcion, las del codigo.
+
+        Siguen siendo el suelo recuperable: lo que afirman las pruebas, lo que
+        sirve en una base recien creada, y lo que devuelve el boton «Restaurar
+        valores originales». Lo que dejaron de ser -desde el 29-sep-2026- es lo
+        que el agente usa cuando hay un registro en Odoo diciendo otra cosa.
+        """
+        return list((_VISAR_VOCABULARIO_BASE.get(paso) or {}).get(clave) or ())
+
+    @api.model
     def _visar_vocabulario_overlay(self):
-        """{(paso, clave): [palabras]} que anadio un consultor en Odoo.
+        """{(paso, clave): [palabras]} segun los registros ACTIVOS de Odoo.
 
         Una sola lectura por llamada a `_visar_wizard_step_options`, que es una
-        por mensaje del cliente. Los registros archivados no entran: `search`
-        filtra por `active` y esa es justo la forma de apagar una palabra que
-        resulto ser mala idea, sin borrarla.
+        por mensaje del cliente.
+
+        **Una clave presente MANDA, aunque su lista venga vacia.** Esa es toda
+        la diferencia con la version aditiva de antes: `(paso, clave) in overlay`
+        significa "de esto se encarga Odoo", y una lista vacia es una respuesta
+        legitima -la opcion no reconoce ninguna palabra, como `valuation`-. Si
+        se saltaran las vacias, vaciar una opcion desde la pantalla resucitaria
+        en silencio las palabras del codigo, que es justo lo que se viene a
+        arreglar.
+
+        Los archivados no entran (`search` filtra por `active`), y eso ahora
+        significa "vuelve a los valores de fabrica", no "no sumes nada".
         """
         overlay = {}
         if 'visar.agent.vocabulario' not in self.env:
@@ -1824,29 +1844,41 @@ class AppointmentType(models.Model):
             return overlay
         Vocab = self.env['visar.agent.vocabulario'].sudo()
         for fila in Vocab.search_read([], ['paso', 'opcion', 'palabras']):
-            palabras = self._visar_vocabulario_lineas(fila['palabras'])
-            if palabras:
-                clave = (fila['paso'], fila['opcion'])
-                overlay.setdefault(clave, []).extend(palabras)
+            clave = (fila['paso'], fila['opcion'])
+            overlay[clave] = self._visar_vocabulario_lineas(fila['palabras'])
         return overlay
 
     @api.model
     def _visar_vocabulario(self, overlay, paso, clave):
-        """Las palabras del CLIENTE para esa opcion: codigo + Odoo, sin repetir.
+        """Las palabras del CLIENTE para esa opcion. **Manda Odoo si hay fila.**
 
-        **Solo suma, nunca quita.** El codigo es el piso: es lo que afirman las
-        pruebas y lo que sobrevive a una base nueva. Si una palabra del codigo
-        clasifica mal, eso es un arreglo de codigo con su prueba —quitarla desde
-        una pantalla dejaria el repositorio verde mientras produccion hace otra
-        cosa, que es exactamente el fallo que este modulo lleva dos meses
-        evitando.
+        Hasta el 29-sep-2026 esto SUMABA: codigo + pantalla, y no habia forma de
+        quitar una palabra del codigo. La razon era buena -el codigo es lo que
+        afirman las pruebas y lo que sirve en una base nueva- pero el precio se
+        veia en produccion: los diccionarios de fabrica eran invisibles desde
+        Odoo y la pantalla llevaba meses **con cero filas**, porque lo unico que
+        ofrecia era anadir a ciegas sobre una lista que no se podia leer.
 
-        La comparacion para no repetir es la del runtime (sin acentos, en
-        minusculas): repetir una pista no es inocuo, suma un punto de mas.
+        Ahora la fila es la verdad y el codigo es el suelo recuperable:
+
+          * hay fila activa -> mandan sus palabras, y solo esas;
+          * no hay fila (o esta archivada) -> mandan las del codigo.
+
+        Que el codigo siga siendo recuperable es lo que hace esto reversible:
+        `palabras_originales` lo ensena al lado y el boton «Restaurar valores
+        originales» lo devuelve. Una ranura nueva que un desarrollador anada al
+        codigo tambien sigue funcionando antes de sembrarse.
+
+        La deduplicacion es la del runtime (sin acentos, en minusculas): repetir
+        una pista no es inocuo, suma un punto de mas en `classify._scores`.
         """
-        palabras = list((_VISAR_VOCABULARIO_BASE.get(paso) or {}).get(clave) or ())
-        vistas = {_visar_vocab_norm(palabra) for palabra in palabras}
-        for palabra in (overlay or {}).get((paso, clave), ()):
+        if overlay and (paso, clave) in overlay:
+            crudas = overlay[(paso, clave)]
+        else:
+            crudas = self._visar_vocabulario_originales(paso, clave)
+        palabras = []
+        vistas = set()
+        for palabra in crudas:
             limpia = _visar_vocab_norm(palabra)
             if limpia and limpia not in vistas:
                 vistas.add(limpia)
