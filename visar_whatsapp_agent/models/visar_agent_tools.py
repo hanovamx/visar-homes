@@ -270,6 +270,11 @@ class VisarAgentTools(models.AbstractModel):
                           existing, other}; valores, cadenas no vacias. Una ruta
                           sin registro, archivada o en blanco esta AUSENTE, no
                           presente con None.
+          `correcciones`  dict[str, str]. SIEMPRE presente, SIEMPRE dict. Igual
+                          que `route_prompts`: {ruta: bloque ya renderizado}, y
+                          una ruta sin correcciones esta AUSENTE. El bloque va
+                          DESPUES de la memoria de ruta y ANTES del contexto
+                          del turno.
           `llm`           dict. Sin cambios ({} si no hay config).
 
         Las dos direcciones de compatibilidad:
@@ -294,6 +299,12 @@ class VisarAgentTools(models.AbstractModel):
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y
             # una petición de envío sigue sin poder nombrar ninguna.
             'wa_templates': self.env['visar.wa.template.route']._agent_payload(),
+            # Arreglos de conducta que ganan al prompt. Viajan YA RENDERIZADOS
+            # y por ruta -espejo exacto de `route_prompts`- para que la
+            # cabecera de precedencia exista en un solo sitio y la vista previa
+            # de Odoo sea literalmente lo que se manda. Ver
+            # `visar_agent_correccion.py`.
+            'correcciones': self.env['visar.agent.correccion']._agent_payload(),
         }
 
     # ------------------------------------------------------------------

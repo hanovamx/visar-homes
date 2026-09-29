@@ -1209,3 +1209,81 @@ roedores, protección general, termitas, chinches) **no tienen ni un sinónimo**
 código: se reconocen solo por las raíces de su etiqueta. Eran invisibles, así que nadie
 podía saberlo. Ahora son seis filas vacías a la vista, y llenarlas ya no cuesta un
 despliegue.
+
+---
+
+## [IMPLEMENTADO — 29-sep-2026] Correcciones: arreglos de conducta que ganan al prompt
+
+Las cosas pequeñas que se ven en el chat y hay que quitar ya —*«no saludes con Holi»*,
+*«no digas estimado cliente»*— no caben bien en el prompt base: son 38 000 caracteres,
+hay que releerlos, encontrar el sitio y arriesgarse a mover algo que funcionaba. Y muchas
+veces **el comportamiento lo causa el propio prompt**, así que no hay una frase que
+borrar: hay que contradecirla.
+
+`visar.agent.correccion` es esa contradicción, con cuatro decisiones que la sostienen.
+
+### 1. Van al final, y eso es posición, no retórica
+
+```
+[0] prompt base + catálogo     ← idéntico byte a byte en todas las rutas (cache)
+[1] memoria de la ruta
+[2] CORRECCIONES
+[3] contexto del turno (digresión / recontacto)
+```
+
+El bloque 0 tiene que ser idéntico en todas las rutas porque es el único que el proveedor
+marca para caché; todo lo que cambia va detrás. Resulta que detrás es también donde la
+recencia ayuda más con un modelo pequeño. Dos razones independientes, misma respuesta.
+
+**Delante del contexto del turno, y eso es deliberado.** `extra` lleva las barandillas de
+la digresión («no contestes el paso del cuestionario»), y ésas no pueden quedar por debajo
+de una corrección general escrita con otra cosa en la cabeza.
+
+### 2. El modelo nunca ve el ámbito
+
+El filtrado por ruta ocurre **en Odoo**. A la conversación solo llega la lista que aplica.
+Explicarle a un modelo pequeño que ignore la mitad de una lista es pedirle exactamente lo
+contrario de lo que se busca.
+
+Y por eso **Odoo renderiza el bloque entero** y lo manda ya montado por ruta
+(`{ruta: bloque}`, espejo exacto de `route_prompts`): así la cabecera de precedencia
+existe en **un solo repositorio** y la vista previa de la pantalla es literalmente lo que
+se manda. Repartirla entre los dos lados sería el problema de «dos front-ends» (I-11).
+
+### 3. Una corrección global NO entra en el cuestionario, salvo que se marque
+
+El caso real que esto evita: alguien escribe *«termina preguntando si necesita algo más»*
+para arreglar una queja de sequedad, y dentro del cuestionario el agente pregunta justo
+encima de la pregunta del sistema — el fallo de la doble pregunta al que la memoria de
+`schedule` dedica tres párrafos.
+
+### 4. El tope de 15 es el mecanismo, no un adorno
+
+Quince siguen leyéndose como excepciones; cuarenta son otro prompt, y ahí degradan todas,
+incluidas las que ya funcionaban. Al llegar al tope **hay que retirar una**, y retirar una
+es lo que obliga a preguntarse por qué sigue ahí después de tres meses. Sin el muro, esto
+se convierte en un segundo prompt que no mantiene nadie. El campo `dias` está en la lista
+por lo mismo.
+
+> **Esto NO es una garantía, y la pantalla lo dice.** Una corrección que contradice un
+> prompt de 38 000 caracteres la sigue un modelo pequeño *casi* siempre, no siempre.
+> Cuando una lleve tiempo y no pueda fallar, su sitio es el prompt base o la memoria de su
+> ruta. Es la sala de espera, no el destino.
+
+### Lo que se descartó
+
+- **Un campo `tipo`** (Prohibición / Obligación / Reemplazo). La idea era forzar una
+  redacción uniforme, pero el tipo solo elige un prefijo: quien escribe sigue redactando
+  libre, así que no entrega la uniformidad que promete. Lo que sí ayuda —preferir
+  «en vez de X, di Y» a «no digas X», porque una prohibición a secas deja al modelo sin
+  alternativa— vive ahora en el marcador de posición y en la ayuda del campo.
+- **Ámbito multi-ruta.** Odoo no tiene selección múltiple nativa y un modelo extra para
+  cinco constantes no se paga. Global o una ruta; quien necesite dos, escribe dos (y
+  cuentan dos contra el tope, que es honesto).
+
+### Sin respaldo local en el runtime
+
+A diferencia de las memorias de ruta, `correcciones` **no cae a ninguna copia del
+código**: una corrección es algo que alguien escribió hoy mirando una conversación, no una
+barandilla. Ausente significa «no hay ninguna», y eso es correcto. Un Odoo que no mande la
+clave deja el agente exactamente como antes de que esto existiera.

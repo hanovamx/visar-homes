@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         visar.agent.correccion - arreglos de conducta, sin tocar el prompt
+         ============================================================== -->
+
+    <record id="visar_agent_correccion_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.correccion.list</field>
+        <field name="model">visar.agent.correccion</field>
+        <field name="arch" type="xml">
+            <list string="Correcciones" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="texto"/>
+                <field name="rutas_donde_aplica" string="Se aplica en"/>
+                <!-- Los dias a la vista y no escondidos en el formulario: una
+                     correccion de tres meses es la senal de que su sitio ya es
+                     el prompt, y nadie va a abrir siete fichas para verlo. -->
+                <field name="dias" string="Dias"/>
+                <field name="ambito" column_invisible="1"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_correccion_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.correccion.search</field>
+        <field name="model">visar.agent.correccion</field>
+        <field name="arch" type="xml">
+            <search string="Correcciones">
+                <field name="texto"/>
+                <field name="motivo"/>
+                <filter name="archivadas" string="Archivadas"
+                        domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="globales" string="Todas las rutas"
+                        domain="[('ambito', '=', 'global')]"/>
+                <filter name="en_cuestionario" string="Tambien en el agendado"
+                        domain="[('en_cuestionario', '=', True)]"/>
+                <separator/>
+                <filter name="por_ambito" string="Ambito"
+                        context="{'group_by': 'ambito'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_correccion_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.correccion.form</field>
+        <field name="model">visar.agent.correccion</field>
+        <field name="arch" type="xml">
+            <form string="Correccion">
+                <header>
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            help="Refresca la config en el runtime, sin esperar los 15 minutos de la cache."/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="texto"/>
+                        <h1>
+                            <field name="texto"
+                                   placeholder="En vez de «Holi», saluda con «Hola»"/>
+                        </h1>
+                    </div>
+
+                    <div class="alert alert-info" role="alert">
+                        <strong>Esto es la sala de espera, no el destino.</strong>
+                        Una correccion que contradice un prompt de 38 000
+                        caracteres la sigue el modelo <em>casi</em> siempre, no
+                        siempre. Cuando una lleve tiempo y no pueda fallar, su
+                        sitio es el <strong>prompt base</strong> o la memoria de
+                        su ruta.
+                    </div>
+
+                    <div class="alert alert-warning" role="alert"
+                         invisible="dias &lt; 90 or not active">
+                        Esta correccion lleva <field name="dias" nolabel="1"
+                        readonly="1" class="oe_inline"/> dias puesta. Si ya es
+                        permanente, conviene moverla al prompt y retirarla de
+                        aqui: el hueco hace falta para la siguiente.
+                    </div>
+
+                    <group>
+                        <group>
+                            <field name="ambito" widget="radio"/>
+                            <field name="ruta" invisible="ambito != 'ruta'"
+                                   required="ambito == 'ruta'"/>
+                            <field name="en_cuestionario"
+                                   invisible="ambito == 'ruta'"/>
+                            <field name="rutas_donde_aplica" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="active"/>
+                            <field name="sequence"/>
+                            <field name="dias" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <div class="alert alert-warning" role="alert"
+                         invisible="ambito != 'global' or en_cuestionario">
+                        <strong>No entra en el cuestionario de agendado</strong>,
+                        y es lo recomendable. Ahi hay reglas que sostienen el
+                        flujo —no contestar el paso, no terminar preguntando— y
+                        una correccion general puede romperlas sin querer.
+                    </div>
+
+                    <group string="Que se observo">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            Opcional, y <strong>no se le manda al agente</strong>.
+                            Es para quien lea esto dentro de tres meses y tenga
+                            que decidir si ya sobra.
+                        </div>
+                        <field name="motivo" nolabel="1" colspan="2"
+                               placeholder="El 29-sep abrio tres conversaciones con «Holi». Suena a cuenta personal, no a Visar Homes."/>
+                    </group>
+
+                    <group string="Lo que recibe el modelo">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            El bloque completo, tal y como se manda, con las
+                            demas correcciones que comparten ruta. Va
+                            <strong>despues</strong> del prompt base, del
+                            catalogo y de la memoria de la ruta.
+                        </div>
+                        <field name="vista_previa" nolabel="1" colspan="2"
+                               readonly="1" widget="text"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_correccion_action" model="ir.actions.act_window">
+        <field name="name">Correcciones</field>
+        <field name="res_model">visar.agent.correccion</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="visar_agent_correccion_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Aqui no hay ninguna correccion
+            </p>
+            <p>
+                Para los arreglos pequenios de conducta que se ven en el chat y
+                hay que quitar ya: <em>"no saludes con Holi"</em>,
+                <em>"no digas «estimado cliente»"</em>. Se anaden
+                <strong>al final</strong> del prompt, asi que ganan a lo que se
+                haya dicho antes.
+            </p>
+            <p>
+                Caben <strong>15</strong>. No es un limite tecnico: mas alla de
+                ahi dejan de leerse como excepciones y empiezan a estorbarse
+                entre ellas. Lo que sea permanente va al prompt base.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_correcciones"
+              name="Correcciones"
+              parent="menu_agent_root"
+              action="visar_agent_correccion_action"
+              sequence="22"/>
+
+</odoo>
