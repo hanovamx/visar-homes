@@ -101,10 +101,20 @@
                 <filter name="con_cobertura" string="Con cobertura"
                         domain="[('served', '=', True)]"/>
                 <separator/>
-                <!-- "Con gente de verdad": lo que queda al descontar al equipo y
-                     las corridas de prueba. Sin este filtro la lista de una base
-                     recién estrenada parece tener demanda que no tiene. -->
-                <filter name="con_interesados" string="Con interesados reales"
+                <!-- Lo que queda al descontar al equipo y las corridas de
+                     prueba. Sin esto la lista de una base recién estrenada parece
+                     tener demanda que no tiene.
+
+                     Va contra `consultas` y NO contra `numeros_distintos`, y la
+                     diferencia no es cosmética: una reserva web no trae teléfono
+                     en el paso de la dirección, así que suma consulta y no suma
+                     número. Filtrando por números, la pantalla se abría VACÍA
+                     teniendo tres registros dentro — pasó en producción el
+                     27-sep-2026, con los únicos datos que había. `consultas` ya
+                     descuenta los internos, que es lo que se quería esconder. -->
+                <filter name="con_interesados" string="Sin números internos"
+                        domain="[('consultas', '>', 0)]"/>
+                <filter name="con_numeros" string="Con teléfono para llamar"
                         domain="[('numeros_distintos', '>', 0)]"/>
                 <filter name="recientes" string="Últimos 30 días"
                         domain="[('ultima', '>=', (context_today() - datetime.timedelta(days=30)).strftime('%Y-%m-%d'))]"/>
@@ -169,6 +179,12 @@
                 Filtra por <b>Sin cobertura</b> para ver de dónde nos escriben y
                 no podemos atender: la columna que importa para decidir una
                 expansión es <b>Números distintos</b>, no <b>Consultas</b>.
+            </p>
+            <p>
+                <b>Números distintos</b> puede salir en cero con consultas
+                encima: las reservas del <b>sitio web</b> no piden teléfono en el
+                paso de la dirección, así que cuentan como consulta pero no hay a
+                quién llamar. Las de WhatsApp sí traen número.
             </p>
         </field>
     </record>

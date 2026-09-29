@@ -336,6 +336,48 @@ class TestCpInteres(TransactionCase):
         self.assertEqual(self._fila(CP_DESCONOCIDO).consultas, 1)
 
     # ------------------------------------------------------------------
+    # La pantalla tiene que ENSEÑAR lo que se guardó
+    # ------------------------------------------------------------------
+
+    def _filtro_por_omision(self):
+        """El dominio del filtro que el action deja puesto al abrir la pantalla."""
+        import lxml.etree as ET
+        from odoo.tools.safe_eval import safe_eval
+        accion = self.env.ref('visar_appointment.visar_cp_interes_action')
+        contexto = safe_eval(accion.context or '{}')
+        puestos = [clave[len('search_default_'):] for clave in contexto
+                   if clave.startswith('search_default_')]
+        arch = ET.fromstring(
+            self.env.ref('visar_appointment.visar_cp_interes_view_search').arch)
+        dominio = []
+        for filtro in arch.iter('filter'):
+            if filtro.get('name') in puestos:
+                dominio += safe_eval(filtro.get('domain') or '[]')
+        return dominio
+
+    def test_una_reserva_web_se_ve_al_abrir_la_pantalla(self):
+        """REGRESIÓN (producción, 27-sep-2026).
+
+        El filtro por omisión miraba `numeros_distintos`, y una reserva web no
+        trae teléfono en el paso de la dirección: la pantalla se abrió **vacía**
+        teniendo tres registros dentro, que eran los únicos datos que había. Se
+        esconden los internos, no los anónimos.
+        """
+        self.Interes._visar_registrar(CP_DESCONOCIDO, origen='web', motivo='agendado')
+        fila = self._fila(CP_DESCONOCIDO)
+        self.assertEqual(fila.numeros_distintos, 0, "la web no deja teléfono")
+        visibles = self.Interes.search(self._filtro_por_omision())
+        self.assertIn(fila, visibles,
+                      "una reserva web tiene que verse al abrir la pantalla")
+
+    def test_un_cp_solo_interno_sigue_escondido_al_abrir(self):
+        """La otra mitad: lo que el filtro SÍ tiene que esconder."""
+        self.Interes._visar_registrar(CP_DESCONOCIDO, phone='5219990001234')
+        fila = self._fila(CP_DESCONOCIDO)
+        self.assertTrue(fila.line_ids.interno)
+        self.assertNotIn(fila, self.Interes.search(self._filtro_por_omision()))
+
+    # ------------------------------------------------------------------
     # Retención
     # ------------------------------------------------------------------
 
