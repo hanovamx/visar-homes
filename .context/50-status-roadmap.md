@@ -1,5 +1,25 @@
 # Estado y roadmap
 
+> **29-sep-2026 — el módulo del agente, más usable: prompts como catálogo cerrado y
+> Vocabulario editable de verdad. DESPLEGADO en `visar-db`** (visar_appointment
+> 19.0.2.29.0, visar_whatsapp_agent 19.0.1.28.0;
+> `deploy-prompts-vocabulario-29sep.sh`, backup
+> `visar-db_prompts-vocabulario-29sep_20260929-180450.sql.gz`).
+>
+> Los prompts pasan a ser **seis registros fijos** (el base y una memoria por ruta): ni se
+> crean ni se borran, porque las rutas las define el runtime. Producción tenía **dos**
+> prompts base y mandaba el que nadie sembró; la migración archivó el eclipsado sin tocar
+> lo que el agente lee. Y la ruta **Información**, que la pantalla declaraba muerta en
+> rojo, es el **primer botón del menú de bienvenida** — en producción era la memoria de
+> ruta más larga y más editada de las cinco.
+>
+> El **Vocabulario** pasa a mandar sobre los diccionarios del código, que quedan como
+> suelo recuperable (botón *Restaurar valores originales*, y archivar vuelve a fábrica).
+> Se sembraron las **17 ranuras** con lo que el código ya decía: la pantalla llevaba meses
+> con **cero filas** porque no se podía leer lo que había debajo. Al sembrar salió que
+> **seis de las siete opciones de plagas no tienen ni un sinónimo** —se reconocen solo por
+> su etiqueta—, y ahora se pueden llenar sin desplegar. Detalle en `40-decisions.md`.
+>
 > **23-sep-2026 — "Mis servicios" del agente: los tratamientos cotizados y las visitas sin
 > venta detrás. DESPLEGADO en `visar-db`** (visar_base 19.0.1.14.0, visar_field_app
 > 19.0.1.41.0, visar_whatsapp_agent 19.0.1.26.0; `deploy-tratamiento-servicio-23sep.sh`).
