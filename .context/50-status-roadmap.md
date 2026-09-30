@@ -1,5 +1,25 @@
 # Estado y roadmap
 
+> **30-sep-2026 (2.º) — Contactos del agente: por fin hay lista de quién le ha escrito.
+> DESPLEGADO en `visar-db`** (visar_whatsapp_agent 19.0.1.30.0 y el runtime;
+> `deploy-contactos-30sep.sh`, backup `visar-db_contactos-30sep_20260930-233717.sql.gz`).
+>
+> `visar.agent.contacto`, una fila por teléfono, alimentada por el RPC acotado
+> `agent_track_inbound`. **Solo lo que ENTRA** (los taps de botón también; los avisos
+> salientes no). La clave es el `nat10`, no el cliente: el agente crea la ficha al cerrar
+> una reserva, así que `partner_id` vacío es lo normal. El enlace se rehace en cada mensaje
+> y un cron nocturno recoge a quien se hizo cliente por la web y ya no escribe. Los números
+> internos se marcan reutilizando el juicio del reporte de CP (los 177 de la suite empiezan
+> con `999000`).
+>
+> La llamada va **desprendida** —pasa en cada mensaje, así que no se espera a Odoo—, y al
+> principio del turno: el precio es que la ruta guardada es la que traía la conversación,
+> no la que resulte. **Nace vacío: no cambia nada hasta que entre el primer mensaje.**
+>
+> Pendiente y con diseño acordado: el tablero de rutas (necesita un registro por mensaje,
+> otra tabla) y los **facts** del cliente (ranuras cerradas, escritas al cerrar la
+> conversación; fase 1 los escriben personas). Detalle en `40-decisions.md`.
+>
 > **30-sep-2026 — Correcciones de conducta del agente, y el aviso de ruta que se quejaba
 > de la cita de la propia visita. DESPLEGADO en `visar-db`** (visar_appointment
 > 19.0.2.30.0, visar_whatsapp_agent 19.0.1.29.0 y el runtime;
