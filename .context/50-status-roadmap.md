@@ -1,5 +1,26 @@
 # Estado y roadmap
 
+> **30-sep-2026 — Correcciones de conducta del agente, y el aviso de ruta que se quejaba
+> de la cita de la propia visita. DESPLEGADO en `visar-db`** (visar_appointment
+> 19.0.2.30.0, visar_whatsapp_agent 19.0.1.29.0 y el runtime;
+> `deploy-correcciones-ruta-30sep.sh`, backup
+> `visar-db_correcciones-ruta-30sep_20260930-231714.sql.gz`).
+>
+> **Correcciones** (`visar.agent.correccion`): pantalla para los arreglos pequeños de
+> conducta —*«no saludes con Holi»*— que van al final del prompt y le ganan. Una línea por
+> corrección, tope de 15, y las globales **no** entran en el cuestionario salvo que se
+> marque. Odoo manda el bloque ya renderizado y ya filtrado por ruta, así que el modelo
+> nunca ve el ámbito. **Al desplegar no hay ninguna escrita: no cambia una sola
+> conversación** hasta que alguien escriba la primera y pulse *Aplicar ahora*.
+>
+> **Aviso de ruta**: al contratar una póliza desde la web, la visita nacía con *«el técnico
+> ya tiene otro servicio a esa hora»* y no había ninguna cita extra — era la suya.
+> `_visar_ruta_cita()` solo miraba `visar_sale_line_ids`, y la cita de una visita de póliza
+> vive en `visar_source_line_ids`. La migración limpió la visita 710 y **conservó la 663**,
+> cuyo aviso sí era real (movida a mano a una hora ocupada). Detalle en `40-decisions.md`,
+> con el falso NEGATIVO que queda pendiente de una decisión de producto: una tarea movida
+> a mano sigue ocultando la franja de su cita vieja.
+>
 > **29-sep-2026 — el módulo del agente, más usable: prompts como catálogo cerrado y
 > Vocabulario editable de verdad. DESPLEGADO en `visar-db`** (visar_appointment
 > 19.0.2.29.0, visar_whatsapp_agent 19.0.1.28.0;
