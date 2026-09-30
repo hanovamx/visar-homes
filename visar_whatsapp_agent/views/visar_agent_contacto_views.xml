@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         visar.agent.contacto - quien le ha escrito al agente
+         ============================================================== -->
+
+    <record id="visar_agent_contacto_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.contacto.list</field>
+        <field name="model">visar.agent.contacto</field>
+        <field name="arch" type="xml">
+            <!-- Sin `create`: las filas las escribe el runtime cuando entra un
+                 mensaje. Una fila a mano seria un contacto que nunca escribio. -->
+            <list string="Contactos del agente" create="false"
+                  decoration-muted="interno">
+                <field name="ultimo_mensaje" string="Ultimo mensaje"/>
+                <field name="partner_id" string="Cliente"/>
+                <field name="name" string="Telefono"/>
+                <field name="mensajes" string="Mensajes" sum="Mensajes recibidos"/>
+                <field name="ultima_ruta" string="Ultima ruta"/>
+                <field name="primer_mensaje" string="Primer mensaje" optional="hide"/>
+                <field name="partner_ambiguo" string="Numero repetido" optional="show"/>
+                <field name="interno" string="Interno" optional="hide"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_contacto_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.contacto.search</field>
+        <field name="model">visar.agent.contacto</field>
+        <field name="arch" type="xml">
+            <search string="Contactos del agente">
+                <field name="name" string="Telefono"/>
+                <field name="partner_id"/>
+                <!-- Los internos FUERA por omision: son el equipo y las corridas
+                     de prueba, y son quienes mas le escriben al agente. Contarlos
+                     inflaria justo la columna que se mira para decidir. -->
+                <filter name="reales" string="Solo clientes reales"
+                        domain="[('interno', '=', False)]"/>
+                <separator/>
+                <filter name="sin_cliente" string="Sin cliente"
+                        domain="[('partner_id', '=', False)]"/>
+                <filter name="ya_clientes" string="Ya son clientes"
+                        domain="[('partner_id', '!=', False)]"/>
+                <filter name="repetidos" string="Numero repetido"
+                        domain="[('partner_ambiguo', '=', True)]"/>
+                <separator/>
+                <filter name="internos" string="Internos y pruebas"
+                        domain="[('interno', '=', True)]"/>
+                <filter name="archivados" string="Archivados"
+                        domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="por_ruta" string="Ultima ruta"
+                        context="{'group_by': 'ultima_ruta'}"/>
+                <filter name="por_mes" string="Ultimo mensaje"
+                        context="{'group_by': 'ultimo_mensaje:month'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_contacto_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.contacto.form</field>
+        <field name="model">visar.agent.contacto</field>
+        <field name="arch" type="xml">
+            <form string="Contacto del agente" create="false">
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="display_name" readonly="1"/></h1>
+                    </div>
+
+                    <div class="alert alert-info" role="alert"
+                         invisible="partner_id">
+                        <strong>Todavia no es cliente.</strong> No es un error: el
+                        agente crea el cliente al <em>cerrar una reserva</em>, asi
+                        que quien pregunta un precio y se va no llega a tener
+                        ficha. Si reserva mas adelante, este enlace se rehace solo.
+                    </div>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="not partner_ambiguo">
+                        <strong>Mas de un cliente tiene este numero.</strong> No se
+                        elige ninguno a proposito: equivocarse aqui significa
+                        ensenar los datos de otra persona, y es la misma regla que
+                        sigue el agente al contestar. Une los duplicados en
+                        <em>Contactos</em> y este enlace se arregla solo.
+                    </div>
+                    <div class="alert alert-secondary" role="alert"
+                         invisible="not interno">
+                        Numero del equipo o de una corrida de prueba. Se guarda,
+                        pero queda fuera de los listados por omision.
+                    </div>
+
+                    <group>
+                        <group>
+                            <field name="partner_id"/>
+                            <field name="name" string="Telefono"/>
+                            <field name="phone"/>
+                        </group>
+                        <group>
+                            <field name="mensajes"/>
+                            <field name="primer_mensaje"/>
+                            <field name="ultimo_mensaje"/>
+                            <field name="ultima_ruta"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="partner_ambiguo" readonly="1"/>
+                        <field name="interno" readonly="1"/>
+                        <field name="active"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_contacto_action" model="ir.actions.act_window">
+        <field name="name">Contactos</field>
+        <field name="res_model">visar.agent.contacto</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="visar_agent_contacto_view_search"/>
+        <!-- Arranca sin los internos: si no, lo primero que se ve son los
+             telefonos de las pruebas. -->
+        <field name="context">{'search_default_reales': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Aqui todavia no ha escrito nadie
+            </p>
+            <p>
+                Una fila por telefono que le ha <strong>escrito</strong> al
+                agente. Los avisos que Odoo manda (en camino, llegada, reagenda)
+                no cuentan: eso ya se ve en las tareas. Lo que no existia en
+                ninguna parte es quien escribio <em>el</em>.
+            </p>
+            <p>
+                Que un contacto no tenga cliente es normal: el agente crea la
+                ficha al cerrar una reserva, asi que quien solo pregunta no llega
+                a tenerla.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_contactos"
+              name="Contactos"
+              parent="menu_agent_root"
+              action="visar_agent_contacto_action"
+              sequence="5"/>
+
+</odoo>

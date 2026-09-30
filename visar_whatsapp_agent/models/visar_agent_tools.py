@@ -1258,6 +1258,37 @@ class VisarAgentTools(models.AbstractModel):
         }
 
     @api.model
+    def agent_track_inbound(self, payload):
+        """Anota que ENTRO un mensaje. Best-effort, nunca lanza.
+
+        `payload` = {
+          "phone": "5218112345678",
+          "ruta":  "reception" | "info" | ... | None   # donde estaba la charla
+        }
+
+        Devuelve {"contacto_id": int|None, "partner_id": int|None,
+                  "mensajes": int}.
+
+        **Solo lo que entra.** Un aviso saliente no pasa por aqui a proposito: el
+        runtime lo llama desde el handler de mensajes recibidos, no desde
+        `/send-notification`. Si contara lo saliente, esta lista seria "a quien le
+        hemos escrito", que ya se puede sacar de las tareas; lo que no existe en
+        ninguna parte es quien escribio EL.
+
+        Igual que `agent_track_cp`: el telefono lo pone el RUNTIME, no el modelo.
+        Quien sabe de quien es el mensaje es el canal, y el LLM no debe poder
+        inventarse un numero.
+        """
+        payload = payload or {}
+        contacto = self.env['visar.agent.contacto']._visar_registrar(
+            payload.get('phone'), ruta=payload.get('ruta'))
+        return {
+            'contacto_id': contacto.id or None,
+            'partner_id': contacto.partner_id.id or None,
+            'mensajes': contacto.mensajes or 0,
+        }
+
+    @api.model
     def agent_track_lead(self, payload):
         """Registra una interaccion de WhatsApp como lead de CRM en 'Nuevo'.
 

@@ -1336,3 +1336,72 @@ avisos legítimos.
 > `appointment.booking.line`—. O sea, el día se ve más vacío de lo que está. Arreglarlo
 > obliga a decidir antes qué debería pasar con la cita cuando oficina arrastra la tarea, y
 > eso es una decisión de producto, no de código.
+
+---
+
+## [IMPLEMENTADO — 30-sep-2026] Contactos del agente: quien le ha ESCRITO
+
+No existía ninguna lista de con quién ha hablado el agente. El estado de las
+conversaciones vive en un SQLite del runtime (`app/conversation/sqlite_store.py`): no se
+puede consultar desde Odoo, se borra con la retención y no tiene pantalla. Lo único que
+llegaba a Odoo era un lead de CRM cuando alguien cotizaba, y un CP en el reporte de
+expansión. **De quien preguntaba una duda y se iba no quedaba nada.**
+
+`visar.agent.contacto`, una fila por teléfono, alimentada por un RPC nuevo de escritura
+acotada (`agent_track_inbound`, hermano de `agent_track_cp` y `agent_track_lead`).
+
+### Solo lo que ENTRA
+
+Un aviso saliente no crea contacto. Odoo le escribe a clientes que nunca han abierto una
+conversación, y contarlos convertiría esto en «a quién le hemos escrito», que ya sale de
+las tareas. Por eso el runtime lo llama desde el handler de mensajes recibidos y **no**
+desde `/send-notification`. Hay una prueba que lo afirma.
+
+Cuenta también los **taps de botón**: quien contesta el cuestionario a botonazos
+aparecería con un solo mensaje y sin actividad reciente.
+
+### La clave es el teléfono, no el cliente
+
+La mayoría de quien escribe no es `res.partner` y puede no llegar a serlo: el agente crea
+el cliente **al cerrar una reserva** (`_agent_booking_partner`). Así que la fila nace con
+el `nat10` —los últimos 10 dígitos, la **misma** clave que `_agent_find_partner`— y
+`partner_id` vacío no es un error.
+
+**El cliente se vuelve a resolver, no se fija al crear.** En cada mensaje, más un cron
+nocturno para quien se hizo cliente por la web y ya no escribe —ese es justo el caso que
+el enlace por mensaje no cubre—. El cron no pisa un enlace puesto a mano.
+
+**La ambigüedad no se adivina**: dos partners con el mismo número → ninguno, y la fila lo
+dice. Misma política que `_agent_find_partner` y `_agent_booking_partner`. Si esta pantalla
+la resolviera a su manera, enseñaría un nombre distinto del que el agente usa al contestar.
+
+### Los números internos se marcan, no se borran
+
+Se reutiliza **el mismo** juicio que el reporte de códigos postales
+(`visar.cp.interes.linea._visar_es_interno`) en vez de escribir otro: dos definiciones de
+«interno» divergen en cuanto alguien toque una. Los 177 teléfonos de la suite de aceptación
+empiezan con `999000`; sin marcarlos la lista nacería con 177 contactos falsos. La pantalla
+arranca con `search_default_reales`.
+
+### Desprendido, y es la diferencia con los otros trackers
+
+`_track_lead` y `_track_cp` se **esperan**: ocurren de vez en cuando y su orden importa.
+Esto ocurre en **cada mensaje**, así que un `await` le sumaría el viaje de ida y vuelta a
+Odoo a la latencia de **todas** las respuestas. Va en una `asyncio.Task` desprendida, con
+un `set` que la sostiene —`create_task` devuelve la única referencia fuerte: sin guardarla,
+el recolector puede llevarse la tarea a medias y el fallo no aparece en ningún log—.
+
+Se registra al **principio** del turno, no al final: `handle_message` tiene una docena de
+salidas y una llamada al final se perdería en la mayoría. Lo que se gana en fiabilidad se
+paga en detalle, y el trato está escrito: **la ruta que se guarda es la que traía la
+conversación al llegar el mensaje**, no la que resulte del turno.
+
+### Lo que NO entra todavía
+
+- **El tablero de rutas.** «A qué ruta se entra más» necesita un registro **por mensaje**
+  —una tabla aparte y bastante más grande—. Este modelo se diseña para no estorbarla.
+- **Los facts del cliente.** Se decidió dejarlos para después y, cuando entren, con el
+  agente escribiendo en **ranuras cerradas** (tipo de vivienda, mascotas, plaga
+  recurrente, preferencia de horario) y **al cerrar la conversación**, no prosa libre en
+  cada mensaje: eso acota el coste a una llamada por conversación y quita de encima la
+  inyección y la deriva. Fase 1 los escriben personas.
