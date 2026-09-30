@@ -234,3 +234,100 @@ class TestAvisoDeRutaEnLaTarea(TransactionCase):
                    lambda _self, coords, depart_at=None: llamadas.append(1)):
             tarea.write({'name': 'Otro nombre'})
         self.assertFalse(llamadas)
+
+    # ------------------------------------------------------------------
+    # Su propia cita no cuenta como parada ajena
+    # ------------------------------------------------------------------
+    #
+    # Reportado el 30-sep-2026: al contratar una póliza desde el sitio web, la
+    # visita salía con *«el técnico ya tiene otro servicio a esa hora»* y al
+    # revisarlo no había ninguna cita extra. No la había: era la suya.
+
+    def _linea_con_cita(self, evento, orden=None, para_task=None):
+        """Una línea de pedido que apunta a `evento`, como la de una reserva."""
+        orden = orden or self.env['sale.order'].create(
+            {'partner_id': self.cliente.id})
+        producto = self.env['product.product'].create(
+            {'name': 'Servicio de prueba', 'type': 'service'})
+        vals = {'order_id': orden.id, 'product_id': producto.id,
+                'calendar_event_id': evento.id}
+        if para_task is not None:
+            vals['task_id'] = para_task.id
+        return self.env['sale.order.line'].create(vals)
+
+    def _cita_propia(self, hora, dias=1):
+        """La cita de la PROPIA tarea: mismo técnico, misma franja."""
+        inicio = self._manana(hora, dias=dias)
+        evento = self.env['calendar.event'].create({
+            'name': 'Reserva del cliente',
+            'start': inicio,
+            'stop': fields.Datetime.add(inicio, hours=1),
+            'partner_ids': [(4, self.cliente.id)],
+            'appointment_type_id': self.tipo.id,
+        })
+        self.env['appointment.booking.line'].create({
+            'calendar_event_id': evento.id,
+            'appointment_resource_id': self.recurso.id,
+            'capacity_reserved': 1,
+        })
+        return evento
+
+    def test_una_visita_de_poliza_no_se_avisa_contra_si_misma(self):
+        """El fallo reportado, con la forma exacta que tenía en producción.
+
+        Una visita de póliza NO cuelga de `sale.order.line.task_id`: su cita
+        vive en `visar_source_line_ids`. Mirando solo el o2m se quedaba sin
+        cita, su propia franja contaba como parada del día y se avisaba de un
+        solapamiento consigo misma.
+        """
+        cita = self._cita_propia(15)
+        linea = self._linea_con_cita(cita)          # sin `task_id`, como la real
+        with self._matriz(10):
+            tarea = self._tarea(hora=15)
+            tarea.with_context(visar_sin_aviso_ruta=True).write(
+                {'visar_source_line_ids': [(6, 0, linea.ids)]})
+            tarea._visar_ruta_revisar()
+        self.assertFalse(
+            tarea.visar_ruta_aviso,
+            "se avisó de un solapamiento contra su propia cita de póliza")
+
+    def test_la_venta_puntual_sigue_reconociendo_su_cita(self):
+        """La regresión del arreglo: el o2m tiene que seguir contando."""
+        cita = self._cita_propia(15)
+        with self._matriz(10):
+            tarea = self._tarea(hora=15)
+            self._linea_con_cita(cita, para_task=tarea)
+            tarea._visar_ruta_revisar()
+        self.assertFalse(tarea.visar_ruta_aviso)
+
+    def test_un_solapamiento_de_verdad_si_se_avisa(self):
+        """Lo que NO se puede tapar: otra cita ajena en la misma franja.
+
+        Es el caso de la visita 663 en producción —movida a mano de las 16:00 a
+        las 17:00, donde el técnico ya tenía otro servicio—: ese aviso era
+        correcto y tiene que seguir saliendo.
+        """
+        self._parada(15)                            # cita AJENA a las 15:00
+        with self._matriz(10):
+            tarea = self._tarea(hora=15)
+        self.assertIn("otro servicio a esa hora", tarea.visar_ruta_aviso or '')
+
+    def test_con_varias_citas_se_ignora_la_de_su_propia_hora(self):
+        """Una reserva multi-servicio deja varios eventos en el mismo día.
+
+        Antes se ignoraba `[:1]` —un evento cualquiera de los varios—, así que
+        la franja propia seguía contando Y la ajena que se ignoró desaparecía
+        del día. Doble error en direcciones opuestas.
+        """
+        otra = self._cita_propia(15)                # 15:00, de la misma reserva
+        propia = self._cita_propia(17)              # 17:00, la de esta tarea
+        orden = self.env['sale.order'].create({'partner_id': self.cliente.id})
+        lineas = (self._linea_con_cita(otra, orden=orden)
+                  | self._linea_con_cita(propia, orden=orden))
+        with self._matriz(10):
+            tarea = self._tarea(hora=17)
+            tarea.with_context(visar_sin_aviso_ruta=True).write(
+                {'visar_source_line_ids': [(6, 0, lineas.ids)]})
+            self.assertEqual(tarea._visar_ruta_cita(), propia)
+            tarea._visar_ruta_revisar()
+        self.assertNotIn("otro servicio a esa hora", tarea.visar_ruta_aviso or '')

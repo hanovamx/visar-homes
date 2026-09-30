@@ -79,9 +79,41 @@ class ProjectTask(models.Model):
         return self.planned_date_begin >= fields.Datetime.now()
 
     def _visar_ruta_cita(self):
-        """La cita detrás de la tarea, si viene de una reserva. Puede no haber."""
+        """La cita detrás de la tarea, si viene de una reserva. Puede no haber.
+
+        Se miran **las dos** relaciones tarea→línea, y esa es la corrección del
+        30-sep-2026:
+
+        * `visar_sale_line_ids` — el o2m sobre `sale.order.line.task_id`, de
+          donde cuelga la venta puntual (y también lo que se venda DURANTE la
+          visita, como un upsell);
+        * `visar_source_line_ids` — las líneas de póliza que atiende la visita.
+          Una visita de póliza **no** cuelga del o2m: ese m2o solo puede apuntar
+          a una tarea y una línea de póliza genera N visitas a lo largo del
+          contrato (lo explica el propio campo en `visar_subscription`).
+
+        Con solo el o2m, una visita de póliza se quedaba **sin cita** aunque la
+        tuviera, y entonces `ignorar_event_id` iba en None: su propia franja
+        contaba como parada del día y el aviso decía *«el técnico ya tiene otro
+        servicio a esa hora»* señalando el servicio de la tarea consigo misma.
+        Pasó en la visita 710 (03-oct 15:00): la cita estaba en la línea de la
+        póliza S00389 y el o2m solo veía un «Malla protectora» de S00390, sin
+        evento.
+
+        Cuando hay varios eventos se elige el que **empieza a la misma hora que
+        la tarea**. Sin eso, una reserva multi-servicio (una cita por servicio,
+        cuatro eventos en el mismo día) ignoraría un evento cualquiera de los
+        cuatro: el suyo seguiría contando y, encima, la franja ajena que se
+        ignoró desaparecería del día.
+        """
         self.ensure_one()
-        eventos = self.visar_sale_line_ids.mapped('calendar_event_id')
+        eventos = (self.visar_sale_line_ids | self.visar_source_line_ids).mapped(
+            'calendar_event_id')
+        if len(eventos) > 1 and self.planned_date_begin:
+            propio = eventos.filtered(
+                lambda e: e.start == self.planned_date_begin)
+            if propio:
+                return propio[:1]
         return eventos[:1]
 
     def _visar_ruta_recursos(self):

@@ -1287,3 +1287,52 @@ A diferencia de las memorias de ruta, `correcciones` **no cae a ninguna copia de
 código**: una corrección es algo que alguien escribió hoy mirando una conversación, no una
 barandilla. Ausente significa «no hay ninguna», y eso es correcto. Un Odoo que no mande la
 clave deja el agente exactamente como antes de que esto existiera.
+
+---
+
+## [CORREGIDO — 30-sep-2026] El aviso de ruta se quejaba de la cita de la propia visita
+
+Reportado desde producción: al contratar una **póliza desde el sitio web**, la visita
+nacía con *«Pedro Martínez ya tiene otro servicio a esa hora»*, y al revisarlo **no había
+ninguna cita extra**. No la había: era la suya.
+
+`_visar_ruta_cita()` leía solo `visar_sale_line_ids` —el o2m sobre
+`sale.order.line.task_id`—. Pero una visita de póliza **no cuelga de ahí**, y el propio
+campo `visar_source_line_ids` lo explica: ese m2o solo puede apuntar a una tarea, y una
+línea de póliza genera N visitas a lo largo del contrato.
+
+El caso real, visita **710** (03-oct 15:00):
+
+| relación | línea | orden | evento |
+|---|---|---|---|
+| `visar_sale_line_ids` | 712 | S00390 | **sin evento** (era un upsell, «Malla protectora») |
+| `visar_source_line_ids` | 710 | S00389 (la póliza) | **367, 03-oct 15:00** ← su cita |
+
+Sin cita, `ignorar_event_id` iba en `None`, su propia franja contaba como parada del día,
+y `_visar_travel_vecinas` devolvía `solapa=True` contra sí misma.
+
+Ahora se miran **las dos** relaciones. Y cuando hay varios eventos se elige **el que
+empieza a la misma hora que la tarea**: una reserva multi-servicio deja una cita por
+servicio en el mismo día, y un `[:1]` ciego ignoraba un evento cualquiera de los cuatro —
+la franja propia seguía contando *y* la ajena que se ignoró desaparecía del día. Dos
+errores en direcciones opuestas.
+
+### Lo que NO se tapó
+
+La visita **663** llevaba el mismo texto y su aviso era **correcto**: se movió a mano de
+las 16:00 a las 17:00, y a las 17:00 el técnico ya tenía otro servicio (la visita 666,
+evento 357). Comprobado recalculando las dos contra la base real: la 710 queda limpia, la
+663 conserva su aviso.
+
+La migración `19.0.2.30.0` limpia el texto ya guardado **solo donde se puede demostrar que
+era el fallo** —la cita que resuelve ahora empieza a la misma hora que la tarea—, en vez de
+recalcular a lo bruto. Recalcular sería peligroso: `_visar_ruta_avisos` necesita Mapbox, y
+sin token o con la API caída devuelve lista vacía, así que un `-u` borraría también los
+avisos legítimos.
+
+> **Queda un falso NEGATIVO conocido, sin arreglar a propósito.** Cuando una tarea se mueve
+> a mano y su cita **no** se mueve con ella (la 663: tarea a las 17:00, cita a las 16:00),
+> se sigue ignorando el evento de las 16:00 —que sigue ocupando al técnico según su
+> `appointment.booking.line`—. O sea, el día se ve más vacío de lo que está. Arreglarlo
+> obliga a decidir antes qué debería pasar con la cita cuando oficina arrastra la tarea, y
+> eso es una decisión de producto, no de código.
