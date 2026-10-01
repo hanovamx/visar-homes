@@ -1556,3 +1556,64 @@ número a quien solo preguntó un precio suena a vigilancia, no a servicio.
 Que **el agente proponga** facts. Cuando entre: en las mismas ranuras cerradas, al cerrar
 la conversación (una llamada, no una por mensaje) y con alguien aprobando — `origen='agente'`
 ya existe para eso.
+
+---
+
+## [CORREGIDO — 1-oct-2026] Las direcciones se nombran aunque no sepamos nada de ellas
+
+La primera versión del bloque de facts solo listaba los domicilios **con datos**. Lo
+destapó el usuario preguntando por el flujo: *«¿cómo sería el ejemplo de una conversación
+en la que esto cambiaría el comportamiento?»*. La respuesta, comprobada, era **ninguna**:
+
+```
+Jonathan Velazquez — 4 domicilios, 0 facts
+bloque que recibiría: ''
+```
+
+Un cliente con cuatro direcciones y cero facts —el **100 %** de los casos el día del
+despliegue— recibía un bloque vacío, y el agente arrancaba a ciegas. **El valor de
+desambiguar no depende de saber algo del sitio: depende de que haya varios.**
+
+Ahora, con dos o más direcciones el bloque las nombra por colonia, y añade dos cosas que
+el usuario pidió explícitamente:
+
+- **la salida de «es una dirección NUEVA»** — *«¿qué pasa si un cliente no quiere para
+  ninguna de esas direcciones sino otra nueva?»*. Tener tres casas con nosotros no impide
+  mudarse, comprar otra o pedirlo para un familiar. Sin la salida, el agente acorrala al
+  cliente entre opciones que quizá no incluyen la que quiere;
+- **el recordatorio de que el CP y los metros se piden igual.** Tener direcciones
+  registradas no es haber contestado el precio, y un modelo pequeño daría por hecha la
+  primera de la lista.
+
+Detalles que salieron de los datos reales:
+
+- **Tope de 4 direcciones nombradas.** Hay un cliente con 31 y otro con 13: leerle trece
+  colonias a quien preguntó un precio es peor que no decirle ninguna. Pasado el tope no se
+  enumeran, pero el aviso de que **no suponga** sigue yendo.
+- **Colonias repetidas se desempatan con la calle.** Dos direcciones en «Las Torres» se
+  ofrecerían dos veces igual y el cliente no podría contestar.
+- **Con UNA sola dirección no se dice nada.** No hay nada que desambiguar, y nombrársela
+  solo invitaría al modelo a darla por buena; el cuestionario la pregunta de todas formas.
+
+### ⚠️ Hallazgo que limita todo esto: 32 de 39 clientes tienen el teléfono repetido
+
+Al verificar con clientes reales salieron vacíos dos de los tres. No era el código: es que
+**15 `res.partner` comparten el teléfono `8112772622`** (María José Arizmendi ×3, Leticia
+Martinez ×4, María López, Katalina Manzina ×2… mezclados con cuentas de prueba) y 8 comparten
+`7774501440`.
+
+```
+con teléfono            39
+en grupo ambiguo        32   ← el 82 %
+números repetidos        5
+números únicos            7
+```
+
+La política de ambigüedad —más de un partner con el mismo número ⇒ no se adivina— es
+**correcta** y protege de enseñarle a alguien los datos de otra persona. Pero significa que
+para el 82 % de los clientes con teléfono el agente **no puede identificarlos**: sin facts,
+sin «Mis servicios» y sin enlace de contacto. Probar en vivo con uno de esos números
+devuelve vacío, y sería razonable concluir que «no funciona».
+
+Casi con seguridad son restos de pruebas que reutilizaron el mismo teléfono. **Es limpieza
+de datos, no código**, y es el cuello de botella real de las tres funciones.

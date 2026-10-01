@@ -50,9 +50,30 @@ CABECERA = (
     "una frase corta en vez de suponerlo."
 )
 
+# Cuantas direcciones se le nombran al cliente. Mas alla de esto no se enumeran:
+# en produccion hay un cliente con 31 y otro con 13, y leerle trece colonias a
+# alguien que pregunto un precio es peor que no decirle ninguna.
+MAX_DOMICILIOS_NOMBRADOS = 4
+
+# ⚠️ LA SALIDA ES OBLIGATORIA. Sin el "o es una direccion nueva", el agente
+# acorrala al cliente entre opciones que quizas no incluyen la que quiere: tener
+# tres casas con nosotros no impide mudarse, comprar otra o pedirlo para un
+# familiar. Y sin la ultima linea, un modelo pequenio da por hecha la primera de
+# la lista — que es exactamente lo que el nivel "informa" existe para evitar.
 VARIOS_DOMICILIOS = (
-    "- Este cliente tiene VARIAS direcciones con nosotros. No adivines para cual "
-    "es: preguntale cual, nombrandolas por su colonia o su calle."
+    "- Este cliente tiene VARIAS direcciones con nosotros: %(lista)s.\n"
+    "- No adivines para cual es. Preguntale, nombrandoselas por su colonia, y "
+    "ofrece SIEMPRE la salida de que sea una direccion NUEVA.\n"
+    "- Que tenga direcciones con nosotros no significa que esta cita sea para "
+    "una de ellas. El codigo postal y los metros se piden igual."
+)
+# Con muchas direcciones no se enumeran, pero el aviso sigue haciendo falta: lo
+# que no puede pasar es que el agente suponga.
+MUCHOS_DOMICILIOS = (
+    "- Este cliente tiene %(cuantas)d direcciones con nosotros, demasiadas para "
+    "listarselas.\n"
+    "- Preguntale a cual de ellas es, o si es una direccion NUEVA. No supongas "
+    "ninguna, y pide el codigo postal y los metros igual."
 )
 
 
@@ -76,7 +97,14 @@ class VisarAgentFacts(models.AbstractModel):
 
     @api.model
     def _visar_facts_render(self, cliente_facts, domicilios):
-        """El bloque tal y como lo recibe el modelo. `''` si no hay nada que decir."""
+        """El bloque tal y como lo recibe el modelo. `''` si no hay nada que decir.
+
+        **Las direcciones se nombran aunque no sepamos NADA de ellas**, y esa es la
+        correccion del 1-oct-2026: la primera version solo listaba los domicilios
+        con datos, asi que un cliente con cuatro direcciones y cero facts —el 100%
+        de los casos al desplegar— recibia un bloque VACIO. El valor de
+        desambiguar no depende de saber algo del sitio; depende de que haya varios.
+        """
         lineas = []
         for ranura, valor in sorted(cliente_facts.items()):
             lineas.append("- %s: %s" % (
@@ -88,16 +116,33 @@ class VisarAgentFacts(models.AbstractModel):
                 "%s: %s" % (VISAR_FACT_ETIQUETA_DE.get(r, r), v)
                 for r, v in sorted(facts.items()))
             lineas.append("- Direccion «%s» -> %s" % (nombre, detalle))
-        if not lineas:
+
+        aviso = self._visar_facts_aviso_domicilios(domicilios)
+        if not lineas and not aviso:
             return ''
         cuerpo = [CABECERA, ""]
-        # El aviso de varias direcciones va ARRIBA de los datos: si fuera detras,
-        # el modelo ya habria leido un tipo de inmueble concreto y es justo lo que
-        # no debe dar por bueno.
-        if len([d for d in domicilios if d[1]]) > 1:
-            cuerpo.append(VARIOS_DOMICILIOS)
+        # El aviso va ARRIBA de los datos: si fuera detras, el modelo ya habria
+        # leido un tipo de inmueble concreto y es justo lo que no debe dar por
+        # bueno sin preguntar.
+        if aviso:
+            cuerpo.append(aviso)
         cuerpo += lineas
         return "\n".join(cuerpo)
+
+    @api.model
+    def _visar_facts_aviso_domicilios(self, domicilios):
+        """El aviso de varias direcciones, o `''`.
+
+        Con UNA sola no se dice nada: no hay nada que desambiguar, y nombrarsela
+        solo invitaria al modelo a darla por buena. El cuestionario pregunta la
+        direccion de todas formas.
+        """
+        if len(domicilios) < 2:
+            return ''
+        nombres = [n for n, _f in domicilios if n]
+        if len(domicilios) > MAX_DOMICILIOS_NOMBRADOS or not nombres:
+            return MUCHOS_DOMICILIOS % {'cuantas': len(domicilios)}
+        return VARIOS_DOMICILIOS % {'lista': ", ".join(nombres)}
 
     # ------------------------------------------------------------------
     # El RPC
@@ -146,11 +191,17 @@ class VisarAgentFacts(models.AbstractModel):
             r: v for r, v in Fact._visar_facts_de(comercial).items()
             if VISAR_FACT_AMBITO_DE.get(r) == 'cliente'}
         domicilios = []
-        for domicilio in comercial._visar_domicilios_de_servicio():
+        registros = comercial._visar_domicilios_de_servicio()
+        etiquetas = [self._visar_facts_etiqueta_domicilio(d) for d in registros]
+        for domicilio, nombre in zip(registros, etiquetas):
+            # Dos direcciones en la misma colonia no se pueden elegir por colonia:
+            # se desempatan con la calle. Sin esto el agente ofreceria dos veces
+            # "Las Torres" y el cliente no podria contestar.
+            if nombre and etiquetas.count(nombre) > 1 and domicilio.street:
+                nombre = "%s (%s)" % (nombre, domicilio.street)
             facts = {r: v for r, v in Fact._visar_facts_de(domicilio).items()
                      if VISAR_FACT_AMBITO_DE.get(r) == 'domicilio'}
-            domicilios.append(
-                (self._visar_facts_etiqueta_domicilio(domicilio), facts))
+            domicilios.append((nombre, facts))
         return {
             'block': self._visar_facts_render(cliente_facts, domicilios),
             'cliente': cliente_facts,

@@ -47,11 +47,20 @@ class TestAgentFacts(TransactionCase):
     # Qué llega
     # ------------------------------------------------------------------
 
-    def test_sin_datos_no_hay_bloque(self):
-        """El caso normal de un cliente del que todavía no sabemos nada."""
+    def test_con_varias_direcciones_hay_bloque_AUNQUE_no_sepamos_nada(self):
+        """La corrección del 1-oct-2026, y la destapó el usuario preguntando.
+
+        La primera versión solo listaba los domicilios CON datos, así que un
+        cliente con cuatro direcciones y cero facts —el 100% de los casos al
+        desplegar— recibía un bloque vacío y el agente arrancaba a ciegas. El
+        valor de desambiguar no depende de saber algo del sitio: depende de que
+        haya varios.
+        """
         datos = self._facts()
-        self.assertEqual(datos['block'], '')
-        self.assertEqual(datos['partner_id'], self.cliente.id)
+        self.assertTrue(datos['block'])
+        self.assertIn('Las Torres', datos['block'])
+        self.assertIn('Centro', datos['block'])
+        self.assertEqual(datos['cliente'], {})
 
     def test_un_telefono_desconocido_no_devuelve_nada(self):
         datos = self._facts('529999999999')
@@ -106,8 +115,55 @@ class TestAgentFacts(TransactionCase):
         self.assertIn('VARIAS', self._facts()['block'])
 
     def test_con_una_sola_direccion_no_se_le_dice_nada_de_eso(self):
+        """No hay nada que desambiguar, y nombrársela invitaría a darla por buena."""
+        self.local.unlink()
         self.Fact._visar_fact_set(self.casa, 'tipo_inmueble', 'Casa')
         self.assertNotIn('VARIAS', self._facts()['block'])
+
+    def test_una_sola_direccion_y_sin_datos_no_deja_bloque(self):
+        self.local.unlink()
+        self.assertEqual(self._facts()['block'], '')
+
+    def test_SIEMPRE_se_ofrece_la_salida_de_una_direccion_nueva(self):
+        """Tener tres casas con nosotros no impide mudarse ni pedirlo para otra.
+
+        Sin esta salida el agente acorrala al cliente entre opciones que quizás
+        no incluyen la que quiere.
+        """
+        bloque = self._facts()['block']
+        self.assertIn('NUEVA', bloque)
+
+    def test_el_bloque_recuerda_que_el_CP_se_pide_igual(self):
+        """Tener direcciones registradas no es haber contestado el precio."""
+        bloque = self._facts()['block'].lower()
+        self.assertIn('codigo postal', bloque)
+        self.assertIn('metros', bloque)
+
+    def test_con_demasiadas_direcciones_no_se_enumeran(self):
+        """En producción hay un cliente con 31 y otro con 13.
+
+        Leerle trece colonias a alguien que preguntó un precio es peor que no
+        decirle ninguna — pero el aviso de que NO suponga sigue haciendo falta.
+        """
+        for i in range(6):
+            self.env['res.partner'].create({
+                'name': 'Dir %d' % i, 'type': 'delivery',
+                'parent_id': self.cliente.id,
+                'street': 'Calle %d' % i, 'street2': 'Colonia %d' % i})
+        bloque = self._facts()['block']
+        self.assertIn('demasiadas', bloque)
+        self.assertNotIn('Colonia 0', bloque)
+        self.assertIn('NUEVA', bloque, "y la salida sigue ahí")
+
+    def test_dos_direcciones_en_la_misma_colonia_se_desempatan(self):
+        """Si no, el agente ofrece dos veces «Las Torres» y no se puede contestar."""
+        self.env['res.partner'].create({
+            'name': 'Otra en Las Torres', 'type': 'delivery',
+            'parent_id': self.cliente.id,
+            'street': 'Calle 9 No. 99', 'street2': 'Las Torres'})
+        bloque = self._facts()['block']
+        self.assertIn('Las Torres (Calle 1 No. 10)', bloque)
+        self.assertIn('Las Torres (Calle 9 No. 99)', bloque)
 
     def test_el_aviso_de_varias_va_ANTES_de_los_datos(self):
         """Detrás ya habría leído un tipo de inmueble concreto como bueno."""
