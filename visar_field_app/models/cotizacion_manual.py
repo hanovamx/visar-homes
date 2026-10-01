@@ -29,14 +29,29 @@ campo (su casilla "Vendible en campo" está apagada). Lo que pasa en cambio:
    la visita, sus adicionales y sus cotizaciones—, nunca por más que el servicio, y
    solo con la valoración pagada.
 """
+import logging
+
 from markupsafe import Markup
 
 from odoo import _, fields, models
 from odoo.exceptions import UserError
 
+_logger = logging.getLogger(__name__)
+
 PARAM_RESPONSABLE = 'visar_field.cotizacion_responsable_id'
 CAMPO_SERVICIOS_IDENTIFICADOS = 'x_servicios_identificados'
+# El texto libre de "Especifica qué otro". NO dispara cotización: el enlace
+# producto <-> servicio es por etiqueta, y una frase escrita a mano no es una
+# etiqueta. Se lee solo para poder AVISAR de que se escribió algo que nadie va a
+# cotizar (ver `_visar_quote_revisar`).
+CAMPO_SERVICIOS_OTRO = 'x_servicios_identificados_otro'
 WORKSHEET_LINK = 'x_project_task_id'
+
+# Prefijo del resumen de los avisos de hueco. Es la clave de idempotencia: la
+# hoja se guarda muchas veces (hay borrador, y se reabre), y sin esto cada
+# guardado dejaría otra actividad idéntica hasta enterrar la bandeja.
+AVISO_RESUMEN = "Revisar la hoja"
+
 
 
 class ProductTemplate(models.Model):
@@ -266,20 +281,52 @@ class ProjectTask(models.Model):
         }
 
     # ------------------------------------------------------------------
-    def _visar_quote_identified_names(self):
-        """Nombres marcados en "Servicios identificados" de la hoja (minúsculas)."""
+    def _visar_quote_hoja(self):
+        """La hoja de trabajo más reciente de esta visita, o `None`.
+
+        Se saca a un método porque ahora la leen tres sitios (los nombres
+        marcados, el texto libre y el aviso de huecos) y tres búsquedas con la
+        misma intención divergen en cuanto alguien toque una.
+
+        Devuelve `None` y no un recordset vacío a propósito: cuando no hay
+        plantilla no se sabe de QUÉ modelo sería el recordset.
+        """
         self.ensure_one()
         template = self.sudo().worksheet_template_id
         model = template.model_id.model if template else False
         if not model or model not in self.env:
-            return set()
+            return None
         Hoja = self.env[model].sudo()
         if CAMPO_SERVICIOS_IDENTIFICADOS not in Hoja._fields:
-            return set()
-        hoja = Hoja.search([(WORKSHEET_LINK, '=', self.id)], limit=1,
+            return None
+        return Hoja.search([(WORKSHEET_LINK, '=', self.id)], limit=1,
                            order='create_date desc')
+
+    def _visar_quote_identified_display(self):
+        """Los nombres marcados TAL CUAL se escribieron. Para los avisos.
+
+        El aviso de "esto no coincide con ningún producto" tiene que enseñar el
+        nombre con sus mayúsculas y sus acentos: es lo que alguien va a comparar
+        a ojo contra el campo del producto, y en minúsculas parece otro texto.
+        """
+        hoja = self._visar_quote_hoja()
+        if not hoja:
+            return []
+        return [n for n in hoja[CAMPO_SERVICIOS_IDENTIFICADOS].mapped('display_name')
+                if (n or '').strip()]
+
+    def _visar_quote_identified_names(self):
+        """Nombres marcados en "Servicios identificados" de la hoja (minúsculas)."""
+        self.ensure_one()
         return {(n or '').strip().lower()
-                for n in hoja[CAMPO_SERVICIOS_IDENTIFICADOS].mapped('display_name')}
+                for n in self._visar_quote_identified_display()}
+
+    def _visar_quote_identified_otro(self):
+        """Lo que el técnico escribió a mano en "Especifica qué otro"."""
+        hoja = self._visar_quote_hoja()
+        if not hoja or CAMPO_SERVICIOS_OTRO not in hoja._fields:
+            return ''
+        return (hoja[CAMPO_SERVICIOS_OTRO] or '').strip()
 
     def _visar_quote_products(self):
         """{nombre del servicio (minúsculas): product.template} de los que se cotizan."""
@@ -296,10 +343,14 @@ class ProjectTask(models.Model):
         """
         self.ensure_one()
         order = self.sale_order_id.sudo()
-        if not order:
-            return self.env['sale.order'].sudo().browse()
         marcados = self._visar_quote_identified_names()
         productos = self._visar_quote_products()
+        if not order:
+            # La hoja pidió algo y el circuito no puede ni empezar. ANTES esto
+            # era un `return` mudo: el técnico marcaba el servicio, la app decía
+            # "guardado", y nadie se enteraba de que no había cotización.
+            self._visar_quote_revisar(productos, sin_pedido=True)
+            return self.env['sale.order'].sudo().browse()
         existentes = self.sudo().visar_quote_order_ids
         nuevas = self.env['sale.order'].sudo().browse()
         for clave, template in productos.items():
@@ -313,6 +364,7 @@ class ProjectTask(models.Model):
                         cot.message_post(body=_(
                             "Cancelada: el técnico desmarcó \"%s\" en la hoja antes de "
                             "que se cotizara.", template.visar_quote_trigger))
+        self._visar_quote_revisar(productos)
         return nuevas
 
     def _visar_quote_create(self, template, employee=None):
@@ -342,10 +394,7 @@ class ProjectTask(models.Model):
             "Servicios identificados. Ponle precio al tratamiento y elige si se hace "
             "en esa misma visita o se agenda aparte.</p>") % (
                 self.name or '', quien, template.visar_quote_trigger))
-        param = self.env['ir.config_parameter'].sudo().get_param(PARAM_RESPONSABLE)
-        responsable = (self.env['res.users'].sudo().browse(int(param)).exists()
-                       if param and str(param).isdigit() else self.env['res.users'])
-        responsable = responsable or origen.user_id or self.env.ref('base.user_admin')
+        responsable = self._visar_quote_responsable(origen)
         cot.activity_schedule(
             'mail.mail_activity_data_todo',
             summary=_("Cotizar: %s (%s)", template.visar_quote_trigger, origen.name),
@@ -356,6 +405,157 @@ class ProjectTask(models.Model):
             "<p>La hoja pidió cotización de <b>%s</b>: %s.</p>") % (
                 template.name, cot.name), subtype_xmlid='mail.mt_note')
         return cot
+
+    def _visar_quote_responsable(self, origen=None):
+        """A quién se le encarga cotizar. Nunca vacío.
+
+        Si el parámetro no está puesto cae al comercial del pedido y, en último
+        término, al administrador: una actividad sin dueño no la ve nadie, y aquí
+        el punto entero es que alguien se entere.
+        """
+        param = self.env['ir.config_parameter'].sudo().get_param(PARAM_RESPONSABLE)
+        responsable = (self.env['res.users'].sudo().browse(int(param)).exists()
+                       if param and str(param).isdigit() else self.env['res.users'])
+        return (responsable
+                or (origen.user_id if origen else self.env['res.users'])
+                or self.env.ref('base.user_admin'))
+
+    # ------------------------------------------------------------------
+    # Cuando la hoja pide algo y NO nace cotización
+    # ------------------------------------------------------------------
+    #
+    # El circuito tenía tres salidas mudas, y las tres acaban igual: el técnico
+    # marca el servicio, la app dice "guardado", y nadie descubre que no hay
+    # cotización hasta que el cliente pregunta —o nunca—.
+    #
+    #   ① La visita no tiene pedido detrás. Pasó en producción con la visita 678:
+    #      al cambiarle el cliente, Odoo limpió `sale_line_id` (su dominio lo
+    #      restringe a los pedidos de ESE cliente) y el `if not order: return` se
+    #      tragó todo sin una línea de log.
+    #   ② El nombre marcado no coincide con ningún producto. El enlace es por
+    #      nombre exacto (strip + lower), así que "Alacranes (prueba)" contra un
+    #      producto que dice "Alacranes" no casa.
+    #   ③ El técnico escribió el servicio a mano en "Especifica qué otro". Solo se
+    #      leen las etiquetas; ese texto únicamente sale en el PDF firmado.
+    #
+    # Avisa, no bloquea: igual que el aviso de ruta. Una hoja mal configurada no
+    # puede impedirle al técnico guardar su trabajo en la puerta del cliente.
+
+    def _visar_quote_revisar(self, productos, sin_pedido=False):
+        """Deja una actividad por cada hueco del circuito. NUNCA levanta.
+
+        Va colgado del guardado de la hoja, que ocurre con el técnico de pie en
+        casa del cliente: si esto fallara, lo que no puede pasar es que se caiga
+        el guardado. Un aviso perdido vale muchísimo menos que el parte de un
+        servicio.
+        """
+        self.ensure_one()
+        try:
+            self._visar_quote_revisar_ahora(productos, sin_pedido)
+        except Exception:  # noqa: BLE001 - un aviso no tumba un guardado
+            _logger.exception(
+                "No se pudo revisar los huecos de cotización de la tarea %s", self.id)
+
+    def _visar_quote_revisar_ahora(self, productos, sin_pedido=False):
+        """El trabajo de `_visar_quote_revisar`, sin la red de seguridad."""
+        self.ensure_one()
+        marcados = self._visar_quote_identified_display()
+        otro = self._visar_quote_identified_otro()
+
+        if sin_pedido:
+            # Sin pedido no se puede cotizar NADA, así que basta un aviso para
+            # toda la hoja: desglosar por servicio repetiría la misma causa.
+            if marcados or otro:
+                pedidos = ", ".join(marcados + ([otro] if otro else []))
+                self._visar_quote_aviso(
+                    _("sin pedido"),
+                    _("La hoja pidió cotización de %(pedidos)s y esta visita no "
+                      "tiene ningún pedido de venta detrás, así que no se pudo "
+                      "crear.\n\n"
+                      "La causa más común es que se le haya cambiado el cliente a "
+                      "la visita: al hacerlo Odoo borra su línea de pedido, porque "
+                      "solo admite pedidos de ese cliente. Revisa el pedido de la "
+                      "visita; en cuanto lo tenga, basta con volver a guardar la "
+                      "hoja para que la cotización nazca.",
+                      pedidos=pedidos))
+            return
+
+        for nombre in marcados:
+            if (nombre or '').strip().lower() in productos:
+                continue
+            configurados = sorted(
+                t.visar_quote_trigger for t in productos.values()
+                if t.visar_quote_trigger)
+            self._visar_quote_aviso(
+                _("«%s» sin producto", nombre),
+                _("El técnico marcó «%(nombre)s» en Servicios identificados y "
+                  "ningún producto se cotiza con ese nombre, así que no nació "
+                  "cotización.\n\n"
+                  "El enlace es por nombre EXACTO (no distingue mayúsculas ni "
+                  "espacios de los extremos, pero nada más). Hoy están "
+                  "configurados: %(configurados)s.\n\n"
+                  "Arréglalo en el producto, campo «Se cotiza cuando la hoja "
+                  "marca», o renombrando la etiqueta. Después vuelve a guardar la "
+                  "hoja y la cotización nace.",
+                  nombre=nombre,
+                  configurados=", ".join(configurados) or _("ninguno")))
+
+        if otro:
+            self._visar_quote_aviso(
+                _("servicio escrito a mano"),
+                _("El técnico escribió «%(otro)s» en «Especifica qué otro». Ese "
+                  "texto NO pide cotización: el circuito solo lee las etiquetas "
+                  "marcadas, y ese campo únicamente sale en el reporte firmado.\n\n"
+                  "Si es un servicio que Visar cotiza, hace falta su etiqueta en "
+                  "«Servicios identificados» y un producto con ese nombre en «Se "
+                  "cotiza cuando la hoja marca». Si no, no hay nada que hacer: "
+                  "este aviso es para que no se quede en el PDF y se olvide.",
+                  otro=otro))
+
+    def _visar_quote_aviso(self, motivo, nota):
+        """Una actividad para quien cotiza, UNA sola vez por motivo.
+
+        **La idempotencia es la mitad que importa.** La hoja se guarda muchas
+        veces —hay guardado de borrador, y se puede reabrir—, así que sin esto
+        cada guardado dejaría otra actividad idéntica hasta enterrar la bandeja
+        de quien cotiza, que es la forma más rápida de que un aviso útil deje de
+        leerse. La clave es el resumen.
+        """
+        self.ensure_one()
+        resumen = "%s: %s" % (AVISO_RESUMEN, motivo)
+        modelo = self.env['ir.model']._get_id('project.task')
+        existe = self.env['mail.activity'].sudo().search_count([
+            ('res_model_id', '=', modelo),
+            ('res_id', '=', self.id),
+            ('summary', '=', resumen),
+        ])
+        if existe:
+            return False
+        responsable = self._visar_quote_responsable(self.sale_order_id.sudo())
+        cuerpo = self._visar_quote_parrafos(nota)
+        self.sudo().activity_schedule(
+            'mail.mail_activity_data_todo',
+            summary=resumen,
+            note=cuerpo,
+            user_id=responsable.id)
+        self.sudo().message_post(
+            body=Markup("<p><b>%s</b></p>") % resumen + cuerpo,
+            subtype_xmlid='mail.mt_note')
+        return True
+
+    @staticmethod
+    def _visar_quote_parrafos(texto):
+        """Texto plano -> párrafos HTML, con el contenido ESCAPADO.
+
+        No es cosmético: el aviso de "servicio escrito a mano" repite un texto que
+        teclea el técnico en su teléfono. Metido crudo en el `note` de una
+        actividad —que Odoo trata como HTML— sería inyección de etiquetas en el
+        backend. El `%` de `Markup` escapa el argumento; la estructura se añade
+        por fuera, que es la única forma de tener las dos cosas.
+        """
+        return Markup("").join(
+            Markup("<p>%s</p>") % parrafo.strip()
+            for parrafo in (texto or '').split('\n\n') if parrafo.strip())
 
     def _visar_quote_visit_running(self):
         """¿El técnico sigue en la casa? En ejecución y sin cerrar."""

@@ -220,3 +220,151 @@ class TestCotizacionManual(TransactionCase):
         self.assertEqual(aviso.task_id, tarea, "cuelga de la visita que la pidió")
         self.assertIn('2,500.00', aviso.params_json, "el monto ya con el descuento")
         self.assertEqual(aviso._visar_wa_context().get('quote_id'), cot.id)
+
+
+@tagged('post_install', '-at_install')
+class TestCotizacionHuecos(TestCotizacionManual):
+    """Cuando la hoja pide algo y NO nace cotización, alguien se entera.
+
+    El circuito tenía tres salidas mudas, y las tres acababan igual: el técnico
+    marcaba el servicio, la app decía "guardado", y nadie descubría que no había
+    cotización hasta que el cliente preguntaba —o nunca—. Le costó al usuario una
+    noche de depuración con la visita 678, buscando un disparador mal escrito
+    cuando el problema era que la visita había perdido su pedido.
+
+    Cubre los tres huecos, la idempotencia (la hoja se guarda muchas veces) y que
+    un aviso no pueda tumbar el guardado del técnico.
+    """
+
+    def _hoja_real(self, tarea, *nombres, otro=''):
+        """Como `_hoja_marca`, pero pasando por los lectores que usa el aviso.
+
+        `_hoja_marca` parchea `_visar_quote_identified_names`, que ya no es de
+        donde salen los nombres del aviso: ese necesita el texto SIN pasar a
+        minúsculas, para poder enseñarlo tal y como se escribió.
+        """
+        with patch.object(type(tarea), '_visar_quote_identified_display',
+                          lambda self: list(nombres)), \
+                patch.object(type(tarea), '_visar_quote_identified_otro',
+                             lambda self: otro):
+            return tarea._visar_quote_requests_sync(self.tecnico)
+
+    def _avisos(self, tarea):
+        return tarea.activity_ids.filtered(
+            lambda a: (a.summary or '').startswith("Revisar la hoja"))
+
+    # --- ② el nombre no coincide ------------------------------------------
+
+    def test_un_nombre_que_no_casa_deja_aviso(self):
+        tarea = self._visita()
+        self.assertFalse(self._hoja_real(tarea, 'Alacranes (prueba)'))
+        avisos = self._avisos(tarea)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn('Alacranes (prueba)', avisos.summary)
+
+    def test_el_aviso_dice_que_nombres_SI_estan_configurados(self):
+        """Lo que convierte el aviso en algo accionable en vez de una queja."""
+        tarea = self._visita()
+        self._hoja_real(tarea, 'Alacranes (prueba)')
+        self.assertIn('Termitas', self._avisos(tarea).note)
+
+    def test_el_nombre_se_ensena_tal_y_como_se_escribio(self):
+        """En minúsculas parecería otro texto, y es lo que se compara a ojo."""
+        tarea = self._visita()
+        self._hoja_real(tarea, 'ALACRANES')
+        self.assertIn('ALACRANES', self._avisos(tarea).summary)
+
+    def test_un_servicio_que_SI_casa_no_deja_aviso(self):
+        tarea = self._visita()
+        self.assertTrue(self._hoja_real(tarea, 'Termitas'))
+        self.assertFalse(self._avisos(tarea))
+
+    # --- ① la visita no tiene pedido --------------------------------------
+
+    def test_sin_pedido_detras_deja_aviso(self):
+        """El caso de la visita 678: le cambiaron el cliente y perdió su línea.
+
+        Antes esto era un `return` mudo —el primer `if` del método— y no dejaba
+        ni una línea de log.
+        """
+        tarea = self.env['project.task'].create({
+            'name': 'Valoracion sin pedido', 'project_id': self.proyecto.id,
+            'partner_id': self.cliente.id})
+        self.assertFalse(self._hoja_real(tarea, 'Termitas'))
+        avisos = self._avisos(tarea)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn('sin pedido', avisos.summary)
+        self.assertIn('cliente', avisos.note, "y se explica la causa más común")
+
+    def test_sin_pedido_y_sin_nada_marcado_no_avisa(self):
+        """Una hoja que no pidió cotización no tiene nada que revisar."""
+        tarea = self.env['project.task'].create({
+            'name': 'Valoracion vacia', 'project_id': self.proyecto.id,
+            'partner_id': self.cliente.id})
+        self._hoja_real(tarea)
+        self.assertFalse(self._avisos(tarea))
+
+    # --- ③ el texto libre --------------------------------------------------
+
+    def test_el_texto_escrito_a_mano_deja_aviso(self):
+        tarea = self._visita()
+        self._hoja_real(tarea, otro='alacranes en la azotea')
+        avisos = self._avisos(tarea)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn('a mano', avisos.summary)
+        self.assertIn('alacranes en la azotea', avisos.note)
+
+    def test_el_texto_del_tecnico_va_ESCAPADO(self):
+        """Ese campo lo teclea el técnico; el `note` de una actividad es HTML.
+
+        Sin escapar, cualquiera con un teléfono podría meter etiquetas en el
+        backend de Visar.
+        """
+        tarea = self._visita()
+        self._hoja_real(tarea, otro='<b>ojo</b> aqui')
+        nota = self._avisos(tarea).note
+        self.assertNotIn('<b>ojo</b>', nota)
+        self.assertIn('&lt;b&gt;', nota)
+
+    def test_marcado_y_texto_libre_dejan_un_aviso_cada_uno(self):
+        tarea = self._visita()
+        self._hoja_real(tarea, 'Alacranes', otro='y tambien ratas')
+        self.assertEqual(len(self._avisos(tarea)), 2)
+
+    # --- idempotencia y robustez ------------------------------------------
+
+    def test_guardar_otra_vez_no_duplica_el_aviso(self):
+        """La hoja se guarda muchas veces: hay borrador, y se puede reabrir.
+
+        Sin la clave de idempotencia, cada guardado dejaría otra actividad
+        idéntica hasta enterrar la bandeja de quien cotiza, que es la forma más
+        rápida de que un aviso útil deje de leerse.
+        """
+        tarea = self._visita()
+        for _ in range(4):
+            self._hoja_real(tarea, 'Alacranes (prueba)')
+        self.assertEqual(len(self._avisos(tarea)), 1)
+
+    def test_arreglar_el_nombre_hace_nacer_la_cotizacion(self):
+        """El aviso tiene salida: se corrige y se vuelve a guardar."""
+        tarea = self._visita()
+        self.assertFalse(self._hoja_real(tarea, 'Alacranes (prueba)'))
+        self.termitas.visar_quote_trigger = 'Alacranes (prueba)'
+        self.assertTrue(self._hoja_real(tarea, 'Alacranes (prueba)'))
+
+    def test_un_aviso_roto_no_tumba_el_guardado(self):
+        """Va colgado del guardado con el técnico en casa del cliente."""
+        tarea = self._visita()
+        with patch.object(type(tarea), '_visar_quote_revisar_ahora',
+                          side_effect=RuntimeError("boom")):
+            cot = self._hoja_real(tarea, 'Termitas')
+        self.assertTrue(cot, "la cotización nació igual")
+
+    def test_el_aviso_va_a_quien_cotiza(self):
+        usuario = self.env['res.users'].create({
+            'name': 'Quien cotiza', 'login': 'cotiza_huecos@test.local'})
+        self.env['ir.config_parameter'].sudo().set_param(
+            'visar_field.cotizacion_responsable_id', usuario.id)
+        tarea = self._visita()
+        self._hoja_real(tarea, 'Alacranes (prueba)')
+        self.assertEqual(self._avisos(tarea).user_id, usuario)

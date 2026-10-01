@@ -1405,3 +1405,50 @@ conversación al llegar el mensaje**, no la que resulte del turno.
   recurrente, preferencia de horario) y **al cerrar la conversación**, no prosa libre en
   cada mensaje: eso acota el coste a una llamada por conversación y quita de encima la
   inyección y la deriva. Fase 1 los escriben personas.
+
+---
+
+## [IMPLEMENTADO — 1-oct-2026] Cuando la hoja pide cotización y no nace, alguien se entera
+
+El circuito de cotización manual tenía **tres salidas mudas**. Las tres acababan igual: el
+técnico marca el servicio, la app dice «guardado», y **nadie descubre que no hay
+cotización** hasta que el cliente pregunta — o nunca.
+
+| | el hueco | por qué pasaba desapercibido |
+|---|---|---|
+| ① | la visita **no tiene pedido** detrás | `if not order: return` sin una línea de log |
+| ② | el nombre marcado **no casa** con ningún producto | el enlace es por nombre exacto (strip + lower) |
+| ③ | el técnico escribió el servicio **a mano** | solo se leen las etiquetas; el `_otro` únicamente sale en el PDF firmado |
+
+**El ① costó una noche de depuración** (29-sep-2026, visita 678): al cambiarle el cliente a
+la visita, Odoo borró su `sale_line_id` —su dominio lo restringe a los pedidos de ese
+cliente— y el circuito se caía en la primera línea. Se buscó el fallo en el disparador
+durante horas.
+
+Ahora cada hueco deja una **actividad** para quien cotiza, diciendo **cuál** de los tres
+es y **cómo se arregla**: en el ② se listan los nombres que sí están configurados, que es
+lo que convierte el aviso en algo accionable en vez de una queja.
+
+**Avisa, no bloquea**, igual que el aviso de ruta: una hoja mal configurada no puede
+impedirle al técnico guardar su trabajo en la puerta del cliente. `_visar_quote_revisar`
+envuelve todo en un `try/except`.
+
+### Dos detalles que no son adorno
+
+**La idempotencia es la mitad del valor.** La hoja se guarda muchas veces —hay guardado de
+borrador, y se puede reabrir—, así que sin una clave cada guardado dejaría otra actividad
+idéntica hasta enterrar la bandeja de quien cotiza, que es la forma más rápida de que un
+aviso útil deje de leerse. La clave es el resumen.
+
+**El texto del técnico va ESCAPADO.** El aviso ③ repite lo que alguien teclea en su
+teléfono, y el `note` de una actividad es HTML: metido crudo sería inyección de etiquetas
+en el backend. `_visar_quote_parrafos` escapa el contenido con el `%` de `Markup` y añade la
+estructura por fuera, que es la única forma de tener las dos cosas.
+
+### Un aviso sobre los disparadores de producción
+
+Los disparadores configurados el 1-oct-2026 son `Termitas`, `Chinches`,
+`Diseño de jardín`, **`Alacranes.`** y **`Abejas.`** — los dos últimos **con punto final**,
+y sus etiquetas también. Casan, así que funcionan; pero ese punto es frágil: si alguien
+«limpia» uno de los dos lados, el enlace se rompe **en silencio**. Es exactamente el hueco ②
+y ahora deja aviso.
