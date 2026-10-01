@@ -1,5 +1,23 @@
 # Estado y roadmap
 
+> **1-oct-2026 — Cuando la hoja pide cotización y no nace, alguien se entera.
+> DESPLEGADO en `visar-db`** (visar_field_app 19.0.1.46.0;
+> `deploy-aviso-cotizacion-1oct.sh`, backup
+> `visar-db_aviso-cotizacion-1oct_20261001-010117.sql.gz`).
+>
+> El circuito tenía **tres salidas mudas**: la visita sin pedido detrás (el `return` que
+> costó la noche del 29-sep con la visita 678), el nombre marcado que no casa con ningún
+> producto, y el servicio escrito a mano en «Especifica qué otro». Cada una deja ahora una
+> actividad para quien cotiza diciendo cuál es y cómo se arregla. **Avisa, no bloquea.**
+>
+> Idempotente por resumen (la hoja se guarda muchas veces) y con el texto del técnico
+> **escapado** (el `note` de una actividad es HTML). Detalle en `40-decisions.md`.
+>
+> ⚠️ Los disparadores de producción son `Termitas`, `Chinches`, `Diseño de jardín`,
+> **`Alacranes.`** y **`Abejas.`** — los dos últimos con **punto final**, y sus etiquetas
+> también. Casan, así que funcionan; pero si alguien «limpia» uno de los dos lados el
+> enlace se rompe, y eso es justo lo que el aviso nuevo caza.
+>
 > **30-sep-2026 (2.º) — Contactos del agente: por fin hay lista de quién le ha escrito.
 > DESPLEGADO en `visar-db`** (visar_whatsapp_agent 19.0.1.30.0 y el runtime;
 > `deploy-contactos-30sep.sh`, backup `visar-db_contactos-30sep_20260930-233717.sql.gz`).
