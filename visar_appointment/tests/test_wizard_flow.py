@@ -772,8 +772,11 @@ class TestWizardFlow(TransactionCase):
     def test_la_descripcion_del_plan_empieza_por_el_AHORRO(self):
         """Lo primero que se lee es por que conviene, no cuanto cuesta.
 
-        Y en porcentaje: "ahorras $150" no se puede juzgar sin saber sobre que,
-        y obliga al cliente a dividir de cabeza en mitad de la conversacion.
+        Y **en pesos** (2-oct-2026, pedido por el usuario). El porcentaje era la
+        decision original —"ahorras $150" no se puede juzgar sin saber sobre que— y
+        en la practica no sirvio: las tres listas de precios estan al **mismo 5%**,
+        asi que los cuatro planes decian "Ahorro del 5%" y el numero dejaba de
+        distinguirlos. En pesos si: 34.50 al mes frente a 414 al año.
         """
         plan = self.env['sale.subscription.plan'].create({
             'name': "Prueba mensual", 'billing_period_unit': 'month',
@@ -783,19 +786,26 @@ class TestWizardFlow(TransactionCase):
             'currency_id': self.env.company.currency_id.id,
             'period_label': self.AptType._visar_wizard_plan_period_label(plan),
         })
-        self.assertTrue(texto.startswith("Ahorro del 25%"), texto)
+        self.assertTrue(texto.startswith("Ahorras"), texto)
+        self.assertIn("150", texto)
+        self.assertNotIn("25%", texto, "el porcentaje ya no se enseña")
         self.assertIn("450", texto)
         self.assertIn("al mes", texto)
 
-    def test_sin_porcentaje_el_ahorro_se_dice_en_pesos(self):
-        """Degradar, nunca callar: un plan sin base con la que comparar sigue
-        pudiendo decir lo que ahorra."""
+    def test_sin_importe_el_ahorro_cae_al_porcentaje(self):
+        """Degradar, nunca callar: el porcentaje sigue siendo el respaldo.
+
+        Es el camino inverso al de antes del 2-oct-2026. Si por lo que sea no hay
+        importe que enseñar pero si hay porcentaje, se dice el porcentaje: callar el
+        ahorro deja la linea contestando solo "cuanto cuesta", que no es la pregunta
+        que el cliente se esta haciendo.
+        """
         texto = self.AptType._visar_wizard_poliza_description({
-            'period_total': 450.0, 'saving': 150.0,
+            'period_total': 450.0, 'saving': 0.0, 'saving_percent': 25.0,
             'currency_id': self.env.company.currency_id.id,
             'period_label': "al mes",
         })
-        self.assertIn("150", texto)
+        self.assertIn("25%", texto)
 
     def test_el_plan_solo_lleva_su_periodicidad_si_hace_falta(self):
         """Cuatro filas con la misma etiqueta (I-15) no se pueden elegir; cuatro

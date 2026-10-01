@@ -1005,10 +1005,18 @@ class AppointmentType(models.Model):
 
         El ahorro va primero porque es lo unico de la linea que contesta la
         pregunta que el cliente se esta haciendo, que no es "cuanto cuesta" sino
-        "por que me conviene". Y va en PORCENTAJE: un "ahorras $150" no se puede
-        juzgar sin saber sobre que, y obliga a dividir de cabeza en mitad de una
-        conversacion. Los pesos se quedan como respaldo para cuando no hay
-        porcentaje que calcular.
+        "por que me conviene".
+
+        **Y va en PESOS, no en porcentaje** (cambio del 2-oct-2026, pedido por el
+        usuario). El porcentaje era la decision original —un "ahorras $150" no se
+        puede juzgar sin saber sobre que— y en la practica no funciono: las tres
+        listas de precios estan al **mismo 5%**, asi que los cuatro planes
+        enseñaban "Ahorro del 5%" y la cifra dejaba de distinguir entre ellos. En
+        pesos si distinguen, y mucho: 34.50 al mes frente a 414 al año es la
+        diferencia que el cliente esta decidiendo.
+
+        El porcentaje se queda como respaldo para cuando no haya importe que
+        enseñar. Degradar, nunca callar.
 
         Antes las tres cifras iban con el mismo peso y en el orden en que se
         calculan. Con cuatro planes en pantalla eso son doce numeros seguidos, y
@@ -1019,11 +1027,11 @@ class AppointmentType(models.Model):
             currency = self.env.company.currency_id
         partes = []
         porcentaje = offer.get('saving_percent') or 0.0
-        if round(porcentaje) >= 1:
-            partes.append(_('Ahorro del %s%%') % int(round(porcentaje)))
-        elif offer.get('saving'):
-            partes.append(_('ahorras %s') % format_amount(
+        if offer.get('saving'):
+            partes.append(_('Ahorras %s') % format_amount(
                 self.env, offer['saving'], currency))
+        elif round(porcentaje) >= 1:
+            partes.append(_('Ahorro del %s%%') % int(round(porcentaje)))
         partes.append('%s %s' % (format_amount(self.env, offer['period_total'],
                                                currency),
                                  offer.get('period_label') or ''))

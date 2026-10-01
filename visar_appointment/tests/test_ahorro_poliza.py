@@ -112,11 +112,19 @@ class TestAhorroDePoliza(TransactionCase):
 
     def test_el_agente_dice_el_ahorro_de_los_planes_largos(self):
         """Mismo cálculo para web y chat: la descripción del agente sale de estos
-        mismos campos, así que arreglar el cálculo lo arregla en los dos sitios."""
+        mismos campos, así que arreglar el cálculo lo arregla en los dos sitios.
+
+        Y lo dice **en pesos** desde el 2-oct-2026: ver
+        `test_la_descripcion_del_plan_empieza_por_el_AHORRO` en
+        `test_wizard_flow.py` para el porqué.
+        """
         ofertas = self._ofertas(contado=690.0, por_visita=655.50)
 
         texto = self.Flow._visar_wizard_poliza_description(ofertas["Prueba anual"])
-        self.assertTrue(texto.startswith("Ahorro del 5%"), texto)
+        self.assertTrue(texto.startswith("Ahorras"), texto)
+        self.assertIn("414", texto,
+                      "el ahorro de la anual son 414, y es la cifra que distingue "
+                      "este plan de la mensual (34.50)")
 
 
 @tagged('post_install', '-at_install')
@@ -162,12 +170,14 @@ class TestReservaSigueAlPlan(TransactionCase):
         self.assertIn("quote['period_label']", arch,
                       "y de qué periodo es lo que se repite")
 
-    def test_la_web_dice_el_monto_y_no_el_porcentaje(self):
-        """Visar lo pidió así el 25-sep-2026: en pantalla, solo los pesos.
+    def test_los_dos_canales_dicen_el_MONTO_y_no_el_porcentaje(self):
+        """La web desde el 25-sep-2026; el agente desde el 2-oct, los dos pedidos.
 
-        El porcentaje se sigue calculando y el AGENTE lo sigue diciendo — en un chat
-        no se puede comparar de un vistazo y un "$414" suelto no se juzga—, así que
-        esto vigila que los dos canales no se confundan.
+        El porcentaje se sigue calculando (lo usa el respaldo cuando no hay importe)
+        pero ya no se enseña en ningún canal. La razón del segundo cambio: las tres
+        listas están al **mismo 5%**, así que los cuatro planes decían "Ahorro del
+        5%" y la cifra dejaba de distinguirlos — que es justo lo que el cliente
+        necesita para elegir.
         """
         for xmlid in ('visar_appointment.visar_wizard_poliza',
                       'visar_appointment.visar_appointment_info_price'):
@@ -180,4 +190,7 @@ class TestReservaSigueAlPlan(TransactionCase):
                   'currency_id': self.env.company.currency_id.id,
                   'period_label': "al mes"}
         texto = self.AptType._visar_wizard_poliza_description(oferta)
-        self.assertIn("25%", texto, "el agente sí lo dice en porcentaje")
+        self.assertIn("150", texto, "el agente dice el monto")
+        self.assertNotIn("25%", texto,
+                         "el agente ya NO dice el porcentaje: con las tres listas "
+                         "al mismo 5% no distinguía un plan de otro")

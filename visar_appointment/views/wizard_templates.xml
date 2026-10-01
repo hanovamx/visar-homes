@@ -788,9 +788,11 @@
                                                 <div>
                                                     <span class="fw-semibold" t-esc="offer['name']"/>
                                                     <!-- Solo el monto, sin porcentaje (Visar, 25-sep-2026).
-                                                         `saving_percent` se sigue calculando: lo usa el
-                                                         agente, que lo dice en porcentaje porque en un chat
-                                                         no se puede comparar de un vistazo. -->
+                                                         Desde el 2-oct-2026 el AGENTE dice lo mismo: las tres
+                                                         listas están al mismo 5%, así que "Ahorro del 5%" salía
+                                                         igual en los cuatro planes y no distinguía ninguno.
+                                                         `saving_percent` se sigue calculando, pero solo como
+                                                         respaldo si no hay importe. -->
                                                     <span t-if="offer['saving']" class="badge text-bg-success ms-2">
                                                         Ahorras <t t-out="offer['saving']"
                                                                    t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
