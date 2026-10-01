@@ -532,6 +532,38 @@ class AppointmentType(models.Model):
             picked |= best
         return picked
 
+    def _visar_booking_line_values(self, resources, start_utc, stop_utc,
+                                   asked_capacity=1):
+        """Lineas de reserva por recurso, con el mismo reparto de capacidad que el web.
+
+        Espeja `appointment/controllers/appointment.py` (submit): reparte la
+        capacidad pedida entre los recursos elegidos respetando lo que queda libre.
+
+        Vive aqui -y no en `visar.agent.tools`- porque las lineas de reserva son
+        **lo unico que consume capacidad**, asi que las necesita cualquiera que
+        cree una cita: el agente de WhatsApp, la cotizacion, y la pre-agenda de
+        polizas (`visar_appointment`), que no puede importar del agente porque la
+        dependencia va al contrario. `_agent_booking_line_values` quedo como
+        delegado para no romper a sus dos llamadores.
+        """
+        self.ensure_one()
+        remaining = self._get_resources_remaining_capacity(
+            resources, start_utc, stop_utc, with_linked_resources=False)
+        values = []
+        to_assign = asked_capacity
+        for resource in resources:
+            resource_remaining = remaining.get(resource, 0)
+            reserved = min(resource_remaining, to_assign, resource.capacity)
+            to_assign -= reserved
+            values.append({
+                'appointment_resource_id': resource.id,
+                'capacity_reserved': reserved,
+                'capacity_used': (
+                    reserved if resource.shareable and self.manage_capacity
+                    else resource.capacity if self.manage_capacity else 1),
+            })
+        return values
+
     @api.model
     def _visar_selections_has_roedores(self, selections):
         """True si el cliente pidió control de roedores en el wizard.

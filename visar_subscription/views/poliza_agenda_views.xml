@@ -1,27 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Rezago de visitas de póliza: las que el cliente pagó y nadie ha agendado.
+    <!-- Visitas de póliza POR CONFIRMAR: las que el cliente pagó y todavía no están
+         cerradas con él.
          Hasta ahora esto no existía en ninguna pantalla: solo la PRIMERA visita de una
-         póliza nace con fecha (la que el cliente eligió al contratar) y las demás
-         quedan sin fecha, visibles únicamente entrando pedido por pedido. El caso que
+         póliza nacía con fecha (la que el cliente eligió al contratar) y las demás
+         quedaban sin fecha, visibles únicamente entrando pedido por pedido. El caso que
          lo motiva es real: un cliente con tres visitas sin rendir que nadie rastreaba
-         tras la salida de un empleado. -->
+         tras la salida de un empleado.
+
+         **Cambió el 1-oct-2026 con la pre-agenda (paso 2).** La lista ya no es solo
+         "por agendar": ahora el robot les pone fecha y cita, así que lo que oficina
+         tiene que vigilar son DOS cosas y las dos están aquí:
+           * las pre-agendadas que nadie le ha confirmado al cliente todavía —el
+             trabajo nuevo, y el que la Fase B automatiza por WhatsApp—;
+           * las que siguen SIN fecha, que ahora significan algo mucho más concreto
+             que antes: no hubo capacidad para ellas, y cada una tiene su actividad
+             explicando en qué zona y con cuántos días de búsqueda. -->
     <record id="view_task_list_visar_poliza_agenda" model="ir.ui.view">
         <field name="name">project.task.list.visar.poliza.agenda</field>
         <field name="model">project.task</field>
         <field name="arch" type="xml">
-            <list string="Visitas de póliza por agendar"
+            <list string="Visitas de póliza por confirmar"
                   default_order="visar_visit_due_date asc, id asc"
                   create="false"
-                  decoration-danger="visar_visit_days_late &gt; 0"
-                  decoration-warning="visar_visit_days_late &lt;= 0 and visar_visit_days_late &gt; -8"
+                  decoration-danger="visar_visit_days_late &gt; 0 and not planned_date_begin"
+                  decoration-warning="visar_visit_preagendada and not visar_visit_preagenda_confirmada"
+                  decoration-success="visar_visit_preagenda_confirmada"
                   decoration-muted="visar_visit_due_out_of_term">
                 <field name="visar_visit_due_date"/>
+                <field name="planned_date_begin" string="Pre-agendada para"/>
+                <!-- Columna de lectura, NUNCA en un dominio: es un computed sin
+                     store y Odoo 19 rechaza la vista entera si uno de esos aparece
+                     en un `domain`. Para filtrar están los dos booleanos. -->
+                <field name="visar_visit_preagenda_estado"/>
                 <field name="visar_visit_days_late"/>
                 <field name="partner_id"/>
                 <field name="name" string="Visita"/>
                 <field name="visar_subscription_order_id"/>
+                <!-- Invisibles: existen solo para que las decoraciones de arriba
+                     puedan leerlos. Sin declararlos, la vista no los recibe. -->
+                <field name="visar_visit_preagendada" column_invisible="True"/>
+                <field name="visar_visit_preagenda_confirmada" column_invisible="True"/>
                 <field name="visar_visit_seq" string="Nº"/>
                 <field name="visar_visit_total" string="de"/>
                 <field name="visar_poliza_end_date"/>
@@ -36,7 +56,7 @@
         <field name="name">project.task.search.visar.poliza.agenda</field>
         <field name="model">project.task</field>
         <field name="arch" type="xml">
-            <search string="Visitas de póliza por agendar">
+            <search string="Visitas de póliza por confirmar">
                 <field name="partner_id"/>
                 <field name="visar_subscription_order_id"/>
                 <field name="name" string="Visita"/>
@@ -54,6 +74,17 @@
                                  ('visar_visit_due_out_of_term', '=', False)]"/>
                 <filter name="visar_fuera_vigencia" string="Fuera de vigencia"
                         domain="[('visar_visit_due_out_of_term', '=', True)]"/>
+                <separator/>
+                <!-- El trabajo NUEVO de oficina: el robot ya les puso fecha y hay que
+                     cerrarlo con el cliente. La Fase B lo hará por WhatsApp; hasta
+                     entonces se confirma por teléfono desde aquí. -->
+                <filter name="visar_preagendadas_sin_confirmar"
+                        string="Pre-agendadas sin confirmar"
+                        domain="[('visar_visit_preagendada', '=', True),
+                                 ('visar_visit_preagenda_confirmada', '=', False)]"/>
+                <filter name="visar_sin_fecha_tras_preagenda" string="Sin fecha (no hubo capacidad)"
+                        domain="[('planned_date_begin', '=', False),
+                                 ('visar_visit_due_date', '!=', False)]"/>
                 <group>
                     <filter name="visar_group_partner" string="Cliente"
                             context="{'group_by': 'partner_id'}"/>
@@ -67,17 +98,31 @@
     </record>
 
     <record id="action_visar_poliza_agenda" model="ir.actions.act_window">
-        <field name="name">Visitas de póliza por agendar</field>
+        <field name="name">Visitas de póliza por confirmar</field>
         <field name="res_model">project.task</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_task_search_visar_poliza_agenda"/>
-        <field name="domain">[('visar_subscription_order_id', '!=', False),
+        <!-- Se ensancha a propósito (1-oct-2026): antes era solo `planned_date_begin
+             = False`. Con la pre-agenda eso habría dejado la pantalla casi vacía
+             justo cuando aparece el trabajo nuevo —confirmarle al cliente la fecha
+             que le pusimos—, y ese trabajo no tendría ningún sitio donde verse. -->
+        <field name="domain">['&amp;',
+                              ('visar_subscription_order_id', '!=', False),
+                              '&amp;',
                               ('visar_visit_kind', '=', 'preventiva'),
+                              '&amp;',
+                              ('state', 'not in', ['1_done', '1_canceled']),
+                              '|',
                               ('planned_date_begin', '=', False),
-                              ('state', 'not in', ['1_done', '1_canceled'])]</field>
+                              '&amp;',
+                              ('visar_visit_preagendada', '=', True),
+                              ('visar_visit_preagenda_confirmada', '=', False)]</field>
         <field name="help" type="html">
-            <p class="o_view_nocontent_smiling_face">No hay visitas de póliza pendientes de agendar</p>
-            <p>Aquí están las visitas que el cliente ya pagó y todavía no tienen fecha.</p>
+            <p class="o_view_nocontent_smiling_face">No hay visitas de póliza pendientes de confirmar</p>
+            <p>Aquí están las visitas que el cliente ya pagó y todavía no están cerradas
+               con él: las que el sistema pre-agendó y nadie le ha confirmado, y las que
+               se quedaron sin fecha porque no hubo capacidad (cada una con su actividad
+               diciendo en qué zona).</p>
         </field>
     </record>
 
@@ -89,7 +134,7 @@
     </record>
 
     <menuitem id="fsm_menu_planning_poliza_agenda_visar"
-              name="Visitas de póliza por agendar"
+              name="Visitas de póliza por confirmar"
               sequence="14"
               parent="industry_fsm.fsm_menu_planning"
               action="action_visar_poliza_agenda"

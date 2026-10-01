@@ -390,6 +390,156 @@ agrupable por cliente, póliza y mes.
 
 ---
 
+## La pre-agenda (paso 2, Fase A — 1-oct-2026, `visar_appointment` v19.0.2.31.0)
+
+El paso 1 hizo **visible** el rezago; esta fase lo **cierra**. Un cron pre-agenda cada
+visita preventiva a un mes de la anterior, **a la misma hora y con el mismo técnico** si
+está libre, y le crea una `calendar.event` de verdad.
+
+### El hallazgo que cambió el alcance
+
+Explorando salió algo que no se sabía: **una visita de póliza no tenía `calendar.event`
+propio**. «Agendarla» era escribir `planned_date_begin` + `date_deadline` en la tarea, sin
+cita y sin `appointment.booking.line`. Consecuencia: **no consumía la capacidad del
+técnico**, así que la web podía vender ese mismo hueco a otro cliente. Las 40 visitas que
+ya tenían fecha estaban en esa situación.
+
+Por eso pre-agendar «a la misma hora» exigió crear citas reales, y por eso esto es código
+nuevo y no un cron de tres líneas.
+
+### Las piezas
+
+| qué | dónde |
+|---|---|
+| el motor | `visar_appointment/models/project_task_preagenda.py` |
+| el enlace visita ↔ cita | `project.task.visar_visit_event_id` (en **`visar_fsm`**: sus lectores son módulos hermanos) |
+| el inverso | `calendar.event.visar_visit_task_ids` |
+| las dos banderas | `visar_visit_preagendada`, `visar_visit_preagenda_confirmada` (en `visar_subscription`) |
+| el cron | `data/poliza_preagenda_cron.xml`, diario, **de madrugada** |
+| la pantalla | *Field Service → Planning → **Visitas de póliza por confirmar*** |
+
+**El cron corre de madrugada a propósito**: el wizard web no crea apartado
+(`visar.slot.hold`) mientras el cliente paga, así que si el cron le quitara el hueco a una
+reserva en vuelo, el nativo la descartaría **después de haber cobrado**. De noche no hay
+reservas en vuelo.
+
+### Parámetros
+
+| `ir.config_parameter` | defecto | qué hace |
+|---|---|---|
+| `visar.poliza.preagenda_dias_antes` | 30 | cuántos días por delante se recogen visitas |
+| `visar.poliza.preagenda_dias_busqueda` | 10 | cuántos días se busca hueco antes de rendirse |
+| `visar.poliza.preagenda_lote` | 50 | visitas por corrida |
+| `visar.poliza.preagenda_responsable_id` | — | a quién le llegan los avisos; si está vacío, el vendedor de la póliza, y si no, admin |
+
+El horizonte **duro** no es el parámetro sino `appointment_type.max_schedule_days` (45):
+más allá el nativo no genera huecos que pedir, así que una póliza trimestral solo
+pre-agenda la próxima y el cron recoge las demás cuando entran en ventana.
+
+### ⚠️ «Nunca se deja sin pre-agendar» tiene UNA excepción, y es deliberada
+
+La decisión original del usuario (1-oct-2026) fue literalmente *«nunca se deja sin
+pre-agendar»*. Hay **una excepción**, que el usuario aprobó el mismo día:
+
+> Si en `visar.poliza.preagenda_dias_busqueda` días no hay un hueco con capacidad libre,
+> la visita **se queda sin fecha**, con una actividad para oficina vencida hoy y una nota
+> en el expediente de la póliza.
+
+**El motivo.** La única forma de «nunca dejarla sin fecha» cuando no hay capacidad sería
+escribirle una hora a un técnico que ya está ocupado. Eso destruye lo único que esta pieza
+existe para lograr —que la visita OCUPE agenda de verdad— y convierte un rezago visible
+(malo, pero conocido) en **dos clientes esperando al mismo técnico a la misma hora** (peor,
+y además invisible hasta que el técnico no llega).
+
+En una frase: **rutas peores sí, capacidad inexistente no.** Una ruta apretada la absorbe
+el técnico conduciendo más; una hora ya vendida no la absorbe nadie.
+
+**Si ves una visita de póliza sin fecha, esto es lo que pasó**, y la actividad te dice en
+qué zona faltó capacidad y con cuántos días de búsqueda. No es un fallo del cron: es el
+cron negándose a mentir. La conducta la fija la prueba
+`test_poliza_preagenda.py::test_sin_capacidad_no_sobrevende`; **si alguien la borra
+«arreglando» el caso sin hueco, lo que vuelve es la sobreventa.**
+
+### Dos trampas que costaron medirlas
+
+Las dos son del silenciado de la cita, y ninguna se ve leyendo el código:
+
+1. **`alarm_ids` hay que pasarlo VACÍO explícitamente** (`[(5, 0, 0)]`).
+   `appointment/models/calendar_event.py::_compute_alarm_ids` copia
+   `appointment_type_id.reminder_ids` **cuando el campo viene vacío**, así que *omitirlo*
+   es justo lo que engancha el recordatorio. Medido: sin esa línea la cita salía con 1
+   alarma pese a `dont_notify`.
+2. **`mail_create_nolog` no basta**: hace falta `tracking_disable`. `appointment_status`
+   lleva `tracking=True` y se asienta en un `write` posterior al create (es un computed
+   almacenado); ahí aparecía un «Reserva confirmada» con cuerpo de correo en el chatter de
+   la cita, diciendo que el cliente confirmó algo que nadie le ha preguntado.
+
+Lo que **no** se usa: el `ir.config_parameter` `calendar.block_mail`. Apagaría también los
+correos de las citas pagadas, que sí hay que mandar.
+
+Hay un tercer efecto, **inocuo pero confuso si se mide**: crear la cita dispara el cron
+`crm_iap_enrich.ir_cron_lead_enrichment`. No es culpa nuestra — `appointment_crm` llama a
+`_create_lead_from_appointment()` sobre el recordset filtrado *aunque esté vacío*, y eso
+hace `crm.lead.create([])`, que dispara el cron antes de mirar si creó algo. Por eso la
+verificación **no** exige `ir.cron.trigger` en cero. Pero el filtro de ese mismo sitio es
+una bomba de configuración: con `appointment_type.lead_create` activo crearía un lead de
+verdad por cada visita. Hoy está apagado y nadie lo puso así a propósito, así que el cron
+lo avisa en el log una vez por corrida.
+
+### El ancla deja de ser la fecha real
+
+Para que el calendario **no derive**, el ancla de la siguiente visita de una pre-agendada
+es su **fecha propuesta**, no la real, y por eso la propuesta **no se borra al agendarse**
+(`_visar_walk_visit_series`). Si al cliente se le pre-agenda el día 8 porque el 1 no había
+hueco, la siguiente sigue tocando el 1. Sin esto, cada ajuste de una semana se arrastraría
+a todas las visitas restantes: en una póliza anual, dos meses de deriva.
+
+En cuanto alguien mueve la visita a mano o el cliente la reagenda,
+`visar_visit_preagendada` se apaga y vuelve a anclar en la fecha real.
+
+### El bloqueo del reagendado cambió de condición, no de excepción
+
+`_visar_reschedule_blocked` devolvía `'poliza'` para toda visita de suscripción, y su razón
+escrita era *«no tienen `calendar.event` que mover»*. Con la pre-agenda **esa premisa dejó
+de ser cierta**, así que lo correcto no fue añadir una excepción sino arreglar la
+condición (`_visar_poliza_blocked`). Siguen bloqueadas dos cosas:
+
+* una cita de póliza **sin visita que arrastrar** (moverla dejaría la cita en un sitio y el
+  servicio en otro);
+* una pre-agenda **que el cliente todavía no ha confirmado** — la puso un robot y él no
+  sabe que existe.
+
+Se desbloquea al confirmarla: el cliente por WhatsApp (Fase B) u oficina por teléfono.
+
+### De cara al cliente
+
+Con la pre-agenda, las visitas de póliza **empiezan a aparecer en «Mis servicios»** del
+agente, con su fecha y su zona, y con `can_reschedule=False` mientras nadie se lo haya
+confirmado. Está aprobado por el usuario.
+
+Al arreglarlo salieron dos fallos **preexistentes** en esa lista, los dos corregidos el
+1-oct-2026:
+
+* reventaba (`ValueError: Expected singleton: product.product()`) para cualquier cliente
+  con una línea de **sección o nota** en un pedido confirmado;
+* se cogían las 20 tareas **más nuevas por id** y solo después se descartaban las sin
+  fecha, así que a un cliente de póliza se le devolvían veinte visitas sin agendar y ni
+  una con fecha. En `visar-test` el cliente 3 tiene 124 tareas sin línea y 24 con fecha:
+  leía *«no tienes servicios agendados»* teniendo uno pasado mañana. Ahora se busca por
+  **ventana de fecha** según el alcance, con una segunda búsqueda para las etapas que
+  fuerzan el lado (`visar_agent_bucket`).
+
+### Lo que esta fase NO hace
+
+* **No le escribe a ningún cliente.** Oficina confirma por teléfono desde la pantalla. El
+  aviso automático por WhatsApp con los dos botones («Sí, confirmo» / «Quiero cambiarla»)
+  y el escalado de horarios son la **Fase B**.
+* **No toca el rezago de 181 visitas sin fecha** (son datos de prueba; decisión del
+  usuario). Solo de aquí en adelante.
+* Correctivas y garantías siguen siendo de oficina.
+
+---
+
 ## Cómo se ofrece en el chat (3-sep-2026)
 
 El paso de póliza del cuestionario era, en palabras del recorrido, *"demasiada

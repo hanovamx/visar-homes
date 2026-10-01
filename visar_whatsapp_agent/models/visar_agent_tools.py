@@ -903,12 +903,53 @@ class VisarAgentTools(models.AbstractModel):
         # `SERVICES_LANG`, igual que las ordenes: el nombre de la etapa se le
         # ensena al CLIENTE, y sin esto salia en ingles ("In Progress").
         Task = self.env['project.task'].with_context(lang=SERVICES_LANG).sudo()
-        tareas = Task.search([
+        # **Se busca por VENTANA de fecha y se ordena por fecha, no por id.** Es la
+        # corrección del 1-oct-2026 y hacía falta para que la pre-agenda de pólizas
+        # se vea.
+        #
+        # Antes era `order='id desc', limit=20`: se cogían las 20 tareas más nuevas
+        # y solo DESPUÉS se descartaba lo que no servía. Para un cliente de póliza
+        # eso devolvía veinte visitas sin agendar y ni una con fecha — en
+        # `visar-test` el cliente 3 tiene 124 tareas sin línea y solo 24 con fecha,
+        # así que el tope se lo comían justo las que el bucle iba a tirar. Resultado:
+        # el cliente leía "no tienes servicios agendados" teniendo uno pasado mañana.
+        #
+        # Filtrar por `planned_date_begin != False` es seguro: el bucle ya descartaba
+        # lo sin fecha, y no existe ni una tarea con cita enganchada y
+        # `planned_date_begin` vacío (0 filas en `visar-test`), porque
+        # `_visar_sync_fsm_tasks` escribe siempre las dos juntas.
+        #
+        # **La ETAPA sigue mandando sobre la ventana**, y por eso hay dos búsquedas y
+        # no una. `_agent_task_bucket` permite que una etapa fuerce el lado
+        # (`visar_agent_bucket`), así que una tarea con fecha pasada puede pertenecer
+        # a "próximos". Con una sola búsqueda por ventana esas se perderían sin que
+        # nada fallara. Hoy las 33 etapas están en 'auto' y la segunda búsqueda no
+        # devuelve nada, pero la función es deliberada y tiene pruebas
+        # (`test_service_stage_config.py`): si se quita, lo que se rompe es una
+        # configuración que alguien puede activar mañana desde la interfaz.
+        base = [
             ('partner_id', '=', partner.id),
             ('project_id.is_fsm', '=', True),
             ('sale_line_id', '=', False),
+            ('planned_date_begin', '!=', False),
             ('id', 'not in', [t for t in ya_listadas if t]),
-        ], order='id desc', limit=MAX_SERVICES * 2)
+        ]
+        if scope == 'upcoming':
+            ventana = [('planned_date_begin', '>=', today_start)]
+            orden = 'planned_date_begin asc'
+        elif scope == 'history':
+            ventana = [('planned_date_begin', '<', today_start)]
+            orden = 'planned_date_begin desc'
+        else:
+            ventana, orden = [], 'planned_date_begin desc'
+        tareas = Task.search(base + ventana, order=orden, limit=MAX_SERVICES * 2)
+        if ventana:
+            forzadas = self.env['project.task.type'].sudo().search(
+                [('visar_agent_bucket', 'in', ('upcoming', 'history'))])
+            if forzadas:
+                tareas |= Task.search(
+                    base + [('stage_id', 'in', forzadas.ids)],
+                    order=orden, limit=MAX_SERVICES * 2)
         entries = []
         for tarea in tareas:
             evento = tarea._visar_calendar_event() if hasattr(
@@ -918,10 +959,18 @@ class VisarAgentTools(models.AbstractModel):
             # SIN FECHA no entra. Las visitas de póliza todavía por agendar son
             # legión (209 tareas sin línea el 23-sep-2026, casi todas de póliza) y
             # enseñarle al cliente "tienes 12 visitas pendientes, fecha por
-            # confirmar" es abrirle una pregunta —"¿cuándo?"— que el agente
-            # todavía no sabe contestar: elegir fecha de una visita de póliza es
-            # el paso 2 de `35-polizas.md`, sin empezar. Cuando exista, se quita
-            # este filtro y el cliente podrá agendarlas desde aquí.
+            # confirmar" es abrirle una pregunta —"¿cuándo?"— que el agente no sabe
+            # contestar si nadie le ha puesto fecha.
+            #
+            # **Lo que cambió el 1-oct-2026:** el filtro se queda, pero la pre-agenda
+            # (`visar_appointment/models/project_task_preagenda.py`) le pone fecha y
+            # cita propia a las visitas preventivas, así que **esas sí empiezan a
+            # aparecer aquí solas**. Es un cambio de cara al cliente y está aprobado
+            # por el usuario (A6b del plan del paso 2). Lo que el cliente ve es la
+            # fecha que le tocaría, con `can_reschedule=False` mientras nadie se lo
+            # haya confirmado: `_visar_poliza_blocked` sigue devolviendo `'poliza'`
+            # hasta que se confirma, justamente para que no mueva una cita de cuya
+            # existencia todavía no le hemos avisado.
             if not date:
                 continue
             if scope != 'all' and self._agent_task_bucket(
@@ -989,7 +1038,14 @@ class VisarAgentTools(models.AbstractModel):
             # El método y NO el flag `visar_is_service`: los tratamientos que cotiza
             # oficina (termitas, chinches) no son agendables por la web pero para el
             # cliente son un servicio suyo, con su fecha y su técnico.
-            if not line.product_id._visar_counts_as_service():
+            #
+            # El guardia de `product_id` es obligatorio: una línea de SECCIÓN o de
+            # NOTA no tiene producto, y `_visar_counts_as_service` hace
+            # `ensure_one()`, así que sin él la lista de servicios **revienta** para
+            # cualquier cliente que tenga una sección en alguno de sus pedidos
+            # confirmados. Encontrado el 1-oct-2026 con un cliente real de
+            # `visar-test` (ValueError: Expected singleton: product.product()).
+            if not line.product_id or not line.product_id._visar_counts_as_service():
                 continue
             date = self._agent_service_date(line)
             bucket = self._agent_service_bucket(line, date, today_start)
@@ -2401,27 +2457,15 @@ class VisarAgentTools(models.AbstractModel):
     @api.model
     def _agent_booking_line_values(self, apt_type, resources, start, stop,
                                    asked_capacity=1):
-        """Lineas de reserva por recurso, con el mismo reparto de capacidad que el web.
+        """Delegado: la implementacion bajo a `appointment.type`.
 
-        Espeja `appointment/controllers/appointment.py` (submit): reparte la
-        capacidad pedida entre los recursos elegidos respetando lo que queda libre.
+        Se bajo el 1-oct-2026 para que la pre-agenda de polizas
+        (`visar_appointment`) pudiera crear citas; `visar_appointment` no puede
+        llamar a este modelo porque depende al contrario. Se conserva la firma
+        para no tocar a los dos llamadores del agente.
         """
-        remaining = apt_type._get_resources_remaining_capacity(
-            resources, start, stop, with_linked_resources=False)
-        values = []
-        to_assign = asked_capacity
-        for resource in resources:
-            resource_remaining = remaining.get(resource, 0)
-            reserved = min(resource_remaining, to_assign, resource.capacity)
-            to_assign -= reserved
-            values.append({
-                'appointment_resource_id': resource.id,
-                'capacity_reserved': reserved,
-                'capacity_used': (
-                    reserved if resource.shareable and apt_type.manage_capacity
-                    else resource.capacity if apt_type.manage_capacity else 1),
-            })
-        return values
+        return apt_type._visar_booking_line_values(
+            resources, start, stop, asked_capacity=asked_capacity)
 
     # ------------------------------------------------------------------
     # El cuestionario, paso a paso (agent_booking_step)

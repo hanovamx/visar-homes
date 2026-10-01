@@ -27,6 +27,14 @@ class CalendarEvent(models.Model):
         compute='_compute_visar_fsm_task_ids',
         help="Tareas FSM generadas para esta cita (via la orden de venta).")
 
+    # El inverso del enlace directo. Lo que hace falta para que una cita sepa qué
+    # visita de póliza es la suya: por la línea de la orden no se puede, porque esa
+    # línea apunta a la cita de la PRIMERA visita del ciclo.
+    visar_visit_task_ids = fields.One2many(
+        'project.task', 'visar_visit_event_id',
+        string="Visitas de esta cita",
+        help="Visitas que tienen esta cita como cita propia (pre-agenda de póliza).")
+
     def _visar_appointment_partners(self):
         """De quién es esta cita: los clientes de los pedidos que la originaron.
 
@@ -38,16 +46,26 @@ class CalendarEvent(models.Model):
 
         **No es `partner_id` de la tarea.** En producción el contacto de servicio
         y el cliente del pedido son distintos en 79 de 80 casos.
+
+        Se suman los dueños de las visitas enganchadas por `visar_visit_task_ids`
+        (1-oct-2026). Sin eso **ninguna** pre-agenda de póliza sería de nadie: su
+        cita no la originó ninguna línea de orden —la creó el cron— así que la
+        búsqueda de arriba devuelve vacío y el cliente recibiría «no encontré esa
+        cita a tu nombre» justo al intentar mover la visita a la que le acabamos de
+        invitar. Aquí solo se mira `visar_sale_order_id`, que es lo que este módulo
+        define; `visar_subscription` extiende el método para sumar el dueño de la
+        póliza, porque el campo que lo sabe es suyo y depende de nosotros.
         """
         self.ensure_one()
         lineas = self.env['sale.order.line'].sudo().search([
             ('calendar_event_id', '=', self.id),
         ])
-        return lineas.mapped('order_id.partner_id')
+        duenos = lineas.mapped('order_id.partner_id')
+        duenos |= self.sudo().visar_visit_task_ids.mapped('visar_sale_order_id.partner_id')
+        return duenos
 
-    @api.depends('sale_order_line_ids.task_id')
+    @api.depends('sale_order_line_ids.task_id', 'visar_visit_task_ids')
     def _compute_visar_fsm_task_ids(self):
         for event in self:
-            event.visar_fsm_task_ids = event.sale_order_line_ids.mapped('task_id').filtered(
-                lambda t: t.project_id.is_fsm
-            )
+            tareas = event.sale_order_line_ids.mapped('task_id') | event.visar_visit_task_ids
+            event.visar_fsm_task_ids = tareas.filtered(lambda t: t.project_id.is_fsm)

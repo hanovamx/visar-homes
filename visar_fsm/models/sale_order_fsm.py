@@ -166,5 +166,14 @@ class SaleOrder(models.Model):
                 vals['visar_technician_ids'] = [(6, 0, employees.ids)]
             if user_ids:
                 vals['user_ids'] = [(6, 0, user_ids)]
+            # El enlace DIRECTO tarea→cita, solo cuando no hay ambigüedad posible
+            # (1-oct-2026). Con un único evento en el pedido, `event` ES la cita de
+            # esta tarea y dejarlo escrito ahorra deducirlo después; con varios
+            # —una reserva multi-servicio, una cita por servicio— cuál le toca a
+            # cada tarea se decide por hora de inicio, y eso ya lo hace
+            # `_visar_ruta_cita`. Escribir aquí el primero de la lista sería
+            # exactamente el error que ese desempate existe para evitar.
+            if len(events) == 1 and not task.visar_visit_event_id:
+                vals['visar_visit_event_id'] = event.id
             if vals:
                 task.sudo().write(vals)

@@ -13,3 +13,4 @@ from . import calendar_event
 from . import payment_transaction
 from . import sale_order
 from . import project_task_travel
+from . import project_task_preagenda

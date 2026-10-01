@@ -13,3 +13,4 @@ from . import test_mensaje_fecha_hora
 from . import test_ahorro_poliza
 from . import test_lista_de_precios_poliza
 from . import test_cp_interes
+from . import test_poliza_preagenda

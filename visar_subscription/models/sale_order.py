@@ -177,12 +177,30 @@ class SaleOrder(models.Model):
                 order._visar_walk_visit_series(cadena, interval)
 
     def _visar_walk_visit_series(self, visitas, interval):
-        """Recorre UNA serie: cada pendiente cuelga de la fecha real de la anterior."""
+        """Recorre UNA serie: cada pendiente cuelga de la fecha real de la anterior.
+
+        **El ancla de una visita PRE-AGENDADA es su fecha propuesta, no la real**
+        (decisión del usuario, 1-oct-2026). Es lo que impide que el calendario
+        derive: si al cliente se le ofrece mover su visita de marzo al 8 porque el
+        día 1 no podía, la de junio sigue tocando el 1 y no el 8. Sin esto cada
+        ajuste de una semana se arrastraría a todas las visitas restantes del
+        contrato, y en una póliza anual eso son dos meses de deriva.
+
+        Por eso la propuesta de una pre-agendada **no se borra**: mientras el campo
+        existe es el ancla. Las demás agendadas sí la pierden, porque ahí la fecha
+        real ES la decisión. Y en cuanto alguien mueve la visita a mano o el cliente
+        la reagenda, `visar_visit_preagendada` se apaga y vuelve a anclar en la real.
+        """
         self.ensure_one()
         ancla = None
         for visita in visitas:
             real = fields.Date.to_date(visita.planned_date_begin)
-            if real:
+            if real and visita.visar_visit_preagendada and visita.visar_visit_due_date:
+                # Pre-agendada: ancla en la PROPUESTA y se conserva. Ver el docstring.
+                propuesta = visita.visar_visit_due_date
+                ancla = max(ancla, propuesta) if ancla else propuesta
+                vals = {'visar_visit_due_out_of_term': False}
+            elif real:
                 # Ya agendada: ancla a las siguientes y no necesita propuesta. El
                 # `max` importa cuando una visita de más adelante en la lista se
                 # agendó ANTES que las anteriores: sin él la serie retrocede y dos

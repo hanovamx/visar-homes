@@ -105,8 +105,15 @@ class ProjectTask(models.Model):
         cuatro eventos en el mismo día) ignoraría un evento cualquiera de los
         cuatro: el suyo seguiría contando y, encima, la franja ajena que se
         ignoró desaparecería del día.
+
+        Desde el 1-oct-2026 se mira ANTES `visar_visit_event_id`, el enlace
+        directo. Donde está puesto no hay nada que deducir, y eso cierra el
+        agujero de la 710 de raíz en vez de seguir adivinando: el desempate por
+        hora de abajo sigue para todo lo que nació sin el campo.
         """
         self.ensure_one()
+        if self.visar_visit_event_id:
+            return self.visar_visit_event_id
         eventos = (self.visar_sale_line_ids | self.visar_source_line_ids).mapped(
             'calendar_event_id')
         if len(eventos) > 1 and self.planned_date_begin:

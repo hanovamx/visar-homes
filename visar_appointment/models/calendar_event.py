@@ -160,14 +160,19 @@ class CalendarEvent(models.Model):
         `limite`, y **la punta 2** —el horario NUEVO sigue teniendo que estar a N
         horas—, porque elegir para dentro de dos horas desordena la ruta del
         tecnico exactamente igual venga de una incidencia o de un capricho.
+
+        `poliza` dejo de ser un bloqueo absoluto el 1-oct-2026: ahora depende de si
+        la visita tiene cita propia y de si alguien se lo confirmo al cliente. El
+        porque esta en `_visar_poliza_blocked`.
         """
         self.ensure_one()
         if not self.active:
             return 'cancelada'
         if not self.start:
             return 'sin_fecha'
-        if self._visar_is_subscription_visit():
-            return 'poliza'
+        motivo_poliza = self._visar_poliza_blocked()
+        if motivo_poliza:
+            return motivo_poliza
 
         autorizada = bool(self.visar_reschedule_granted_at)
 
@@ -188,6 +193,45 @@ class CalendarEvent(models.Model):
 
         if self.visar_reschedule_count >= self._visar_reschedule_max():
             return 'limite'
+        return None
+
+    def _visar_poliza_blocked(self):
+        """`'poliza'` si esta cita de póliza no se puede mover todavía, o None.
+
+        **La premisa del bloqueo cambió el 1-oct-2026, así que cambió la condición.**
+
+        Hasta entonces el bloqueo era absoluto y su razón, escrita aquí, era
+        literal: *«las demás visitas del ciclo nacen sin agendar y no tienen
+        `calendar.event` que mover»*. Era verdad — y por eso lo correcto no era
+        añadir una excepción, sino arreglar la condición cuando la premisa dejó de
+        serlo. Con la pre-agenda (`project_task_preagenda.py`) una visita de póliza
+        **sí** tiene cita propia, y mover esa cita mueve la visita.
+
+        Quedan bloqueadas dos cosas, por razones distintas:
+
+        * **Una cita de póliza sin visita que arrastrar.** Moverla dejaría la cita
+          en un sitio y el servicio en otro: exactamente el estado que el bloqueo
+          original evitaba.
+        * **Una pre-agenda que el cliente todavía no ha confirmado.** La puso un
+          robot a partir de la fecha propuesta; el cliente no sabe que existe. Que
+          la pueda mover quien no sabe que la tiene no significa nada, y en cambio
+          abre la puerta a que una tercera persona con el mismo teléfono la mueva
+          antes de que el dueño se entere. Se desbloquea cuando alguien se lo
+          confirma: el propio cliente por WhatsApp, u oficina por teléfono
+          (`visar_visit_preagenda_confirmada`).
+
+        Se reusa el motivo `'poliza'` a propósito. Una clave nueva obligaría a tocar
+        el catálogo de motivos, el prompt del agente y sus traducciones para decir lo
+        mismo que ya dice esta. Oficina sí la mueve desde el backend, porque ese
+        camino no pasa por este guardia.
+        """
+        self.ensure_one()
+        visitas = self._visar_reschedule_tasks().filtered('visar_subscription_order_id')
+        if self._visar_is_subscription_visit() and not visitas:
+            return 'poliza'
+        if visitas.filtered(lambda t: t.visar_visit_preagendada
+                            and not t.visar_visit_preagenda_confirmada):
+            return 'poliza'
         return None
 
     def _visar_is_subscription_visit(self):
@@ -259,15 +303,24 @@ class CalendarEvent(models.Model):
     def _visar_reschedule_tasks(self):
         """Las tareas de campo de esta cita. Un solo sitio que sepa el camino.
 
-        El puente es indirecto —por `sale.order.line.calendar_event_id`— y lo
-        necesitan dos cosas: reescribir las fechas y devolver la tarea a
-        "Programado". Antes estaba escrito dentro de `_visar_sync_fsm_tasks`.
+        Dos caminos, y hacen falta los dos:
+
+        * el indirecto, por `sale.order.line.calendar_event_id`, que es el de
+          cualquier venta puntual;
+        * el directo, por `visar_visit_task_ids` (1-oct-2026), que es el único que
+          existe para una visita de póliza pre-agendada: su cita no la originó
+          ninguna línea.
+
+        Sin el segundo, `_visar_sync_fsm_tasks` no escribiría nada al mover una
+        pre-agenda y el técnico seguiría viendo la hora vieja — que es justo el
+        olvido que este método se creó para no repetir.
         """
         self.ensure_one()
         lineas = self.env['sale.order.line'].sudo().search([
             ('calendar_event_id', '=', self.id),
         ])
-        return lineas.mapped('task_id').filtered(lambda t: t.id)
+        tareas = lineas.mapped('task_id') | self.sudo().visar_visit_task_ids
+        return tareas.filtered(lambda t: t.id)
 
     def _visar_sync_fsm_tasks(self):
         """Reescribe fecha y técnicos en las tareas de campo de esta cita.

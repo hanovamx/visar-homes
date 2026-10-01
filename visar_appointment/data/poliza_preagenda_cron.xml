@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: oficina puede ajustar frecuencia/activo sin que un upgrade lo
+         pise (mismo patrón que los demás crons de Visar). -->
+    <data noupdate="1">
+        <record id="visar_poliza_preagenda_cron" model="ir.cron">
+            <field name="name">Visar Pólizas: pre-agendar las visitas que toca</field>
+            <field name="model_id" ref="model_project_task"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_preagenda()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <!-- DE MADRUGADA, y no es un detalle de gusto: el wizard web no crea
+                 apartado (`visar.slot.hold`) mientras el cliente paga, así que si
+                 este cron le quita el hueco a una reserva en vuelo, el nativo la
+                 descarta DESPUÉS de haber cobrado. De noche no hay reservas en
+                 vuelo. Ver `project_task_preagenda.py::_visar_cron_preagenda`.
+                 `nextcall` va en UTC: 9:30 UTC = 3:30 de la madrugada en
+                 Monterrey (UTC-6). -->
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field name="nextcall" eval="(DateTime.now().replace(hour=9, minute=30, second=0) + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')"/>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>

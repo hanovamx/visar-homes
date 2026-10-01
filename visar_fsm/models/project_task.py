@@ -39,6 +39,27 @@ class ProjectTask(models.Model):
     visar_sale_line_ids = fields.One2many(
         'sale.order.line', 'task_id', string="Líneas de la orden")
 
+    # LA CITA PROPIA de esta visita. Vive aquí, en el módulo común, y no en
+    # `visar_subscription` ni en `visar_appointment`, por el mismo argumento que
+    # dejó `visar_reschedule_granted_at` en `visar_fsm/models/calendar_event.py`:
+    # quienes lo leen son módulos HERMANOS (`visar_appointment` para el motor de
+    # rutas y el reagendado, `visar_field_app` y `visar_whatsapp_agent` para saber
+    # qué cita mover).
+    #
+    # Hasta el 1-oct-2026 no existía nada así y el puente era SIEMPRE indirecto,
+    # por `sale.order.line.calendar_event_id`. Eso funciona para una venta normal
+    # —una línea, una cita— y falla para una póliza: la línea genera N visitas y su
+    # `calendar_event_id` guarda la de la PRIMERA. Es el agujero que produjo el
+    # falso aviso de ruta de la visita 710 el 30-sep, y el que impedía que una
+    # visita de póliza tuviera cita que mover.
+    visar_visit_event_id = fields.Many2one(
+        'calendar.event',
+        string="Cita de esta visita",
+        ondelete='set null', index=True, copy=False,
+        help="La cita de calendario que corresponde a ESTA visita. En una póliza "
+             "cada visita tiene la suya; la línea de la orden solo recuerda la de "
+             "la primera.")
+
     # Etiqueta de servicio: qué grupos de servicio Visar cubre esta tarea.
     # Es lo que permite consolidar el combo en UN servicio externo sin perder el
     # conteo por línea de negocio: una tarea combo lleva los dos grupos y aparece
@@ -110,13 +131,18 @@ class ProjectTask(models.Model):
     def _visar_calendar_event(self):
         """La cita de la que nace este servicio externo, o vacío.
 
-        **No existe ningún `project.task.visar_event_id`.** El puente real es
-        indirecto, por la línea de la orden (`sale.order.line.calendar_event_id`),
-        y es el mismo camino que recorre `_visar_sync_fsm_tasks` en sentido
-        contrario. Se devuelve un recordset —no un id— para que quien llame pueda
-        encadenar sin comprobar nada.
+        Mira primero `visar_visit_event_id`, que es el enlace DIRECTO y el único
+        fiable cuando una línea de orden genera varias visitas (una póliza). El
+        camino indirecto por `sale.order.line.calendar_event_id` queda como
+        respaldo para todo lo anterior al 1-oct-2026, que es la inmensa mayoría:
+        ahí la línea tiene una sola cita y el resultado es el mismo.
+
+        Se devuelve un recordset —no un id— para que quien llame pueda encadenar
+        sin comprobar nada.
         """
         self.ensure_one()
+        if self.visar_visit_event_id:
+            return self.visar_visit_event_id
         return self.visar_sale_line_ids.mapped('calendar_event_id')[:1]
 
     def _visar_back_to_scheduled(self):

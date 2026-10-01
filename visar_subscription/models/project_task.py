@@ -20,7 +20,7 @@ registrada como visita normal le comía al cliente una de las visitas que pagó.
 búsquedas de otros módulos— pero pasa a DERIVARSE del tipo, para que no haya dos campos
 que puedan contradecirse.
 """
-from odoo import api, fields, models
+from odoo import _, api, fields, models
 
 VISIT_KINDS = [
     ('preventiva', "Preventiva (serie de la póliza)"),
@@ -128,6 +128,32 @@ class ProjectTask(models.Model):
              "las visitas acumuladas que alguien tiene que decidir qué hacer con "
              "ellas.",
     )
+    # Las dos banderas de la PRE-AGENDA (1-oct-2026, paso 2 de pólizas).
+    #
+    # Deliberadamente NO se reusa `visar_visit_due_manual`: ese campo significa
+    # "una persona escribió esta fecha" y por eso el recálculo la respeta. Una
+    # pre-agenda la escribió un robot a partir de la propuesta, que es lo
+    # contrario: es la propuesta hecha realidad, no una decisión humana. Mezclarlas
+    # haría imposible distinguir la fecha que el cliente pidió de la que le tocaba.
+    visar_visit_preagendada = fields.Boolean(
+        string="Pre-agendada",
+        copy=False,
+        help="La fecha y el técnico los puso el cron de pre-agenda a partir de la "
+             "fecha propuesta. El cliente todavía no la ha confirmado.",
+    )
+    visar_visit_preagenda_confirmada = fields.Boolean(
+        string="Pre-agenda confirmada",
+        copy=False,
+        help="Alguien se lo confirmó al cliente (él mismo por WhatsApp, u oficina "
+             "por teléfono). Hasta entonces la visita está pre-agendada pero el "
+             "cliente no lo sabe.",
+    )
+    visar_visit_preagenda_estado = fields.Char(
+        string="Estado de la pre-agenda",
+        compute='_compute_visar_visit_preagenda_estado',
+        help="En una frase: si la visita tiene fecha, quién la puso y si el "
+             "cliente ya lo sabe.",
+    )
     visar_visit_days_late = fields.Integer(
         string="Días de retraso",
         compute='_compute_visar_visit_days_late',
@@ -139,6 +165,31 @@ class ProjectTask(models.Model):
         related='visar_subscription_order_id.end_date',
         readonly=True,
     )
+
+    @api.depends('planned_date_begin', 'visar_visit_preagendada',
+                 'visar_visit_preagenda_confirmada', 'visar_visit_due_date',
+                 'visar_visit_due_out_of_term')
+    def _compute_visar_visit_preagenda_estado(self):
+        """La columna que oficina lee de un vistazo.
+
+        ⚠️ **No se puede usar en el `domain` de una vista.** Es un computed sin
+        `store`, y Odoo 19 rechaza la vista COMPLETA si uno de esos aparece en un
+        dominio (ya pasó con `es_vigente` y con `alcanzable`). Como columna y como
+        decoración va bien; para filtrar están los dos booleanos.
+        """
+        for task in self:
+            if task.visar_visit_due_out_of_term:
+                task.visar_visit_preagenda_estado = _("Fuera de vigencia")
+            elif not task.planned_date_begin:
+                task.visar_visit_preagenda_estado = (
+                    _("Sin fecha — le toca el %s") % task.visar_visit_due_date
+                    if task.visar_visit_due_date else _("Sin fecha ni propuesta"))
+            elif not task.visar_visit_preagendada:
+                task.visar_visit_preagenda_estado = _("Agendada por una persona")
+            elif task.visar_visit_preagenda_confirmada:
+                task.visar_visit_preagenda_estado = _("Pre-agendada y confirmada")
+            else:
+                task.visar_visit_preagenda_estado = _("Pre-agendada — SIN confirmar")
 
     @api.depends('visar_visit_kind')
     def _compute_visar_is_warranty(self):
@@ -195,7 +246,9 @@ class ProjectTask(models.Model):
     # lote dispararía el recálculo de todo el contrato. Se llama explícito desde donde
     # la serie cambia de verdad: se agenda una visita, se cambia su tipo, o nace otra.
     _VISAR_DUE_TRIGGERS = ('planned_date_begin', 'visar_visit_kind',
-                           'visar_is_warranty', 'state')
+                           'visar_is_warranty', 'state',
+                           'visar_visit_preagendada',
+                           'visar_visit_preagenda_confirmada')
 
     @api.model_create_multi
     def create(self, vals_list):

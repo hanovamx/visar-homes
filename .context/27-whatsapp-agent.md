@@ -151,11 +151,22 @@ de `visar_fastapi`.
 > crea oficina a mano, incluidas las de póliza ya agendadas. Se les limpia el prefijo
 > interno ("S00284 - ", "Visita póliza 2026-09-22 — ").
 >
-> **Sin fecha no entran**, y es deliberado: las visitas de póliza por agendar son
-> cientos, y ofrecerlas invita a un "¿cuándo?" que el agente todavía no sabe contestar
-> (paso 2 de `35-polizas.md`, sin empezar). Al existir ese paso, se quita el filtro.
+> **Sin fecha no entran**, y es deliberado: las visitas de póliza sin agendar son
+> cientos, y ofrecerlas invita a un "¿cuándo?" que el agente no sabe contestar si nadie
+> les ha puesto fecha. El filtro **se queda**, pero desde el 1-oct-2026 la pre-agenda
+> (paso 2 de `35-polizas.md`, Fase A) les pone fecha y cita propia, así que las
+> preventivas **sí aparecen aquí solas**, con `can_reschedule=False` mientras nadie se
+> lo haya confirmado al cliente.
 > Una visita sin cita (`event_id` vacío) no se puede mover por chat: el agente lo dice
 > y ofrece asesor, como con cualquier servicio sin cita.
+>
+> Dos fallos **preexistentes** de esta lista salieron al hacer eso, los dos corregidos
+> el 1-oct-2026: reventaba (`Expected singleton: product.product()`) con una línea de
+> **sección o nota** en un pedido confirmado, y cogía las 20 tareas **más nuevas por
+> id** antes de descartar las sin fecha — a un cliente de póliza le devolvía veinte
+> visitas sin agendar y ni una con fecha. Ahora se busca por **ventana de fecha** según
+> el alcance, con una segunda búsqueda para las etapas que fuerzan el lado
+> (`visar_agent_bucket`).
 
 `service_code` es un **código de dimensión** (`FUM_INT`, `FUM_EXT`, `MAV_JAR`),
 no de grupo. Si se manda un grupo con varias dimensiones, la respuesta trae
