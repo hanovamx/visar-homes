@@ -99,6 +99,12 @@ CTX_SILENCIO = {
     'no_mail_to_attendees': True,
     'dont_notify': True,
     'tracking_disable': True,
+    # `appointment_crm` abre una oportunidad de CRM por cita cuando el tipo lleva
+    # `lead_create`, y en producción los cuatro tipos lo llevan. Lo para
+    # `calendar_event.py::_create_lead_from_appointment`, y hace falta un guardia
+    # propio porque ese módulo publica en el chatter con `_message_log`, que
+    # `tracking_disable` no toca. Descubierto desplegando el 1-oct-2026.
+    'visar_preagenda_sin_lead': True,
 }
 
 

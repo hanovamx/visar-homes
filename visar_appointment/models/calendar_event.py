@@ -92,6 +92,38 @@ class CalendarEvent(models.Model):
              "llegar al tope, el cambio lo tiene que hacer un asesor.")
 
     # ------------------------------------------------------------------
+    # La pre-agenda no abre oportunidades de CRM
+    # ------------------------------------------------------------------
+
+    def _create_lead_from_appointment(self):
+        """Con `visar_preagenda_sin_lead` en el contexto, no crea nada.
+
+        **Esto se descubrió desplegando, y era lo único que faltaba del silenciado
+        de la pre-agenda** (1-oct-2026). `appointment_crm` crea una oportunidad de
+        CRM por cada cita cuyo tipo lleve `lead_create`, y en producción **los
+        cuatro tipos lo llevan activo**. Sin este guardia, cada visita de póliza
+        pre-agendada por el cron haría cuatro cosas que nadie pidió:
+
+        * una oportunidad en el embudo, de un cliente que ya es cliente y que no ha
+          pedido nada;
+        * un `res_model_id`/`res_id` escrito en la cita (`_link_with_lead`), que es
+          lo que genera la `mail.activity` automática;
+        * un «Meeting linked to Lead/Opportunity» en el chatter de la cita —y esto
+          `tracking_disable` **no** lo para, porque es un `_message_log` explícito,
+          no seguimiento de campo;
+        * el correo de esa actividad.
+
+        **Se desactiva por CONTEXTO y no apagando `lead_create`.** Apagarlo sería lo
+        fácil y rompería lo que sí funciona: las citas que el cliente pide y paga por
+        la web **deben** abrir su oportunidad, y en producción ya hay 6 creadas así.
+        La diferencia no está en el tipo de cita, está en quién la pidió: si la puso
+        un cron a partir de una fecha propuesta, no hay nada que vender.
+        """
+        if self.env.context.get('visar_preagenda_sin_lead'):
+            return self.env['crm.lead'].browse()
+        return super()._create_lead_from_appointment()
+
+    # ------------------------------------------------------------------
     # Configuración
     # ------------------------------------------------------------------
 

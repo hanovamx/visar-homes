@@ -237,19 +237,66 @@ class TestPolizaPreagenda(TransactionCase):
             "mas de un correo: solo deberia poder salir el de actividad a oficina")
 
     def test_no_se_crea_ninguna_oportunidad_de_CRM(self):
-        """`appointment_crm` crea un lead por cita si el tipo lleva `lead_create`.
+        """Con `lead_create` ENCENDIDO, que es como está producción.
 
-        Hoy está apagado y nadie lo puso así a propósito, así que esto es el seguro:
-        con él encendido, cada visita pre-agendada ensuciaría el embudo con una
-        oportunidad que nadie pidió, y además escribiría `res_model_id`/`res_id`
-        generando una `mail.activity` automática.
+        `appointment_crm` abre una oportunidad por cada cita cuyo tipo lo lleve, y
+        en `visar-db` **los cuatro tipos lo llevan activo** — lo cual se descubrió
+        desplegando, no leyendo el código. La primera versión de esta prueba lo daba
+        por apagado (como en `visar-test`) y por eso pasaba en verde mientras el
+        producto, en producción, habría creado 14 oportunidades en la primera
+        corrida del cron.
+
+        Así que aquí se **enciende a propósito**: es la única forma de que la prueba
+        valga para la base donde importa.
         """
+        self.maestro.sudo().lead_create = True
         antes = self.env['crm.lead'].sudo().with_context(
             active_test=False).search_count([])
-        self._preagendar_una()
+        _visita, cita = self._preagendar_una(devolver_visita=True)
         self.assertEqual(
             self.env['crm.lead'].sudo().with_context(
-                active_test=False).search_count([]), antes)
+                active_test=False).search_count([]), antes,
+            "se abrio una oportunidad de CRM: el embudo se llena de clientes que ya "
+            "son clientes y que no han pedido nada")
+        self.assertFalse(
+            cita.opportunity_id,
+            "la cita quedo enganchada a una oportunidad")
+        self.assertFalse(
+            cita.res_model_id or cita.res_id,
+            "`_link_with_lead` escribio res_model/res_id en la cita, y eso es lo "
+            "que genera la mail.activity automatica")
+        self.assertEqual(
+            self.env['mail.message'].sudo().search_count(
+                [('model', '=', 'calendar.event'), ('res_id', '=', cita.id)]),
+            0,
+            "algo publico en el chatter de la cita. Si es el «Meeting linked to "
+            "Lead/Opportunity», ojo: `tracking_disable` NO lo para, porque es un "
+            "_message_log explicito y no seguimiento de campo")
+
+    def test_una_cita_NORMAL_sigue_abriendo_su_oportunidad(self):
+        """El otro lado del guardia, y el que explica por qué va por contexto.
+
+        Apagar `lead_create` habría sido lo fácil y habría roto lo que sí funciona:
+        una cita que el cliente pide y paga por la web **debe** abrir su oportunidad
+        —en producción ya hay 6 creadas así—. La diferencia no está en el tipo de
+        cita, está en quién la pidió.
+        """
+        self.maestro.sudo().lead_create = True
+        antes = self.env['crm.lead'].sudo().with_context(
+            active_test=False).search_count([])
+        self.env['calendar.event'].sudo().create({
+            'name': 'Cita pedida por el cliente (prueba)',
+            'start': self._en_dias(4, hora_local=12),
+            'stop': self._en_dias(4, hora_local=12) + relativedelta(hours=1),
+            'allday': False,
+            'appointment_type_id': self.maestro.id,
+            'partner_ids': [(6, 0, self.cliente.ids)],
+        })
+        self.assertGreater(
+            self.env['crm.lead'].sudo().with_context(
+                active_test=False).search_count([]), antes,
+            "una cita normal dejo de abrir su oportunidad: alguien apago "
+            "`lead_create` en vez de usar el contexto de la pre-agenda")
 
     def test_el_camino_PAGADO_sigue_avisando(self):
         """El seguro contra «arreglar» el silencio apagándolo para todos.
