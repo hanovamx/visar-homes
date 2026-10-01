@@ -1452,3 +1452,107 @@ Los disparadores configurados el 1-oct-2026 son `Termitas`, `Chinches`,
 y sus etiquetas también. Casan, así que funcionan; pero ese punto es frágil: si alguien
 «limpia» uno de los dos lados, el enlace se rompe **en silencio**. Es exactamente el hueco ②
 y ahora deja aviso.
+
+---
+
+## [IMPLEMENTADO — 1-oct-2026] Lo que sabemos del cliente: dos anclas y nivel «informa»
+
+Visar quería que el agente hablara distinto con quien ya es cliente, y que oficina
+tuviera a mano el contexto sin abrir la hoja de una visita.
+
+### La corrección del usuario que cambió el diseño
+
+La primera propuesta colgaba los datos del **cliente**. El usuario lo frenó:
+*«es posible que un cliente agende para diferentes direcciones que tienen diferentes
+características»*. Tenía razón, y la base lo confirma — **82 domicilios para 23 clientes**
+el 1-oct-2026, y uno de ellos con **seis**.
+
+Así que «es un departamento» **no es un dato del cliente**: es del DOMICILIO. Colgarlo de
+una persona que además tiene una casa no es un dato incompleto, es **falso** — y el agente
+lo repetiría con la misma confianza que uno bueno.
+
+El sitio correcto ya existía: `_visar_apply_delivery_address` crea (y **reutiliza**) un
+`res.partner` hijo `type='delivery'` por dirección, deduplicado por (cliente, calle, CP).
+
+| ámbito | ancla | ranuras |
+|---|---|---|
+| **domicilio** | el contacto de entrega | tipo de inmueble · cómo se entra · mascotas · plaga que vuelve · quién autoriza |
+| **cliente** | el cliente de arriba | cuándo le conviene |
+
+`_check_ambito` lo hace cumplir. No es pulcritud: es la única forma de que no se pueda
+escribir «Departamento» en un cliente con tres direcciones.
+
+### Nivel «informa», por una razón mejor que la prudencia
+
+Un fact **informa el tono**. No contesta ningún paso del cuestionario y no da por sabida
+ninguna entrada de precio. Dos motivos:
+
+1. **El domicilio se pregunta tarde** —es un paso del cuestionario—, así que cuando el
+   agente empieza a hablar **todavía no sabe de qué dirección se trata**. Los facts de
+   domicilio no están disponibles cuando habría que pre-rellenar, aunque quisiéramos.
+2. La memoria de la ruta de información ya lo dice: *«Nunca supongas que es solo interior:
+   **es un dato de precio**»*. Un fact viejo saltándose esa pregunta = una cita cobrada mal.
+
+**La regla va escrita DENTRO del bloque**, con las entradas de precio nombradas una por
+una —«metros», «interior/exterior», «código postal»—, porque lo concreto es lo que un
+modelo pequeño sigue y «ten cuidado» no. Hay una prueba por cada palabra: si la frase
+desaparece, el nivel deja de existir y nada más fallaría.
+
+**Lo que SÍ gana:** con varias direcciones el bloque le dice que **pregunte cuál**, antes
+de los datos (detrás ya habría leído un tipo de inmueble concreto como bueno). Resuelve la
+ambigüedad en un mensaje en vez de arrastrarla hasta el precio.
+
+### De la hoja al domicilio, sin inventar nada
+
+El técnico **ya captura** `x_tipo_inmueble` y `x_restricciones_acceso` en la hoja de
+valoración, y hoy se quedan sepultados dentro de la hoja de **una** visita. Nadie los
+vuelve a ver: ni oficina al atender una llamada, ni el agente, ni el técnico de la visita
+siguiente —que vuelve al mismo portón sin saber del candado—.
+
+`_visar_datos_domicilio_sync` los sube al domicilio en cada guardado de la hoja, con
+`origen='hoja'`. **Ningún modelo escribe nada**: es una copia de lo que una persona ya
+escribió. Y si eligió «Otro» y especificó, vale su texto y no la palabra «Otro».
+
+**Una corrección a mano (`origen='persona'`) nunca se pisa.** La derivación corre en cada
+guardado, así que sin esa regla lo corregido duraría hasta el siguiente guardado del
+técnico — el fallo de «lo edité y se perdió», automatizado. Es la misma regla que el cron
+de contactos y que el Vocabulario.
+
+### El orden del prompt, ya con cinco bloques
+
+```
+[0] prompt base + catálogo     ← idéntico en todas las rutas (es lo que se cachea)
+[1] memoria de la ruta
+[2] lo que sabemos del cliente  ← DATO
+[3] correcciones                ← REGLA
+[4] contexto del turno
+```
+
+Los facts van **antes** de las correcciones porque son dato y no regla: las correcciones
+son lo último que gobierna la conducta antes del contexto del turno. Y `extra` sigue al
+final, que es lo que protege las barandillas de la digresión.
+
+### Una lectura por conversación, no por mensaje
+
+Se lee en el primer mensaje y se guarda en la conversación (`FACTS_CACHE`). **Se cachea
+también el vacío**: si no, un Odoo caído se reintentaría en cada mensaje, que es justo
+cuando menos conviene. El precio: un fact editado a mitad de una conversación no se ve
+hasta la siguiente — aceptable, estos datos cambian en semanas.
+
+A diferencia del registro de contactos, esto **sí se espera**: no es telemetría, es
+contexto que cambia lo que el modelo va a contestar en ese turno. Pero se paga una vez.
+
+### Privacidad
+
+Más de un cliente con el mismo teléfono → **no se manda nada** (política de
+`_agent_find_partner`). Aquí pesa más que en ningún sitio: un fact equivocado no es un dato
+que falta, es el agente hablándole a alguien de la casa de otra persona.
+
+Y la dirección se nombra por **colonia o calle**, nunca completa: leerle su calle y su
+número a quien solo preguntó un precio suena a vigilancia, no a servicio.
+
+### Lo que sigue fuera
+
+Que **el agente proponga** facts. Cuando entre: en las mismas ranuras cerradas, al cerrar
+la conversación (una llamada, no una por mensaje) y con alguien aprobando — `origen='agente'`
+ya existe para eso.

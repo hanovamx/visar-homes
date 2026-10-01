@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         Lo que Visar sabe de un cliente y de cada domicilio.
+
+         Va en la ficha del cliente y en la de cada dirección de servicio,
+         porque el ÁMBITO de cada dato decide dónde vive: un tipo de inmueble
+         es del domicilio, y una preferencia de horario es de la persona. Ver
+         el docstring de `visar_partner_fact.py`.
+         ============================================================== -->
+
+    <record id="visar_partner_fact_view_list" model="ir.ui.view">
+        <field name="name">visar.partner.fact.list</field>
+        <field name="model">visar.partner.fact</field>
+        <field name="arch" type="xml">
+            <list string="Lo que sabemos" editable="bottom">
+                <field name="slot"/>
+                <field name="value"/>
+                <field name="origen"/>
+                <field name="ambito" optional="hide"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_partner_view_form_facts" model="ir.ui.view">
+        <field name="name">res.partner.form.visar.facts</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page name="visar_facts" string="Lo que sabemos">
+                    <div class="alert alert-info" role="alert">
+                        Contexto que el agente lee cuando esta persona escribe, y
+                        que oficina tiene a mano sin abrir la hoja de una visita.
+                        <br/>
+                        <strong>El agente lo usa para hablar mejor, no para
+                        contestar por el cliente.</strong> Nunca se salta un paso
+                        del cuestionario con esto, y menos uno que determine el
+                        precio: los metros, el interior/exterior y el código
+                        postal se preguntan siempre.
+                    </div>
+                    <div class="alert alert-secondary" role="alert">
+                        Cada dato vive donde le toca: el <strong>tipo de
+                        inmueble</strong>, el <strong>acceso</strong>, las
+                        <strong>mascotas</strong>, la <strong>plaga que
+                        vuelve</strong> y <strong>quién autoriza</strong> son de
+                        la <em>dirección</em> —un cliente puede tener casa y
+                        local—; <strong>cuándo le conviene</strong> es de la
+                        <em>persona</em>. Si te lo rechaza al guardar, es por eso.
+                    </div>
+                    <field name="visar_fact_ids" nolabel="1"
+                           context="{'default_origen': 'persona'}"/>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

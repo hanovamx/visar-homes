@@ -368,3 +368,126 @@ class TestCotizacionHuecos(TestCotizacionManual):
         tarea = self._visita()
         self._hoja_real(tarea, 'Alacranes (prueba)')
         self.assertEqual(self._avisos(tarea).user_id, usuario)
+
+
+@tagged('post_install', '-at_install')
+class TestDatosDelDomicilio(TestCotizacionManual):
+    """Lo que la hoja sabe del LUGAR se sube al domicilio, no al cliente.
+
+    El técnico ya captura el tipo de inmueble y las restricciones de acceso, y hoy
+    se quedan sepultados dentro de la hoja de UNA visita: nadie los vuelve a ver
+    salvo que abra esa hoja. Ni oficina al atender una llamada, ni el agente
+    cuando el cliente escribe otra vez, ni el técnico de la visita siguiente —que
+    vuelve al mismo portón sin saber del candado—.
+
+    Lo importante del diseño: van al **domicilio** y no al cliente. Un cliente
+    agenda para su casa y para su local, y «es un departamento» sobre la persona
+    no es un dato incompleto, es falso.
+    """
+
+    def _con_domicilio(self, calle='Calle Prueba No. 1', colonia='Las Torres'):
+        tarea = self._visita()
+        domicilio = self.env['res.partner'].create({
+            'name': 'Domicilio de servicio', 'type': 'delivery',
+            'parent_id': self.cliente.commercial_partner_id.id,
+            'street': calle, 'street2': colonia, 'zip': CP})
+        tarea.sale_order_id._visar_set_service_shipping(domicilio)
+        return tarea, domicilio
+
+    def _hoja_dice(self, tarea, **campos):
+        """Una hoja falsa que responde a los campos que pida la derivación."""
+        class HojaFalsa:
+            _fields = dict.fromkeys(campos, True)
+
+            def __init__(self, datos):
+                self._datos = datos
+
+            def __getitem__(self, clave):
+                return self._datos.get(clave)
+
+            def __bool__(self):
+                return True
+
+        return patch.object(type(tarea), '_visar_quote_hoja',
+                            lambda self: HojaFalsa(campos))
+
+    # ------------------------------------------------------------------
+
+    def test_el_tipo_de_inmueble_sube_al_domicilio(self):
+        tarea, domicilio = self._con_domicilio()
+        with self._hoja_dice(tarea, x_tipo_inmueble='Departamento'):
+            tarea._visar_datos_domicilio_sync()
+        Fact = self.env['visar.partner.fact']
+        self.assertEqual(
+            Fact._visar_facts_de(domicilio).get('tipo_inmueble'), 'Departamento')
+
+    def test_NO_sube_al_cliente(self):
+        """El punto entero: el cliente puede tener casa y local."""
+        tarea, _domicilio = self._con_domicilio()
+        with self._hoja_dice(tarea, x_tipo_inmueble='Departamento'):
+            tarea._visar_datos_domicilio_sync()
+        Fact = self.env['visar.partner.fact']
+        self.assertFalse(Fact._visar_facts_de(self.cliente.commercial_partner_id))
+
+    def test_el_acceso_sube_tambien(self):
+        tarea, domicilio = self._con_domicilio()
+        with self._hoja_dice(tarea, x_restricciones_acceso='Portón con candado'):
+            tarea._visar_datos_domicilio_sync()
+        self.assertEqual(
+            self.env['visar.partner.fact']._visar_facts_de(domicilio).get('acceso'),
+            'Portón con candado')
+
+    def test_si_eligio_Otro_vale_lo_que_escribio(self):
+        """«Otro» a secas no dice nada; lo que el técnico escribió, sí."""
+        tarea, domicilio = self._con_domicilio()
+        with self._hoja_dice(tarea, x_tipo_inmueble='Otro',
+                             x_tipo_inmueble_otro='Casa en condominio'):
+            tarea._visar_datos_domicilio_sync()
+        self.assertEqual(
+            self.env['visar.partner.fact']._visar_facts_de(domicilio).get(
+                'tipo_inmueble'),
+            'Casa en condominio')
+
+    def test_dos_domicilios_del_mismo_cliente_no_se_mezclan(self):
+        tarea1, dom1 = self._con_domicilio('Casa No. 1', 'Las Torres')
+        with self._hoja_dice(tarea1, x_tipo_inmueble='Casa'):
+            tarea1._visar_datos_domicilio_sync()
+        tarea2, dom2 = self._con_domicilio('Local No. 2', 'Centro')
+        with self._hoja_dice(tarea2, x_tipo_inmueble='Local comercial'):
+            tarea2._visar_datos_domicilio_sync()
+        Fact = self.env['visar.partner.fact']
+        self.assertEqual(Fact._visar_facts_de(dom1).get('tipo_inmueble'), 'Casa')
+        self.assertEqual(Fact._visar_facts_de(dom2).get('tipo_inmueble'),
+                         'Local comercial')
+
+    def test_una_correccion_a_mano_no_se_pisa(self):
+        """La derivación corre en CADA guardado de la hoja."""
+        tarea, domicilio = self._con_domicilio()
+        self.env['visar.partner.fact']._visar_fact_set(
+            domicilio, 'acceso', 'Hay que llamar al portero', origen='persona')
+        with self._hoja_dice(tarea, x_restricciones_acceso='Portón con candado'):
+            tarea._visar_datos_domicilio_sync()
+        self.assertEqual(
+            self.env['visar.partner.fact']._visar_facts_de(domicilio).get('acceso'),
+            'Hay que llamar al portero')
+
+    def test_sin_domicilio_de_servicio_no_hace_nada(self):
+        """Pasa en visitas que no vienen de una reserva, y no es un problema."""
+        tarea = self._visita()
+        with self._hoja_dice(tarea, x_tipo_inmueble='Casa'):
+            self.assertEqual(tarea._visar_datos_domicilio_sync(), 0)
+
+    def test_un_fallo_no_tumba_el_guardado(self):
+        """Va colgado del guardado, con el técnico en casa del cliente."""
+        tarea, _domicilio = self._con_domicilio()
+        with patch.object(type(tarea), '_visar_datos_domicilio_sync_ahora',
+                          side_effect=RuntimeError("boom")):
+            self.assertEqual(tarea._visar_datos_domicilio_sync(), 0)
+
+    def test_un_campo_vacio_no_escribe_nada(self):
+        tarea, domicilio = self._con_domicilio()
+        with self._hoja_dice(tarea, x_tipo_inmueble=False,
+                             x_restricciones_acceso=''):
+            tarea._visar_datos_domicilio_sync()
+        self.assertFalse(
+            self.env['visar.partner.fact']._visar_facts_de(domicilio))

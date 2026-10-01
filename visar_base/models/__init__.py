@@ -16,3 +16,4 @@ from . import sale_order
 from . import payment_transaction
 from . import sale_order_line
 from . import res_config_settings
+from . import visar_partner_fact

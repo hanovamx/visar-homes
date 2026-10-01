@@ -15,3 +15,4 @@ from . import cotizacion_manual
 from . import seguimiento
 from . import inventario_ruta
 from . import consumo_material
+from . import datos_domicilio

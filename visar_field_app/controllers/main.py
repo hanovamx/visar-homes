@@ -1985,6 +1985,10 @@ class VisarFieldApp(http.Controller):
             task.sudo()._visar_quote_requests_sync(employee)
             # Visita de seguimiento acordada en la puerta (termitas, chinches).
             task.sudo()._visar_followup_sync(employee)
+            # Lo que la hoja sabe del LUGAR (tipo de inmueble, cómo se entra) se
+            # cuelga del domicilio, que es donde sirve la próxima vez. Hasta ahora
+            # se quedaba dentro de la hoja de esta visita.
+            task.sudo()._visar_datos_domicilio_sync()
             # Edición de un servicio cerrado: se re-bloquea (vuelve a solo lectura) y
             # se registra en el chatter. Editar de nuevo exige "Habilitar edición".
             if flow_state == 'cerrado':
