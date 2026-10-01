@@ -1,5 +1,30 @@
 # Estado y roadmap
 
+> **1-oct-2026 (2.º) — Lo que sabemos del cliente, y va en el DOMICILIO. DESPLEGADO en
+> `visar-db`** (visar_base 19.0.1.16.0, visar_field_app 19.0.1.47.0,
+> visar_whatsapp_agent 19.0.1.31.0 y el runtime; `deploy-facts-cliente-1oct.sh`, backup
+> `visar-db_facts-cliente-1oct_20261001-014107.sql.gz`).
+>
+> `visar.partner.fact` con **dos anclas**: los datos del lugar (tipo de inmueble, cómo se
+> entra, mascotas, plaga que vuelve, quién autoriza) van en el **contacto de entrega**; los
+> de la persona (cuándo le conviene), en el cliente. Lo pidió el usuario al frenar la
+> primera propuesta: *«un cliente puede agendar para diferentes direcciones con diferentes
+> características»*. La base lo confirma — **82 domicilios para 23 clientes, y uno con 31**.
+>
+> **Nivel «informa»**: el bloque lleva escrito que no contesta pasos del cuestionario y que
+> los metros, el interior/exterior y el CP se preguntan SIEMPRE. No es prudencia: el
+> domicilio se pregunta tarde, así que el dato no está disponible cuando habría que
+> pre-rellenar — y una entrada de precio contestada con un dato viejo es una cita cobrada
+> mal. Con varias direcciones le dice que **pregunte cuál**.
+>
+> La hoja de valoración sube sola `x_tipo_inmueble` y `x_restricciones_acceso` al domicilio
+> (antes se quedaban sepultados en la hoja de una visita), y **una corrección a mano nunca
+> se pisa**. El prompt pasa a **cinco bloques**: dato antes que regla, turno al final.
+>
+> **Nace vacío: no cambia ninguna conversación hasta que haya datos.** Lo primero que
+> aparecerá son los derivados, en cuanto un técnico guarde una valoración. Detalle en
+> `40-decisions.md`.
+>
 > **1-oct-2026 — Cuando la hoja pide cotización y no nace, alguien se entera.
 > DESPLEGADO en `visar-db`** (visar_field_app 19.0.1.46.0;
 > `deploy-aviso-cotizacion-1oct.sh`, backup
