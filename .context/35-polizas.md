@@ -477,14 +477,31 @@ Las dos son del silenciado de la cita, y ninguna se ve leyendo el código:
 Lo que **no** se usa: el `ir.config_parameter` `calendar.block_mail`. Apagaría también los
 correos de las citas pagadas, que sí hay que mandar.
 
-Hay un tercer efecto, **inocuo pero confuso si se mide**: crear la cita dispara el cron
-`crm_iap_enrich.ir_cron_lead_enrichment`. No es culpa nuestra — `appointment_crm` llama a
-`_create_lead_from_appointment()` sobre el recordset filtrado *aunque esté vacío*, y eso
-hace `crm.lead.create([])`, que dispara el cron antes de mirar si creó algo. Por eso la
-verificación **no** exige `ir.cron.trigger` en cero. Pero el filtro de ese mismo sitio es
-una bomba de configuración: con `appointment_type.lead_create` activo crearía un lead de
-verdad por cada visita. Hoy está apagado y nadie lo puso así a propósito, así que el cron
-lo avisa en el log una vez por corrida.
+### La tercera trampa, y la destapó el despliegue
+
+`appointment_crm` abre una oportunidad de CRM por cada cita cuyo tipo lleve
+`lead_create`. En `visar-test` ese campo está en NULL, así que las pruebas pasaban en
+verde — y **en `visar-db` está ENCENDIDO en los cuatro tipos**. Sin guardia, la primera
+corrida del cron habría hecho, por cada una de 14 visitas:
+
+* una oportunidad en el embudo, de un cliente que ya es cliente y no ha pedido nada;
+* un `res_model_id`/`res_id` escrito en la cita (`_link_with_lead`), que es lo que genera
+  la `mail.activity` automática;
+* un «Meeting linked to Lead/Opportunity» en el chatter de la cita. **`tracking_disable`
+  no lo para**: es un `_message_log` explícito, no seguimiento de campo;
+* el correo de esa actividad.
+
+Se desactiva **por contexto** (`visar_preagenda_sin_lead`, con un override de
+`calendar.event._create_lead_from_appointment` en `visar_appointment`) y **no apagando
+`lead_create`**. Apagarlo era lo fácil y rompía lo que sí funciona: una cita que el cliente
+pide y paga por la web **debe** abrir su oportunidad, y ya hay 6 creadas así. La diferencia
+no está en el tipo de cita, está en **quién la pidió**.
+
+Hay además un efecto **inocuo pero confuso si se mide**: crear la cita dispara el cron
+`crm_iap_enrich.ir_cron_lead_enrichment` incluso sin lead, porque `appointment_crm` llama a
+`_create_lead_from_appointment()` sobre el recordset filtrado *aunque esté vacío* y eso hace
+`crm.lead.create([])`, que dispara el cron antes de mirar si creó algo. Por eso la
+verificación **no** exige `ir.cron.trigger` en cero.
 
 ### El ancla deja de ser la fecha real
 
