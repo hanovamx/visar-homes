@@ -387,6 +387,68 @@ class CrmLead(models.Model):
     # ------------------------------------------------------------------
 
     @api.model
+    def _visar_crm_nat_owners(self, nat):
+        """Contactos que comparten `nat`, **incluidos los archivados**.
+
+        `active_test=False` no es un detalle: medido en produccion el 2-oct-2026,
+        el telefono `8112772622` esta en **15 fichas de contacto** con seis
+        nombres distintos (Administrator1, Katalina Manzina, Leticia Martinez,
+        Maria Jose Arizmendi, Maria Lopez, prueba...) y **todas archivadas**. Un
+        `search` normal devolvia **cero** y el relleno concluia "no se puede
+        demostrar de quien es" por el motivo equivocado — con el numero
+        correcto de casualidad. Peor: un telefono con un contacto activo y
+        catorce archivados habria pasado la puerta.
+
+        Archivar un contacto no deshace que ese numero estuvo en varias fichas,
+        y un lead se empareja por `visar_wa_phone_norm`, que no sabe nada de
+        `active`. Asi que para decidir si un numero identifica a UNA persona hay
+        que contarlos todos.
+        """
+        return self.env['res.partner'].sudo().with_context(
+            active_test=False).search([('visar_phone_nat10', '=', nat)])
+
+    @api.model
+    def _visar_crm_unlink_unprovable_links(self):
+        """Deshace los enlaces que no pasarian la puerta del telefono.
+
+        Existe por un fallo propio: el relleno de la 19.0.1.4.0 contaba los
+        contactos con un `search` normal, que **no ve los archivados**, y enlazo
+        4 ordenes cuyo telefono esta en siete fichas de contacto. El principio de
+        este trabajo es enlazar **solo donde se pueda demostrar**, asi que dejar
+        esos cuatro seria dejar justo lo que el principio prohibe.
+
+        Solo deshace enlaces que **puso el relleno** y que hoy no se pueden
+        demostrar; no toca los que una persona haya hecho a mano desde entonces
+        (esos llevan `opportunity_id` escrito con el partner coincidiendo).
+        Idempotente y con una linea de log por caso.
+        """
+        SO = self.env['sale.order'].sudo()
+        sospechosas = SO.search([('opportunity_id', '!=', False)])
+        sueltas = 0
+        for order in sospechosas:
+            nat = self._visar_crm_order_nat(order)
+            if not nat:
+                continue
+            otros = self._visar_crm_nat_owners(nat) - order.partner_id
+            if not otros:
+                continue
+            _logger.warning(
+                "visar_crm: %s se DESENLAZA de la ficha %s — el telefono "
+                "terminado en %s esta en %d fichas de contacto mas (%s), asi "
+                "que el enlace no se puede demostrar.",
+                order.name or order.id, order.opportunity_id.id, nat[-4:],
+                len(otros), ", ".join(otros.mapped('name')[:4]))
+            order.write({'opportunity_id': False})
+            sueltas += 1
+        if sueltas:
+            _logger.warning(
+                "visar_crm: %s enlaces deshechos por no poder demostrarse.",
+                sueltas)
+        else:
+            _logger.info("visar_crm: no habia enlaces que deshacer.")
+        return sueltas
+
+    @api.model
     def _visar_crm_backfill_order_links(self, limit=None):
         """Enlaza ordenes antiguas con su ficha, SOLO donde se puede demostrar.
 
@@ -401,7 +463,8 @@ class CrmLead(models.Model):
 
         Dos puertas, y las dos tienen que abrirse:
 
-        1. el telefono resuelve a **un solo** `res.partner`;
+        1. ninguna OTRA ficha de contacto comparte el telefono — contando las
+           archivadas, ver `_visar_crm_nat_owners`;
         2. cada grupo de la orden casa con **una sola** ficha abierta.
 
         Con las dos, la principal se elige igual que en el camino vivo: **la
@@ -415,7 +478,6 @@ class CrmLead(models.Model):
         Devuelve un dict de contadores (lo usa la prueba).
         """
         SO = self.env['sale.order'].sudo()
-        Partner = self.env['res.partner'].sudo()
         cerrado = self.env.ref('visar_crm.crm_stage_wa_cerrado',
                                raise_if_not_found=False)
         equipos = [t.id for t in (self._visar_crm_team(c)
@@ -437,14 +499,15 @@ class CrmLead(models.Model):
                 cuenta['sin_telefono'] += 1
                 continue
 
-            duenos = Partner.search([('visar_phone_nat10', '=', nat)])
-            if len(duenos) != 1:
+            otros = self._visar_crm_nat_owners(nat) - order.partner_id
+            if otros:
                 cuenta['telefono_ambiguo'] += 1
                 _logger.info(
                     "visar_crm: %s se queda sin enlazar — el telefono terminado "
-                    "en %s es de %d contactos distintos, asi que no se puede "
-                    "demostrar de quien es la orden.",
-                    order.name or order.id, nat[-4:], len(duenos))
+                    "en %s esta en %d fichas de contacto mas (%s), asi que un "
+                    "lead de ese numero podria no ser de este cliente.",
+                    order.name or order.id, nat[-4:], len(otros),
+                    ", ".join(otros.mapped('name')[:4]))
                 continue
 
             grupos = self._visar_order_service_groups(order)

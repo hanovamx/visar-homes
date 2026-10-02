@@ -75,6 +75,60 @@ class TestCrmBackfill(TransactionCase):
         self.assertFalse(order.opportunity_id)
         self.assertEqual(lead.stage_id, self.s_nuevo)
 
+    def test_no_enlaza_si_el_contacto_que_comparte_esta_ARCHIVADO(self):
+        """El fallo de la 19.0.1.4.0, y por eso existe la 19.0.1.4.1.
+
+        La puerta contaba los contactos con un `search` normal, y el ORM inyecta
+        `active = True`. En producción el teléfono `8112772622` está en **15
+        fichas de contacto** con seis nombres distintos y **todas archivadas**:
+        el `search` devolvía cero y la puerta concluía "no se puede demostrar"
+        por el motivo equivocado. En el otro sentido —un activo y catorce
+        archivados— **pasaba**, y así se enlazaron 4 órdenes que no se podían
+        demostrar.
+
+        Archivar un contacto no deshace que ese número estuvo en varias fichas,
+        y un lead se empareja por `visar_wa_phone_norm`, que no sabe de `active`.
+        """
+        self._lead()
+        order = self._order()
+        gemelo = self.env['res.partner'].create({
+            'name': 'Duplicado viejo con el mismo numero', 'phone': self.NAT})
+        gemelo.action_archive()
+        self.assertFalse(gemelo.active)
+
+        self.Lead._visar_crm_backfill_order_links()
+
+        self.assertFalse(
+            order.opportunity_id,
+            "un contacto archivado que comparte el teléfono sigue haciendo el "
+            "enlace indemostrable: el search normal no lo ve, y por eso hay que "
+            "contar con active_test=False")
+
+    def test_deshace_un_enlace_que_dejo_de_poder_demostrarse(self):
+        """La primera faena de la 19.0.1.4.1."""
+        lead = self._lead()
+        order = self._order()
+        self.Lead._visar_crm_backfill_order_links()
+        self.assertEqual(order.opportunity_id, lead)
+
+        gemelo = self.env['res.partner'].create({
+            'name': 'Aparecio un duplicado', 'phone': self.NAT})
+        gemelo.action_archive()
+
+        sueltas = self.Lead._visar_crm_unlink_unprovable_links()
+
+        self.assertEqual(sueltas, 1)
+        self.assertFalse(order.opportunity_id)
+
+    def test_no_deshace_un_enlace_que_si_se_demuestra(self):
+        lead = self._lead()
+        order = self._order()
+        self.Lead._visar_crm_backfill_order_links()
+        self.assertEqual(order.opportunity_id, lead)
+
+        self.assertEqual(self.Lead._visar_crm_unlink_unprovable_links(), 0)
+        self.assertEqual(order.opportunity_id, lead)
+
     def test_no_enlaza_si_hay_fichas_duplicadas_del_mismo_grupo(self):
         """Segunda puerta. Es el otro caso real: el mismo telefono con dos
         fichas del mismo grupo, y senalar una seria adivinar."""

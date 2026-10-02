@@ -89,6 +89,26 @@ copiar un campo, y evita el duck-typing con `if 'opportunity_id' in order._field
 - **No reparte `expected_revenue` del histórico**: solo enlaza. Repartirlo pisaría cifras que
   alguien pudo ajustar a mano hace meses.
 
+### La puerta del teléfono cuenta los contactos ARCHIVADOS (19.0.1.4.1)
+
+Corrección de un fallo propio, encontrado midiendo producción **justo después** de
+desplegar la 19.0.1.4.0. La puerta contaba los contactos que comparten un teléfono con un
+`search` normal, y **el ORM inyecta `active = True`**: no veía los archivados.
+
+En producción el teléfono `8112772622` está en **15 fichas de contacto con seis nombres
+distintos** (Administrator1, Katalina Manzina, Leticia Martinez, María José Arizmendi, María
+López, prueba…) y **todas archivadas**. El `search` devolvía **cero**, así que el relleno
+concluía *«no se puede demostrar de quién es»* por el motivo equivocado — con el número
+correcto de casualidad. Y en el otro sentido, un teléfono con un contacto activo y catorce
+archivados **pasaba** la puerta: así se enlazaron **4 órdenes** de «Luis Angel rios jasso»,
+cuyo número está en siete fichas.
+
+Archivar un contacto no deshace que ese número estuvo en varias fichas, y un lead se
+empareja por `visar_wa_phone_norm`, que no sabe nada de `active`. La puerta ahora usa
+`_visar_crm_nat_owners`, con `active_test=False`, y la condición es más directa: **ninguna
+OTRA ficha de contacto comparte el teléfono**. La migración 19.0.1.4.1 deshace los enlaces
+que no la pasan (`_visar_crm_unlink_unprovable_links`) y vuelve a rellenar.
+
 **Pendiente de oficina (no es código):** añadir el equipo **Website** a la etapa
 `crm_stage_wa_cotizacion` (id=15) —sin eso la columna no existe en ese tablero— y apagar
 `lead_create` en los tipos de cita **12 y 15** («Fumigación interior o exterior» duplicados
