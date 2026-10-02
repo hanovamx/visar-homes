@@ -42,6 +42,16 @@
                         string="Recalcular fechas propuestas"
                         invisible="not visar_is_poliza or state != 'sale'"/>
             </xpath>
+            <!-- "Venta adicional" (Upsell) es NATIVO de sale_subscription y se ofrece en
+                 toda suscripción en curso. En Visar confunde: la póliza mensual cobra
+                 meses por adelantado, la próxima factura queda lejos y el prorrateo
+                 sale como recargo ("-200 %"). Lo adicional se vende desde la app del
+                 técnico, así que el botón se esconde (pedido de Visar, 2-oct-2026).
+                 El contador "Upsell Quote" de arriba se deja: solo aparece si ya
+                 existe alguna. -->
+            <xpath expr="//button[@name='prepare_upsell_order']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
             <!-- Fase 3: bloquear cambio de dirección de servicio en pólizas confirmadas -->
             <field name="partner_shipping_id" position="attributes">
                 <attribute name="readonly">visar_is_poliza and state == 'sale'</attribute>
