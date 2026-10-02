@@ -273,30 +273,82 @@ class TestPolizaPreagenda(TransactionCase):
             "Lead/Opportunity», ojo: `tracking_disable` NO lo para, porque es un "
             "_message_log explicito y no seguimiento de campo")
 
-    def test_una_cita_NORMAL_sigue_abriendo_su_oportunidad(self):
-        """El otro lado del guardia, y el que explica por qué va por contexto.
+    def test_una_cita_de_tipo_AJENO_sigue_abriendo_su_oportunidad(self):
+        """Lo que queda del miedo original, y sigue siendo lo que importa.
 
-        Apagar `lead_create` habría sido lo fácil y habría roto lo que sí funciona:
-        una cita que el cliente pide y paga por la web **debe** abrir su oportunidad
-        —en producción ya hay 6 creadas así—. La diferencia no está en el tipo de
-        cita, está en quién la pidió.
+        Esta prueba nació (1-oct-2026) asertando que una cita normal abría su
+        oportunidad, para que nadie silenciara la pre-agenda por la vía fácil de
+        apagar `lead_create` en el tipo de cita. **El 2-oct cambió el destino de
+        esa oportunidad en los tipos de Visar, no el flag:** `visar_crm` suprime
+        la que creaba el core —nacía sin teléfono normalizado ni grupo, y por eso
+        ningún automatismo la encontraba— y abre la ficha buena desde la ORDEN.
+
+        Lo que NO puede cambiar es el camino de cualquier otro tipo de cita: los
+        dos guardias (el contexto de la pre-agenda y el filtro por tipo de
+        `visar_crm`) tienen que dejar pasar el `super()`. Si alguien los
+        convierte en un `return` seco, lo que falla es esto.
         """
-        self.maestro.sudo().lead_create = True
+        ajeno = self.env['appointment.type'].sudo().create({
+            'name': "Cita ajena a Visar (prueba)",
+            'lead_create': True,
+        })
         antes = self.env['crm.lead'].sudo().with_context(
             active_test=False).search_count([])
         self.env['calendar.event'].sudo().create({
-            'name': 'Cita pedida por el cliente (prueba)',
+            'name': 'Cita de un tipo que no es de Visar (prueba)',
+            'start': self._en_dias(4, hora_local=12),
+            'stop': self._en_dias(4, hora_local=12) + relativedelta(hours=1),
+            'allday': False,
+            'appointment_type_id': ajeno.id,
+            'partner_ids': [(6, 0, self.cliente.ids)],
+        })
+        self.assertGreater(
+            self.env['crm.lead'].sudo().with_context(
+                active_test=False).search_count([]), antes,
+            "una cita de un tipo ajeno dejó de abrir su oportunidad: algún "
+            "guardia se comió el super() en vez de filtrar")
+
+    def test_una_cita_de_tipo_VISAR_ya_no_abre_el_lead_pobre_del_core(self):
+        """El cambio del 2-oct-2026, y por qué no se pierde nada.
+
+        El lead que `appointment_crm` creaba traía solo
+        `{name, partner_id, type, user_id, description}`: sin
+        `visar_wa_phone_norm` y sin `visar_service_group_id`, que son justo la
+        pareja por la que buscan los dos automatismos de avance. Medido en
+        producción: **18 fichas** que ningún automatismo podía encontrar, y que
+        oficina movía a mano. Peor, el equipo salía del cómputo sobre `user_id`,
+        o sea **del técnico que quedó como organizador**.
+
+        La oportunidad no desaparece: la abre `visar_crm` desde la orden, con
+        identidad completa, y la cita queda enlazada a ella en
+        `_make_event_from_paid_booking`. Lo que sí deja de abrir ficha es una
+        cita capturada A MANO en el backend sin orden detrás — que es
+        exactamente el camino que dejó los 16 leads de «Administrator - reserva
+        Valoración técnica» del 1 y 2 de octubre.
+        """
+        if not self.env.ref('visar_crm.crm_team_whatsapp',
+                            raise_if_not_found=False):
+            self.skipTest("visar_crm no está instalado: el core sigue mandando")
+        self.maestro.sudo().lead_create = True
+        antes = self.env['crm.lead'].sudo().with_context(
+            active_test=False).search_count([])
+        cita = self.env['calendar.event'].sudo().create({
+            'name': 'Cita capturada a mano (prueba)',
             'start': self._en_dias(4, hora_local=12),
             'stop': self._en_dias(4, hora_local=12) + relativedelta(hours=1),
             'allday': False,
             'appointment_type_id': self.maestro.id,
             'partner_ids': [(6, 0, self.cliente.ids)],
         })
-        self.assertGreater(
+        self.assertEqual(
             self.env['crm.lead'].sudo().with_context(
                 active_test=False).search_count([]), antes,
-            "una cita normal dejo de abrir su oportunidad: alguien apago "
-            "`lead_create` en vez de usar el contexto de la pre-agenda")
+            "volvió el lead pobre del core: sin teléfono ni grupo, ningún "
+            "automatismo lo va a encontrar")
+        self.assertFalse(
+            cita.res_id,
+            "`_link_with_lead` escribió res_model/res_id, que es lo que genera "
+            "la actividad automática que no queremos")
 
     def test_el_camino_PAGADO_sigue_avisando(self):
         """El seguro contra «arreglar» el silencio apagándolo para todos.

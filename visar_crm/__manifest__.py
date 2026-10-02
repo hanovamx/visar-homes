@@ -30,12 +30,25 @@ Ver .context/31-whatsapp-crm-lead-mapping.md (diseno) y
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Sales/CRM',
-    'version': '19.0.1.3.0',
+    'version': '19.0.1.4.0',
     'license': 'LGPL-3',
     # crm: pipeline y crm.lead. visar_appointment: la normalizacion canonica de
     # telefono (res.partner._visar_phone_nat10_value), producto->dimension->grupo
     # (visar_base) y project.task.visar_sale_order_id (visar_fsm). Arrastra ambos.
-    'depends': ['crm', 'visar_appointment'],
+    # `appointment_crm` y `sale_crm` son auto_install sobre crm+appointment /
+    # crm+sale, asi que en esta base ya estaban. Se declaran igual porque este
+    # modulo SOBREESCRIBE metodos suyos (`_create_lead_from_appointment`,
+    # `_update_revenues_from_so`) y escribe `sale.order.opportunity_id`: apoyarse
+    # en auto_install es como se consigue un AttributeError en una instalacion
+    # limpia. `website_appointment_sale` aporta `calendar.booking.order_line_id`,
+    # el camino de la cita a su orden.
+    'depends': [
+        'crm',
+        'sale_crm',
+        'appointment_crm',
+        'website_appointment_sale',
+        'visar_appointment',
+    ],
     'data': [
         'data/crm_pipeline_data.xml',
         'data/crm_cron.xml',

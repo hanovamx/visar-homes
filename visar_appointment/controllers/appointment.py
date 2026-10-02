@@ -1602,7 +1602,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             order_sudo._update_address(customer.id, ['partner_id'])
 
         lines_added = order_sudo._visar_fill_from_booking(
-            booking, calendar_booking, zone, plan=plan, tz=tz)
+            booking, calendar_booking, zone, plan=plan, tz=tz, canal='web')
         if not lines_added:
             calendar_booking.sudo().unlink()
             return request.redirect('/appointment/%s?%s' % (
@@ -1670,6 +1670,10 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             self._visar_apply_delivery_address(
                 order_sudo, booking, partner_name=calendar_booking.name)
             order_sudo._visar_reassert_zone_pricelist(zone)
+            # La rama de valoracion NO pasa por `_visar_fill_from_booking` (hace
+            # su propio `_cart_add`), asi que el enlace con la ficha de CRM hay
+            # que pedirlo aqui o esta cotizacion se quedaria sin ficha.
+            order_sudo._visar_crm_after_fill(booking, canal='web')
             return request.redirect("/shop/cart")
 
         apt_type = calendar_booking.appointment_type_id

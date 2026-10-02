@@ -130,7 +130,7 @@ class SaleOrder(models.Model):
         return delivery_partner
 
     def _visar_fill_from_booking(self, booking, calendar_booking, zone, plan=None,
-                                 tz=None):
+                                 tz=None, canal=None):
         """Agrega al pedido las lineas del wizard. Devuelve cuantas agrego (0 = fallo).
 
         NO borra la reserva ni redirige: eso es politica del llamador (el
@@ -198,6 +198,12 @@ class SaleOrder(models.Model):
             return 0
         if plan:
             self._visar_sync_anticipo_lines()
+        # Ficha de CRM y enlace de la cotizacion, AQUI y no al confirmar: el core
+        # cuenta las cotizaciones de un lead con `state in ('draft','sent')`, asi
+        # que enlazar al pasar a 'sale' deja el contador en cero para siempre.
+        # No-op si `visar_crm` no esta instalado (gancho en `visar_base`), y
+        # `canal` lo pone el llamador porque es quien sabe de donde viene.
+        self._visar_crm_after_fill(booking, canal=canal)
         return lines_added
 
     def _visar_set_service_shipping(self, partner):

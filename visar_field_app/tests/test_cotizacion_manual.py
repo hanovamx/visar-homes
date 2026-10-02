@@ -96,6 +96,43 @@ class TestCotizacionManual(TransactionCase):
         self.assertFalse(self._hoja_marca(tarea, 'Termitas'), "guardar otra vez no duplica")
         self.assertEqual(len(tarea.visar_quote_order_ids), 1)
 
+    def test_la_cotizacion_hereda_la_oportunidad_del_pedido_de_la_visita(self):
+        """BUG-3 (2-oct-2026): esta cotización no tocaba el CRM en absoluto.
+
+        El técnico marca «termitas», se crea una cotización de verdad con su
+        actividad... y la ficha del cliente no se enteraba. Era uno de los dos
+        flujos que creaban `sale.order` sin pasar por ningún sitio que escribiera
+        `opportunity_id`.
+
+        Se arregla con `_visar_inherit_crm_from`, un gancho declarado en
+        `visar_base` **a propósito**: este módulo depende de `visar_fsm`, no de
+        `visar_crm` ni de `sale_crm`, y solo necesita copiar un campo — no
+        conocer el embudo. Si `visar_crm` no está instalado, es un no-op y la
+        prueba se salta.
+        """
+        if 'opportunity_id' not in self.env['sale.order']._fields:
+            self.skipTest("sin sale_crm no hay oportunidad que heredar")
+        tarea = self._visita()
+        ficha = self.env['crm.lead'].create({
+            'name': 'Ficha de la visita', 'type': 'opportunity',
+            'partner_id': self.cliente.id})
+        tarea.sale_order_id.sudo().write({'opportunity_id': ficha.id})
+
+        cot = self._hoja_marca(tarea, 'Termitas')
+
+        self.assertEqual(
+            cot.opportunity_id, ficha,
+            "la cotización de termitas no llegó a la ficha del cliente: se ve "
+            "en el pedido y no en el CRM, que es el bug que esto arregla")
+
+    def test_sin_oportunidad_en_el_origen_no_se_inventa_ninguna(self):
+        if 'opportunity_id' not in self.env['sale.order']._fields:
+            self.skipTest("sin sale_crm no hay oportunidad que heredar")
+        tarea = self._visita()
+        self.assertFalse(tarea.sale_order_id.opportunity_id)
+        cot = self._hoja_marca(tarea, 'Termitas')
+        self.assertFalse(cot.opportunity_id)
+
     def test_un_servicio_sin_producto_de_cotizacion_no_pide_nada(self):
         tarea = self._visita()
         self.assertFalse(self._hoja_marca(tarea, 'Riego'))

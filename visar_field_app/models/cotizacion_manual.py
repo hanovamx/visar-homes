@@ -101,6 +101,15 @@ class SaleOrder(models.Model):
              "descuento se cuenta una sola vez entre los dos.")
     visar_quote_trigger = fields.Char(
         string="Servicio identificado", readonly=True, copy=False)
+
+    def _visar_is_formal_quote(self):
+        """Sí: la pidió un técnico desde su hoja y le pone precio una persona.
+
+        Es la respuesta al gancho de `visar_base`, y lo que hace que al enviarla
+        la ficha del cliente avance a «Cotización enviada» (2-oct-2026).
+        """
+        self.ensure_one()
+        return bool(self.visar_quote_origin_task_id) or super()._visar_is_formal_quote()
     visar_quote_path = fields.Selection([
         ('en_visita', "Se hace en la misma visita"),
         ('agendar', "Se agenda aparte"),
@@ -394,6 +403,11 @@ class ProjectTask(models.Model):
             "Servicios identificados. Ponle precio al tratamiento y elige si se hace "
             "en esa misma visita o se agenda aparte.</p>") % (
                 self.name or '', quien, template.visar_quote_trigger))
+        # Hereda la oportunidad de CRM del pedido del que nace, para que la
+        # cotizacion se vea desde la ficha del cliente. Es un no-op declarado en
+        # `visar_base`: este modulo no depende de `visar_crm` ni de `sale_crm`
+        # (solo necesita copiar un campo, no conocer el embudo).
+        cot._visar_inherit_crm_from(origen)
         responsable = self._visar_quote_responsable(origen)
         cot.activity_schedule(
             'mail.mail_activity_data_todo',

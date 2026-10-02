@@ -7,6 +7,32 @@
 > resuelve por el enlace dimensión → producto (`4b2453b`). El hand-off humano aterriza aquí
 > (`agent_request_handoff`, diseño 33 §9.1).
 >
+> ## 🔁 Actualizado el 2-oct-2026 — el enlace con la cotización, y la web
+>
+> `visar_crm` **19.0.1.4.0**. Tres cosas de este documento cambiaron al medir producción:
+>
+> 1. **§9 (atribución web → lead) se queda corta.** Daba por hecho que la web solo tenía que
+>    *casar* con un lead existente. Lo que pasaba de verdad es que la web creaba **su propio
+>    lead pobre** vía `appointment_crm` (los cuatro tipos de cita llevan `lead_create`), sin
+>    `visar_wa_phone_norm` ni `visar_service_group_id` — o sea invisible para los automatismos
+>    de §8. Eran 18 fichas que oficina movía a mano. Ahora la ficha de la web nace desde la
+>    **orden**, con identidad completa y `visar_source='web'`.
+> 2. **Hay DOS fichas por cliente, una por canal** (decisión de Visar, 2-oct). Al confirmarse
+>    la venta avanzan **las dos**; la cotización se enlaza solo a la del canal que vendió. El
+>    doble conteo entre tableros es un coste aceptado.
+> 3. **§5.1 cambia de significado.** `expected_revenue` pasa a ser **el trozo de la orden que
+>    corresponde al grupo de esa ficha**, con IVA. Antes el agente copiaba el total de la
+>    canasta en cada ficha (`app/agent.py` manda `quote["total"]`, no el del item), así que un
+>    combo de 1,800 enseñaba 1,800 en las dos y el embudo contaba 3,600 — el doc 33 §10.12 lo
+>    usa como evidencia forense sin señalarlo como problema. `_update_revenues_from_so` está
+>    sobreescrito para que el core no lo deshaga.
+>
+> **La decisión 2 de §12 (identidad `(teléfono, grupo)`, un lead por grupo) NO cambió** — se
+> verificó contra los docs 32, 33, 40, 50 y 90. Lo que se añade es que `opportunity_id` es
+> Many2one, así que en un combo apunta a **la ficha más antigua** y las demás reciben su trozo.
+>
+> Detalle completo y lo que queda de oficina: `40-decisions.md`, entrada del 2-oct-2026.
+
 > ⛔ **Bloqueado por dato, no por código:** el equipo de CRM de WhatsApp **no tiene líder ni
 > miembros**, así que la actividad del hand-off se crea pero **no cae en la bandeja de nadie**.
 > Es lo que hoy separa "el agente promete que le contactan" de "alguien le contacta".

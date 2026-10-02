@@ -1198,6 +1198,10 @@ class ProjectTask(models.Model):
             'visar_upsell_source_order_id': self.sale_order_id.id or False,
             'visar_upsell_employee_id': employee.id if employee else False,
         })
+        # Igual que la cotizacion manual: la oportunidad viene del pedido de la
+        # visita. Solo esta rama lo necesita — `_visar_upsell_destino` (arriba)
+        # devuelve a menudo el pedido ORIGINAL, que ya la trae.
+        order._visar_inherit_crm_from(self.sale_order_id)
         self.sudo().visar_upsell_order_id = order
         return order
 

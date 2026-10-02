@@ -2,6 +2,104 @@
 
 Cada decisión con su porqué. Las marcadas **[RESUELTA]** ya están reflejadas en el código.
 
+## [IMPLEMENTADO — 2-oct-2026] La cotización se enlaza con su ficha, y en BORRADOR
+
+Hasta hoy **nadie escribía `sale.order.opportunity_id`**: 0 de 379 órdenes en producción. La
+pestaña «Cotizaciones» de **toda** ficha estaba vacía en todos los canales, y las 72
+cotizaciones vivas eran invisibles desde la ficha del cliente.
+
+**El enlace se hace cuando la orden está en BORRADOR**, no al confirmarla, y esto es lo que hay
+que entender antes de tocar nada: el core cuenta las cotizaciones de una ficha filtrando por
+estado (`sale_crm/models/crm_lead.py::_get_lead_quotation_domain` → `[('state','in',('draft',
+'sent'))]`). Enlazar al pasar a `sale` llega tarde — en ese instante la orden ya dejó de ser
+cotización, así que `quotation_count` se queda en **cero para siempre** y se llena «Pedidos» en
+vez de «Cotizaciones». El gancho es `sale.order._visar_crm_after_fill`, llamado desde la salida
+de éxito de `_visar_fill_from_booking`, que es el punto único que comparten el wizard web y el
+agente de WhatsApp. La rama de **valoración** no pasa por ahí (hace su propio `_cart_add`) y
+tiene su propia llamada en el controlador.
+
+**El canal lo dice el llamador, no se deduce.** `canal='web'` desde el controlador y
+`canal='whatsapp'` desde el agente. No sirve `sale.order.website_id`: el pedido del agente
+también lo fija (`visar_agent_tools.py`, al crear la orden).
+
+### Dos fichas por cliente, una por canal (decisión de Visar)
+
+Quien chatea y luego compra en la web deja ficha en los dos tableros, y **las dos avanzan** al
+confirmarse la venta — si no, el tablero de WhatsApp se queda con una ficha muerta en «Nuevo»
+de alguien que sí compró, y el cron de caducidad acabaría marcándola «sin respuesta». La
+cotización se enlaza **solo a la del canal que vendió**.
+
+> **El doble conteo es un coste aceptado, no un bug.** La suma de «Servicio programado» de los
+> dos tableros cuenta esa venta dos veces. Se tomó sabiéndolo.
+
+### El combo reparte su importe, no lo copia
+
+`opportunity_id` es **Many2one** y una orden combo tiene **una ficha por grupo** (decisión
+cerrada del doc 31 §4, nunca revisada), así que hay que elegir una: **la más antigua**, no la de
+mayor importe. Con el importe, la identidad de la ficha principal dependería del precio — la
+misma casa cambiaría de ficha si se mueve el tabulador o el descuento de combo.
+
+Las demás no se quedan sin nada: cada una recibe nota con el nº de orden y **su trozo**, y su
+`expected_revenue` se pone a ese trozo (con IVA, `price_total`, que es la base que usa el
+agente). Eso arregla de paso un doble conteo que ya existía: el agente manda
+`quote["total"]` de la canasta entera en **cada** llamada (`app/agent.py`), así que un combo de
+1,800 enseñaba 1,800 en las dos fichas. Por eso `crm.lead._update_revenues_from_so` está
+sobreescrito: el nativo subiría el campo a `amount_untaxed` de la orden completa y desharía el
+reparto.
+
+### Los ganchos viven en `visar_base` a propósito
+
+`_visar_inherit_crm_from`, `_visar_crm_after_fill` y `_visar_is_formal_quote` son **no-op** en
+`visar_base` y los implementa `visar_crm`. Quien los llama son módulos que **no pueden depender
+de `visar_crm`**: `visar_field_app` depende de `visar_fsm` y `visar_appointment` no declara
+`crm`. Definirlos en el ancestro común evita añadir `sale_crm` a `visar_field_app` solo para
+copiar un campo, y evita el duck-typing con `if 'opportunity_id' in order._fields`. Resultado:
+**un solo módulo con `-u`**.
+
+### Lo que dejó de pasar
+
+- **La reserva web ya no deja el lead pobre de `appointment_crm`.** Traía solo
+  `{name, partner_id, type, user_id, description}` — sin `visar_wa_phone_norm` ni
+  `visar_service_group_id`, que son justo la pareja por la que buscan los automatismos de
+  avance. Eran 18 fichas que nadie podía encontrar y que oficina movía a mano. Y su equipo
+  salía del cómputo sobre `user_id`, o sea **del técnico que quedó como organizador**.
+  El enlace cita↔ficha no se pierde: lo repone `_make_event_from_paid_booking` apuntando a la
+  ficha buena.
+- **Una cita capturada a mano en el backend sobre un tipo Visar ya no abre ficha.** Es
+  deliberado: ese camino es el que dejó los 16 leads de «Administrator - reserva Valoración
+  técnica» del 1 y 2 de octubre. Los tipos **ajenos** a Visar siguen abriendo la suya.
+- **Las dos etapas muertas se alcanzan solas.** «Visita de valoración agendada» (0 leads en
+  toda su historia) por la ficha de la propia orden de valoración; «Cotización enviada» (1
+  lead) solo cuando llega a `sent` una cotización **formal** — la que pide un técnico desde su
+  hoja. Un carrito web al que alguien le da «enviar» no lo es, y hay prueba del gemelo negativo.
+- **Los dos flujos de `visar_field_app` que no tocaban el CRM** (cotización manual de
+  termitas/chinches y upsell en sitio) heredan la oportunidad de la orden de la que nacen.
+
+### Lo que NO se hace, y por qué
+
+- **No se resucitan fichas archivadas.** `search` inyecta `active = True`, así que un lead
+  perdido no casa con ninguna orden. Son **473 de 533**. Revivir en silencio un lead que
+  alguien dio por perdido es peor que no enlazarlo.
+- **El relleno del histórico enlaza poquísimo, y es correcto.** Dos puertas: el teléfono
+  resuelve a **un** contacto y cada grupo casa con **una** ficha. En producción `7774501440` lo
+  comparten **siete** `res.partner` (uno es Administrator, con 171 órdenes) y tiene fichas
+  duplicadas por grupo: **197 de 220 pares (orden, grupo) casan con más de una ficha**. Sin las
+  puertas se enlazarían 183 órdenes, de las que 156 son ese teléfono. En `visar-test` enlazó
+  **7 de 225**, y el log dice orden por orden cuál se dejó intacta y por qué.
+- **No reparte `expected_revenue` del histórico**: solo enlaza. Repartirlo pisaría cifras que
+  alguien pudo ajustar a mano hace meses.
+
+**Pendiente de oficina (no es código):** añadir el equipo **Website** a la etapa
+`crm_stage_wa_cotizacion` (id=15) —sin eso la columna no existe en ese tablero— y apagar
+`lead_create` en los tipos de cita **12 y 15** («Fumigación interior o exterior» duplicados
+legacy, que no son ni maestro ni valoración y por eso el código no los puede reconocer).
+
+**Archivos:** `visar_base/models/sale_order.py` (los tres no-op) ·
+`visar_crm/models/{crm_lead,sale_order,calendar_event,calendar_booking}.py` ·
+`visar_crm/migrations/19.0.1.4.0/post-migrate.py` ·
+`visar_appointment/models/sale_order.py` y `controllers/appointment.py` (las llamadas) ·
+`visar_field_app/models/{cotizacion_manual,project_task}.py`. `visar_crm` → **19.0.1.4.0**.
+
 ## [IMPLEMENTADO — 13-ago-2026] El combo se presta como UN servicio externo
 
 Cuando una cita trae **fumigación + mantenimiento de áreas verdes**, el pedido generaba **dos

@@ -2838,7 +2838,7 @@ class VisarAgentTools(models.AbstractModel):
             int((payload.get('selections') or {}).get('poliza_plan_id') or 0)).exists()
         lines_added = order._visar_fill_from_booking(
             booking_payload, calendar_booking, zone, plan=plan,
-            tz=apt_type.appointment_tz)
+            tz=apt_type.appointment_tz, canal='whatsapp')
         if not lines_added:
             calendar_booking.sudo().unlink()  # arrastra el hold (ondelete cascade)
             order.sudo().unlink()
