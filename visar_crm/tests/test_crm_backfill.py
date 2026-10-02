@@ -140,6 +140,42 @@ class TestCrmBackfill(TransactionCase):
 
         self.assertFalse(order.opportunity_id)
 
+    def test_enlaza_por_CLIENTE_una_ficha_vieja_sin_identidad(self):
+        """El caso del lead 604: ficha de `appointment_crm`, sin nat ni grupo.
+
+        La vía del teléfono no la encuentra (sus campos están vacíos), pero la
+        ficha **apunta a ese cliente**, que es prueba de propiedad más fuerte que
+        el teléfono. Solo se usa cuando la vía del grupo vino VACÍA.
+        """
+        order = self._order()
+        vieja = self.Lead.create({
+            'name': 'Cliente - Visar — cita multi-servicio Booking',
+            'type': 'opportunity', 'partner_id': order.partner_id.id,
+            'team_id': self.env.ref('sales_team.salesteam_website_sales').id,
+            'stage_id': self.s_nuevo.id})
+        self.assertFalse(vieja.visar_wa_phone_norm)
+
+        cuenta = self.Lead._visar_crm_backfill_order_links()
+
+        self.assertEqual(order.opportunity_id, vieja)
+        self.assertGreaterEqual(cuenta.get('por_cliente', 0), 1)
+
+    def test_el_respaldo_por_cliente_NO_entra_si_por_grupo_era_ambiguo(self):
+        """Ambiguo no es vacío. Si por grupo hay dos fichas, mirar por cliente no
+        resuelve el problema — lo esconde."""
+        self._lead()
+        self._lead()  # dos del mismo grupo: ambiguo
+        order = self._order()
+        self.Lead.create({
+            'name': 'Vieja sin identidad', 'type': 'opportunity',
+            'partner_id': order.partner_id.id,
+            'team_id': self.env.ref('sales_team.salesteam_website_sales').id,
+            'stage_id': self.s_nuevo.id})
+
+        self.Lead._visar_crm_backfill_order_links()
+
+        self.assertFalse(order.opportunity_id)
+
     def test_no_pisa_un_enlace_que_ya_existe(self):
         lead = self._lead()
         otra = self._lead(nat='9990006666')

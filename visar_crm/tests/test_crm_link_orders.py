@@ -288,6 +288,85 @@ class TestCrmLinkOrders(TransactionCase):
         self.assertNotEqual(order.opportunity_id, lead)
 
     # ------------------------------------------------------------------
+    # 3.b rescatar las fichas viejas que creó `appointment_crm`
+    # ------------------------------------------------------------------
+
+    def _ficha_vieja(self, partner, team=None):
+        """Como las creaba `appointment_crm`: sin teléfono ni grupo."""
+        return self.Lead.create({
+            'name': '%s - Visar — cita multi-servicio Booking' % partner.name,
+            'type': 'opportunity', 'partner_id': partner.id,
+            'team_id': (team or self.team_web).id, 'stage_id': self.s_nuevo.id})
+
+    def test_rescata_la_ficha_vieja_en_vez_de_crear_otra(self):
+        """El caso del lead 604 de producción.
+
+        `appointment_crm` creaba la ficha con solo `{name, partner_id, type,
+        user_id, description}`: sin `visar_wa_phone_norm` ni
+        `visar_service_group_id`, así que el emparejamiento por (teléfono,
+        grupo) no la veía y la pestaña «Cotizaciones» seguía vacía. En producción
+        eran 17. Si además se creara otra al lado, el cliente acabaría con dos
+        fichas en el mismo tablero: una muerta y una nueva.
+        """
+        partner = self._partner()
+        vieja = self._ficha_vieja(partner)
+        orden = self._draft_order([self.prod_fum], partner=partner)
+
+        orden._visar_crm_after_fill({}, canal='web')
+
+        self.assertEqual(orden.opportunity_id, vieja, "debió rescatar la vieja")
+        self.assertEqual(vieja.visar_wa_phone_norm, self.NAT)
+        self.assertEqual(vieja.visar_service_group_id, self.group_fum)
+        self.assertEqual(vieja.quotation_count, 1)
+        self.assertEqual(
+            self.Lead.search_count([('partner_id', '=', partner.id),
+                                    ('team_id', '=', self.team_web.id)]), 1,
+            "no debe quedar una ficha muerta al lado de la nueva")
+
+    def test_no_rescata_una_ficha_que_ya_tiene_grupo(self):
+        """Colgarle una orden de fumigación a una ficha de áreas verdes es justo
+        el error que el alcance por grupo existe para evitar."""
+        partner = self._partner()
+        ajena = self.Lead.create({
+            'name': 'Ficha de otra línea', 'type': 'opportunity',
+            'partner_id': partner.id, 'team_id': self.team_web.id,
+            'stage_id': self.s_nuevo.id,
+            'visar_service_group_id': self.group_mav.id})
+        orden = self._draft_order([self.prod_fum], partner=partner)
+
+        orden._visar_crm_after_fill({}, canal='web')
+
+        self.assertNotEqual(orden.opportunity_id, ajena)
+        self.assertFalse(ajena.visar_wa_phone_norm)
+
+    def test_no_rescata_si_hay_dos_fichas_viejas(self):
+        """Con dos no se puede señalar ninguna sin adivinar."""
+        partner = self._partner()
+        a = self._ficha_vieja(partner)
+        b = self._ficha_vieja(partner)
+        orden = self._draft_order([self.prod_fum], partner=partner)
+
+        orden._visar_crm_after_fill({}, canal='web')
+
+        self.assertNotIn(orden.opportunity_id, a + b)
+        self.assertFalse(a.visar_wa_phone_norm)
+        self.assertFalse(b.visar_wa_phone_norm)
+
+    def test_un_combo_rescata_una_sola_y_crea_la_otra(self):
+        """`visar_service_group_id` es uno: una ficha no se reparte entre dos."""
+        partner = self._partner()
+        vieja = self._ficha_vieja(partner)
+        orden = self._draft_order([self.prod_fum, self.prod_mav], partner=partner)
+
+        orden._visar_crm_after_fill({}, canal='web')
+
+        fichas = self.Lead.search([('partner_id', '=', partner.id),
+                                   ('team_id', '=', self.team_web.id)])
+        self.assertEqual(len(fichas), 2)
+        self.assertIn(vieja, fichas)
+        self.assertTrue(vieja.visar_service_group_id)
+
+    # ------------------------------------------------------------------
     # 4. dos canales, dos fichas (decision del 2-oct-2026)
     # ------------------------------------------------------------------
 

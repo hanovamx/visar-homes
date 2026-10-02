@@ -285,6 +285,41 @@ class CrmLead(models.Model):
         return leads
 
     @api.model
+    def _visar_crm_lead_sin_identidad(self, order, team):
+        """La ficha vieja de ese CLIENTE que no tiene identidad Visar, si hay una.
+
+        Son las que creo `appointment_crm` antes del 2-oct-2026: traian solo
+        `{name, partner_id, type, user_id, description}`, asi que **no tienen
+        `visar_wa_phone_norm` ni `visar_service_group_id`** y el emparejamiento
+        por (telefono, grupo) no las ve. En produccion son **17**.
+
+        Sirven igual, y la prueba de propiedad es mas fuerte que el telefono: la
+        ficha **apunta a ese cliente**. Tres condiciones para adoptarla, y las
+        tres importan:
+
+        * **sin grupo** — si tuviera uno podria ser de otra linea de negocio, y
+          colgarle una orden de fumigacion a una ficha de areas verdes es
+          exactamente el error que el alcance por grupo existe para evitar;
+        * **una sola** — con dos no se puede señalar ninguna sin adivinar;
+        * **del mismo equipo** (canal), para no mezclar los dos tableros.
+
+        Adoptarla en vez de crear otra evita que el cliente acabe con dos fichas
+        en el mismo tablero: una muerta sin identidad y otra nueva.
+        """
+        cerrado = self.env.ref('visar_crm.crm_stage_wa_cerrado',
+                               raise_if_not_found=False)
+        if not order.partner_id or not team:
+            return self.browse()
+        dominio = [('partner_id', '=', order.partner_id.id),
+                   ('team_id', '=', team.id),
+                   ('visar_wa_phone_norm', '=', False),
+                   ('visar_service_group_id', '=', False)]
+        if cerrado:
+            dominio.append(('stage_id', '!=', cerrado.id))
+        viejas = self.sudo().search(dominio)
+        return viejas if len(viejas) == 1 else self.browse()
+
+    @api.model
     def _visar_crm_ensure_order_leads(self, order, canal):
         """Fichas de `canal` para esta orden, ABRIENDO las que falten.
 
@@ -316,8 +351,29 @@ class CrmLead(models.Model):
             # alguien que no sabe que plaga tiene. El grupo llegara con el
             # servicio que se le venda despues de la visita.
             grupos = [self.env['visar.service.group'].browse()]
+        # Una sola adopcion por orden: si el combo abre dos fichas, la vieja se
+        # queda con el primer grupo y la segunda nace nueva. Repartir una ficha
+        # entre dos grupos no se puede — `visar_service_group_id` es uno.
+        adoptable = self._visar_crm_lead_sin_identidad(order, team)
         for group in grupos:
             lead = self._visar_open_lead(nat, group, team, cerrado)
+            if not lead and adoptable:
+                # Rescatar la ficha vieja: pasa a tener identidad y la empiezan a
+                # ver los automatismos de avance.
+                lead = adoptable
+                lead.sudo().write({
+                    'visar_wa_phone_norm': nat,
+                    'visar_service_group_id': group.id,
+                    'visar_source': lead.visar_source or (
+                        canal if canal == 'web' else 'whatsapp'),
+                    'phone': lead.phone or order.partner_id.phone or nat,
+                })
+                _logger.info(
+                    "visar_crm: la ficha %s de %s se rescato con identidad "
+                    "(telefono y grupo «%s»): la creo appointment_crm sin ellos "
+                    "y ningun automatismo la encontraba.",
+                    lead.id, order.partner_id.name, group.display_name or '-')
+                adoptable = self.browse()
             if not lead:
                 lead = self.sudo().create({
                     'name': "%s %s" % (
@@ -488,7 +544,8 @@ class CrmLead(models.Model):
             return {}
 
         cuenta = {'enlazadas': 0, 'sin_telefono': 0, 'telefono_ambiguo': 0,
-                  'ficha_ambigua': 0, 'sin_ficha': 0, 'total': 0}
+                  'ficha_ambigua': 0, 'sin_ficha': 0, 'por_cliente': 0,
+                  'total': 0}
         ordenes = SO.search([('opportunity_id', '=', False)],
                             order='id', limit=limit)
         cuenta['total'] = len(ordenes)
@@ -538,8 +595,23 @@ class CrmLead(models.Model):
                     break
                 candidatas |= encontradas
             if ambigua:
+                # Ambigua NO cae al respaldo: si por grupo hay dos fichas, el
+                # problema es que no se puede señalar una, y mirar por cliente
+                # no lo resuelve — lo esconde.
                 cuenta['ficha_ambigua'] += 1
                 continue
+            if not candidatas:
+                # Respaldo para las fichas que creo `appointment_crm` sin
+                # identidad: la ficha apunta a ese cliente, que es prueba de
+                # propiedad mas fuerte que el telefono. Solo cuando la via del
+                # grupo vino VACIA.
+                for canal in CANAL_TEAM_XMLIDS:
+                    candidatas = self._visar_crm_lead_sin_identidad(
+                        order, self._visar_crm_team(canal))
+                    if candidatas:
+                        break
+                if candidatas:
+                    cuenta['por_cliente'] = cuenta.get('por_cliente', 0) + 1
             if not candidatas:
                 cuenta['sin_ficha'] += 1
                 continue
@@ -557,7 +629,9 @@ class CrmLead(models.Model):
                 "dejaron intactas: %(telefono_ambiguo)s por telefono de varios "
                 "contactos, %(ficha_ambigua)s por fichas duplicadas, "
                 "%(sin_ficha)s sin ficha que casara, %(sin_telefono)s sin "
-                "telefono usable. Total revisadas: %(total)s.", cuenta)
+                "telefono usable. De las enlazadas, %(por_cliente)s lo fueron "
+                "por CLIENTE (fichas viejas sin identidad). Total revisadas: "
+                "%(total)s.", cuenta)
         return cuenta
 
     # ------------------------------------------------------------------
