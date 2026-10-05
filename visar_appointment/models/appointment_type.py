@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import re
+
 from odoo import api, fields, models
 
 
@@ -425,6 +427,10 @@ class AppointmentType(models.Model):
                 'is_valuation': tier.is_valuation,
                 'is_free': tier.is_free,
             })
+        # "Incluido" depende de la canasta entera (ver `_visar_item_included_free`),
+        # así que se decide con todos los items ya resueltos.
+        for item in items:
+            item['is_free'] = self._visar_item_included_free(item, items)
         return items
 
     @api.model
@@ -916,7 +922,7 @@ class AppointmentType(models.Model):
                 if not self._visar_item_gets_combo_discount(item, rule):
                     continue
                 tier = Tier.browse(item.get('tier_id')).exists()
-                if not tier or item.get('is_free') or tier.is_free:
+                if not tier or self._visar_item_included_free(item, items):
                     continue
                 variant = tier._visar_get_variant_for_zone(zone)
                 if not variant:
@@ -1005,6 +1011,42 @@ class AppointmentType(models.Model):
         return offers
 
     @api.model
+    def _visar_item_included_free(self, item, items):
+        """¿Este item va de verdad "incluido sin cargo" en ESTA canasta?
+
+        El tramo de jardín 0–50 m² lleva `is_free` porque el exterior chico va
+        incluido **cuando se fumiga el interior**. Leído a secas, el flag hacía que
+        un "solo exterior" de jardín chico saliera gratis —o desapareciera del
+        carrito, que no admite líneas en cero— cuando la lista de precios sí lo
+        cobra (variante interior "0"). Lo incluido lo paga el interior: sin interior
+        del mismo producto en la canasta no hay quién lo incluya.
+
+        Solo se condiciona el caso que tiene sentido condicionar: un tramo EXTERIOR
+        de un producto que también se vende por interior. Cualquier otro tramo
+        marcado sin cargo se respeta tal cual.
+        """
+        Tier = self.env['visar.service.tier']
+        Dimension = self.env['visar.service.dimension']
+        tier = Tier.browse(item.get('tier_id')).exists()
+        if not (item.get('is_free') or (tier and tier.is_free)):
+            return False
+        dimension = Dimension.browse(item.get('dimension_id')).exists()
+        if not dimension or dimension.measure_type != 'exterior':
+            return True
+        tmpl_id = item.get('product_tmpl_id') or (tier.product_tmpl_id.id if tier else False)
+        if not tmpl_id:
+            return True
+        interiores = Dimension.sudo().search([
+            ('product_tmpl_id', '=', tmpl_id), ('measure_type', '=', 'interior')])
+        if not interiores:
+            return True
+        return any(
+            other is not item
+            and other.get('dimension_id') in interiores.ids
+            and (other.get('product_tmpl_id') or tmpl_id) == tmpl_id
+            for other in items)
+
+    @api.model
     def _visar_interior_exterior_pair(self, items):
         """Par (item_interior, item_exterior) del MISMO producto, ambos con precio y no
         valoración, candidato a fusionarse en una variante combinada. (None, None) si no
@@ -1082,7 +1124,7 @@ class AppointmentType(models.Model):
             variant = tier._visar_get_variant_for_zone(zone)
             if not variant:
                 continue
-            is_free = item.get('is_free') or (tier and tier.is_free)
+            is_free = self._visar_item_included_free(item, items)
             unit_price = self._visar_list_unit_price(variant, zone)
             if is_free or unit_price <= 0:
                 lines.append({
@@ -1095,11 +1137,16 @@ class AppointmentType(models.Model):
                 continue
             discount = self._visar_combo_discount_for_item(item, dimension_ids, combo_rules)
 
+            tier_name = item.get('tier_name')
+            if tier.is_free and tier_name:
+                # Tramo "incluido" que aquí SÍ se cobra (solo exterior): el nombre
+                # trae "(incluida)" y no puede ir en una línea con precio.
+                tier_name = re.sub(r'\s*\([^()]*\)\s*$', '', tier_name).strip() or tier_name
             lines.append({
                 'product_id': variant.id,
                 'discount': discount,
                 'dimension_id': item.get('dimension_id'),
-                'tier_name': item.get('tier_name'),
+                'tier_name': tier_name,
             })
 
         ProductTemplate = self.env['product.template']
@@ -1121,7 +1168,7 @@ class AppointmentType(models.Model):
         addon_qty = {}
         seen_addon_tmpls = set()
         for item in items:
-            if item.get('is_free') or item.get('is_valuation'):
+            if self._visar_item_included_free(item, items) or item.get('is_valuation'):
                 continue
             tmpl_id = item.get('product_tmpl_id')
             # Un mismo producto (p. ej. fumigación interior + exterior) aparece en dos

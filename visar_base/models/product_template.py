@@ -1,6 +1,15 @@
 # -*- coding: utf-8 -*-
+import logging
+
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
+
+_logger = logging.getLogger(__name__)
+
+# Nombre del valor del eje INTERIOR que significa "sin interior". Es una convención
+# del catálogo (Visar lo dio de alta así el 3-oct-2026 para vender solo exterior),
+# no un id: el día que cambie el nombre, se cambia aquí.
+VISAR_SIN_INTERIOR_VALUE = '0'
 
 
 class ProductTemplate(models.Model):
@@ -341,6 +350,131 @@ class ProductTemplate(models.Model):
             if all(ptav in values for ptav in target):
                 return variant
         return empty
+
+    def _visar_wire_exterior_only_variants(self):
+        """Deja los tramos de EXTERIOR apuntando a la variante "sin interior".
+
+        Un tramo no arma combinaciones: apunta a UNA variante de referencia, y la
+        del jardín llevaba el interior fijo en su valor base ("1-250"). Vendido
+        solo, el exterior cobraba interior + jardín (1,840 en vez de 1,150 en
+        zona A). La variante correcta existe —interior "0"— pero hacen falta tres
+        cosas a la vez para que el motor llegue a ella, y por eso cambiar solo el
+        tabulador a mano no arregló nada:
+
+        1. que esas variantes tengan **Zona Visar**: sin ella
+           `tier._visar_get_variant_for_zone` no encuentra la análoga en la zona
+           del cliente y cae a la primera de la zona, que es la de interior base;
+        2. que cada tramo exterior apunte a su variante "0";
+        3. que ningún tramo INTERIOR se haya quedado apuntando a "0" (pasó en uno
+           de los intentos manuales): con el paso 1 hecho, interior + exterior
+           cobraría solo el jardín.
+
+        La fusión interior + exterior no cambia: toma del tramo exterior
+        únicamente el valor del eje jardín (`_visar_combined_variant_for_tiers`).
+
+        Idempotente. Devuelve la lista de lo que cambió, para el log de quien
+        llame. Un producto sin los dos ejes, o sin valor "0", se deja como está.
+        """
+        cambios = []
+        Dimension = self.env['visar.service.dimension'].sudo()
+        for tmpl in self.sudo():
+            dims = Dimension.search([('product_tmpl_id', '=', tmpl.id)])
+            if not ({'interior', 'exterior'} <= set(dims.mapped('measure_type'))):
+                continue
+            interior_attr = tmpl._visar_axis_attribute('interior')
+            exterior_attr = tmpl._visar_axis_attribute('exterior')
+            if not interior_attr or not exterior_attr or interior_attr == exterior_attr:
+                _logger.warning(
+                    "Solo exterior: %s no tiene los dos ejes de tamaño identificables",
+                    tmpl.display_name)
+                continue
+            sin_interior = tmpl.valid_product_template_attribute_line_ids.filtered(
+                lambda l: l.attribute_id == interior_attr
+            ).product_template_value_ids.filtered(
+                lambda p: p.ptav_active
+                and (p.name or '').strip() == VISAR_SIN_INTERIOR_VALUE)[:1]
+            if not sin_interior:
+                continue
+
+            def valor(variant, attr):
+                return variant.product_template_attribute_value_ids.filtered(
+                    lambda p: p.attribute_id == attr)[:1]
+
+            def variante_con(valores):
+                for variant in tmpl.product_variant_ids:
+                    if variant.product_template_attribute_value_ids == valores:
+                        return variant
+                return self.env['product.product']
+
+            # 1) Zona Visar en las variantes "sin interior". La zona de un valor de
+            #    atributo se aprende de las variantes que YA la tienen.
+            zona_de = {}
+            for variant in tmpl.product_variant_ids.filtered('visar_zone_id'):
+                for ptav in variant.product_template_attribute_value_ids:
+                    if ptav.attribute_id not in (interior_attr, exterior_attr):
+                        zona_de.setdefault(ptav.id, set()).add(variant.visar_zone_id.id)
+            zona_de = {k: next(iter(v)) for k, v in zona_de.items() if len(v) == 1}
+            for variant in tmpl.product_variant_ids.filtered(
+                    lambda v: not v.visar_zone_id and valor(v, interior_attr) == sin_interior):
+                zonas = {zona_de[p.id] for p in variant.product_template_attribute_value_ids
+                         if p.id in zona_de}
+                if len(zonas) == 1:
+                    variant.visar_zone_id = zonas.pop()
+                    cambios.append("variante %s -> zona %s" % (
+                        variant.display_name, variant.visar_zone_id.display_name))
+
+            tiers = tmpl.visar_tier_ids.filtered(
+                lambda t: not t.is_valuation and t.product_id
+                and t.product_id.product_tmpl_id == tmpl)
+            exteriores = tiers.filtered(lambda t: t.measure_scope == 'exterior')
+            interiores = tiers.filtered(lambda t: t.measure_scope == 'interior')
+
+            # 3) Antes de mover los exteriores: su interior fijo ES el valor base, y
+            #    es lo único que dice a dónde devolver un tramo interior desviado.
+            base_interior = self.env['product.template.attribute.value']
+            for tier in exteriores:
+                actual = valor(tier.product_id, interior_attr)
+                if actual and actual != sin_interior:
+                    base_interior = actual
+                    break
+            desviados = interiores.filtered(
+                lambda t: valor(t.product_id, interior_attr) == sin_interior)
+            primero = interiores.sorted('m2_min')[:1]
+            for tier in desviados:
+                if tier != primero or not base_interior:
+                    _logger.warning(
+                        "Solo exterior: el tramo interior '%s' de %s apunta a la "
+                        "variante sin interior y no se puede deducir la correcta; "
+                        "corregir a mano en el tabulador.",
+                        tier.display_name, tmpl.display_name)
+                    continue
+                destino = variante_con(
+                    (tier.product_id.product_template_attribute_value_ids - sin_interior)
+                    | base_interior)
+                if destino:
+                    tier.product_id = destino
+                    cambios.append("tramo interior '%s' -> %s" % (
+                        tier.display_name, destino.display_name))
+
+            # 2) Cada tramo exterior, a su variante "sin interior".
+            for tier in exteriores:
+                actual = valor(tier.product_id, interior_attr)
+                if not actual or actual == sin_interior:
+                    continue
+                destino = variante_con(
+                    (tier.product_id.product_template_attribute_value_ids - actual)
+                    | sin_interior)
+                if not destino:
+                    _logger.warning(
+                        "Solo exterior: no existe la variante sin interior para el "
+                        "tramo '%s' de %s", tier.display_name, tmpl.display_name)
+                    continue
+                tier.product_id = destino
+                cambios.append("tramo exterior '%s' -> %s" % (
+                    tier.display_name, destino.display_name))
+        for cambio in cambios:
+            _logger.info("Solo exterior: %s", cambio)
+        return cambios
 
 
 class ProductProduct(models.Model):

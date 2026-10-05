@@ -1776,9 +1776,37 @@ class AppointmentType(models.Model):
             'dimension_id': section['dimension_id'],
             'label': section['label'],
             'field_name': section['field_name'],
-            'options': self._visar_wizard_tier_options(section['tiers']),
+            'options': self._visar_wizard_section_options(section, selections),
         } for section in self._visar_wizard_dimension_sections(
             selections, measure_type=measure_type)]
+
+    @api.model
+    def _visar_wizard_section_options(self, section, selections):
+        """Opciones de una sección, sin prometer "incluido" cuando no lo está.
+
+        El jardín chico va incluido SOLO si también se fumiga el interior
+        (`appointment.type._visar_item_included_free`). En un "solo exterior" ese
+        tramo se cobra, y ofrecerlo como "Incluido sin costo" sería anunciar un
+        precio que el paso siguiente desmiente.
+        """
+        options = self._visar_wizard_tier_options(section['tiers'])
+        dimension = section['dimension']
+        if dimension.measure_type != 'exterior':
+            return options
+        elegidas = self.env['appointment.type']._visar_selection_dimension_ids(selections)
+        con_interior = any(
+            d.measure_type == 'interior' and d.product_tmpl_id == dimension.product_tmpl_id
+            for d in elegidas)
+        hay_interior = self.env['visar.service.dimension'].sudo().search_count([
+            ('product_tmpl_id', '=', dimension.product_tmpl_id.id),
+            ('measure_type', '=', 'interior')])
+        if con_interior or not hay_interior:
+            return options
+        for option in options:
+            if option['is_free']:
+                option['is_free'] = False
+                option['description'] = ''
+        return options
 
     @api.model
     # ------------------------------------------------------------------
