@@ -1398,8 +1398,12 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     def _visar_apply_delivery_address(self, order_sudo, booking, partner_name=None):
         # La logica vive en sale.order: el agente de WhatsApp la necesita igual,
         # pero sin peticion HTTP. Aqui solo se desenvuelve la sesion del wizard.
-        return order_sudo._visar_apply_delivery_address(
+        delivery = order_sudo._visar_apply_delivery_address(
             (booking or {}).get('delivery_address'), partner_name=partner_name)
+        # Solo en la web: es el único canal que pasa por el checkout de eCommerce,
+        # que exige dirección de facturación y sin esto la vuelve a pedir en blanco.
+        order_sudo._visar_prefill_billing_address()
+        return delivery
 
     # Elimina del carrito las líneas de reservas Visar anteriores, para que rehacer
     # el wizard REEMPLACE la cita en lugar de acumular líneas duplicadas. Solo toca

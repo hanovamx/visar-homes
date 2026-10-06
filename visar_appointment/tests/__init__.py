@@ -15,3 +15,4 @@ from . import test_lista_de_precios_poliza
 from . import test_cp_interes
 from . import test_poliza_preagenda
 from . import test_solo_exterior
+from . import test_checkout_conserva_precio

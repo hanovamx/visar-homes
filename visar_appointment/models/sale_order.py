@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import fields, models
+from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
 
@@ -129,6 +129,42 @@ class SaleOrder(models.Model):
         self._visar_set_service_shipping(delivery_partner)
         return delivery_partner
 
+    # Campos que el checkout exige en la dirección de FACTURACIÓN
+    # (`portal._get_mandatory_address_fields`) y que el wizard ya capturó.
+    _VISAR_BILLING_ADDRESS_FIELDS = (
+        'street', 'street2', 'zip', 'city', 'state_id', 'country_id')
+
+    def _visar_prefill_billing_address(self):
+        """Le presta al cliente su dirección de servicio como domicilio, si no tiene.
+
+        El wizard guarda la dirección en un contacto de ENTREGA aparte; la ficha
+        del cliente queda con nombre, correo y teléfono, y sin calle. El checkout
+        normal ("Finalizar compra") exige dirección de facturación, no la
+        encuentra y le pone delante un formulario VACÍO: al cliente le parece que
+        la reserva no guardó nada y vuelve a teclear hasta el código postal.
+
+        Solo si la ficha no tiene NINGÚN dato de dirección. Con que tenga uno
+        —aunque esté incompleta— no se toca: mezclar media dirección suya con
+        media del servicio daría un domicilio que no existe, y los datos de un
+        cliente no se pisan desde un formulario público.
+
+        Se llama solo desde el flujo WEB, que es el único que pasa por ese
+        checkout. Devuelve True si rellenó.
+        """
+        self.ensure_one()
+        origen = self.visar_service_partner_id
+        cliente = self.partner_invoice_id or self.partner_id
+        if not origen or not cliente or cliente == origen:
+            return False
+        if any(cliente[f] for f in self._VISAR_BILLING_ADDRESS_FIELDS):
+            return False
+        vals = {f: (origen[f].id if hasattr(origen[f], 'id') else origen[f])
+                for f in self._VISAR_BILLING_ADDRESS_FIELDS if origen[f]}
+        if not vals.get('street'):
+            return False
+        cliente.sudo().write(vals)
+        return True
+
     def _visar_fill_from_booking(self, booking, calendar_booking, zone, plan=None,
                                  tz=None, canal=None):
         """Agrega al pedido las lineas del wizard. Devuelve cuantas agrego (0 = fallo).
@@ -217,12 +253,74 @@ class SaleOrder(models.Model):
         })
 
     def _update_address(self, partner_id, fnames=None):
-        """Evita que el checkout reemplace la dirección de servicio Visar."""
+        """El checkout no reemplaza la dirección de servicio NI el precio ya cotizado.
+
+        **La dirección.** Con dirección de servicio fijada, el checkout no puede
+        cambiar `partner_shipping_id`.
+
+        **El precio (6-oct-2026).** Cada vez que el checkout de eCommerce escribe
+        el cliente o la dirección de facturación, `website_sale` deja que Odoo
+        recalcule `pricelist_id` desde el partner y REPRECIA las líneas. Un
+        cliente sin lista propia cae en la general del sitio, así que una póliza
+        cotizada en el wizard con la lista (zona × plan) subía de precio al
+        llenar el formulario de dirección de "Finalizar compra": veía 3,990 y
+        pagaba más. El 25-sep se corrigió el mismo mecanismo en el traspaso del
+        wizard al carrito (`_visar_reassert_zone_pricelist`); el checkout de
+        después quedaba sin vigilar, y solo no se notaba porque las pruebas se
+        pagaban con el botón exprés de "Demostración", que se salta esos pasos.
+
+        Se RESTAURA la foto de antes en vez de repreciar con la lista buena:
+        `_recompute_prices` pone el descuento de cada línea en cero y lo recalcula
+        desde la lista, así que se llevaría el descuento de combo que el wizard
+        escribió a mano. Lo que el cliente vio es exactamente lo que había antes
+        de tocar la dirección, y eso es lo que se deja.
+
+        La guardia es `visar_service_partner_id`: solo los pedidos armados por el
+        flujo Visar, cuyo precio sale de la zona del domicilio de SERVICIO y no
+        del cliente que factura. La tienda normal sigue igual.
+        """
         if fnames and self.visar_service_partner_id:
             fnames = [f for f in fnames if f != 'partner_shipping_id']
             if not fnames:
                 return
-        return super()._update_address(partner_id, fnames)
+        if not (fnames and len(self) == 1 and self.visar_service_partner_id):
+            return super()._update_address(partner_id, fnames)
+
+        lista = self.pricelist_id
+        foto = {line.id: (line.price_unit, line.discount)
+                for line in self.order_line if not line.display_type}
+        result = super()._update_address(partner_id, fnames)
+        if lista and self.pricelist_id != lista:
+            _logger.warning(
+                "visar: el checkout cambio la lista de la orden %s de %s a %s al "
+                "escribir %s; se restaura la lista y el precio cotizados.",
+                self.name, lista.display_name, self.pricelist_id.display_name, fnames)
+            self.pricelist_id = lista
+            for line in self.order_line:
+                if line.id in foto:
+                    price_unit, discount = foto[line.id]
+                    if line.price_unit != price_unit or line.discount != discount:
+                        line.write({'price_unit': price_unit, 'discount': discount})
+            self._visar_cache_request_pricelist(lista)
+        return result
+
+    @api.model
+    def _visar_cache_request_pricelist(self, pricelist):
+        """Deja la lista restaurada como la "actual" del sitio en esta sesión.
+
+        `website_sale` guarda en la sesión la lista con la que pinta el carrito;
+        `_update_address` acaba de dejar ahí la equivocada. Sin petición HTTP (el
+        agente, un cron) no hay nada que corregir.
+        """
+        try:
+            from odoo.http import request
+            from odoo.addons.website_sale.models.website import (
+                PRICELIST_SESSION_CACHE_KEY)
+            if request and getattr(request, 'session', None) is not None:
+                request.session[PRICELIST_SESSION_CACHE_KEY] = pricelist.id
+                request.pricelist = pricelist
+        except Exception:  # noqa: BLE001 - la sesion es comodidad; el pedido ya esta bien
+            _logger.debug("visar: no se pudo refrescar la lista de la sesion", exc_info=True)
 
     def write(self, vals):
         if (
