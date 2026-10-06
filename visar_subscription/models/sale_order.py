@@ -463,6 +463,45 @@ class SaleOrder(models.Model):
             lambda l: l.product_id.product_tmpl_id.visar_generates_visit
             and l.product_id.product_tmpl_id.visar_fsm_project_id)
 
+    def _visar_work_projects(self):
+        """En una póliza el trabajo son sus VISITAS, que no cuelgan de `task_id`.
+
+        `visar_fsm` deduce dónde está el trabajo de un pedido por la tarea de cada
+        línea; las líneas de póliza no tienen (sus visitas nacen al pagarse cada
+        periodo y apuntan a la póliza por `visar_subscription_order_id`). Sin esto,
+        el botón "Proyectos" de una póliza combo enseñaría los dos proyectos
+        individuales, vacíos, y callaría "Servicios combinados".
+
+        Con visitas ya creadas mandan ellas; antes del primer pago se anticipa con
+        `_visar_visit_groups`, que es quien decidirá dónde nacen (incluida la
+        guardia de "distinto número de visitas no se consolida").
+        """
+        work = super()._visar_work_projects()
+        if not self.is_subscription:
+            return work
+        lines = self._visar_visit_lines()
+        if not lines:
+            return work
+        Project = self.env['project.project']
+        por_linea = {}
+        order_id = self._origin.id or (self.id if isinstance(self.id, int) else False)
+        if order_id:
+            visitas = self.env['project.task'].sudo().search(
+                [('visar_subscription_order_id', '=', order_id)])
+            for visita in visitas.filtered('project_id'):
+                for line in visita.visar_source_line_ids:
+                    por_linea.setdefault(line.id, set()).add(visita.project_id.id)
+        previsto = {}
+        for group_lines, project, _visitas in self._visar_visit_groups(is_first=True):
+            for line in group_lines:
+                previsto[line.id] = project.id
+        for line in lines:
+            ids = por_linea.get(line.id) or (
+                [previsto[line.id]] if previsto.get(line.id) else [])
+            if ids:
+                work[line.id] = Project.browse(sorted(ids))
+        return work
+
     def _visar_visit_groups(self, is_first):
         """[(líneas, proyecto, nº de visitas)] — el trabajo del periodo, ya consolidado.
 

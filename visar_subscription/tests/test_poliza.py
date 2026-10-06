@@ -502,6 +502,29 @@ class TestPoliza(TransactionCase):
             'group_id': self.group_b.id, 'product_tmpl_id': service2.id})
         return combined, service2
 
+    def test_21b_combo_poliza_el_pedido_ensena_el_proyecto_combinado(self):
+        """El botón "Proyectos" de la póliza combo: el combinado, no los dos vacíos.
+
+        Las visitas de póliza no cuelgan de `task_id`, así que `visar_fsm` no las ve
+        solo; aquí se le dice dónde están. Los productos llevan además su proyecto
+        nativo, como en producción, que es lo que hacía aparecer los individuales.
+        """
+        combined, service2 = self._combo_poliza_setup()
+        for service, project in ((self.service, self.project), (service2, self.project2)):
+            service.write({'visar_is_service': True,
+                           'service_tracking': 'task_global_project',
+                           'project_id': project.id})
+        order = self._make_poliza([self.service, service2])
+        order.invalidate_recordset(['project_ids', 'project_count'])
+        self.assertEqual(order.project_ids, combined, "antes del primer pago se anticipa")
+
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        order.invalidate_recordset(['project_ids', 'project_count'])
+        self.assertEqual(order.project_ids, combined)
+        self.assertEqual(order.project_count, 1)
+
     def test_22_combo_poliza_es_una_sola_visita(self):
         """Una póliza combo genera UNA visita por periodo, no una por servicio."""
         combined, service2 = self._combo_poliza_setup()

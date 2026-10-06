@@ -197,3 +197,78 @@ class TestFsmGrouping(TransactionCase):
     def test_14_no_se_permite_apuntarse_a_si_mismo(self):
         with self.assertRaises(ValidationError):
             self.project_fum.visar_fsm_combined_project_id = self.project_fum.id
+
+    # ------------------------------------------------------------------
+    # El botón "Proyectos" del pedido
+    # ------------------------------------------------------------------
+    #
+    # El botón es nativo y lista el proyecto CONFIGURADO en cada producto. Con el
+    # combo enseñaba los dos proyectos individuales —vacíos de esta venta— y
+    # callaba "Servicios combinados", que es donde está el servicio externo.
+
+    def _reciente(self, order):
+        order.invalidate_recordset(['project_ids', 'project_count'])
+        return order
+
+    def test_15_combo_el_pedido_ensena_el_proyecto_combinado_y_solo_ese(self):
+        order = self._reciente(self._confirm([self.product_fum, self.product_jar]))
+        self.assertEqual(order.project_ids, self.project_combo)
+        self.assertEqual(order.project_count, 1)
+
+    def test_16_con_un_proyecto_el_boton_abre_sus_tareas_de_este_pedido(self):
+        """Un clic: con UN proyecto Odoo abre sus tareas filtradas por el pedido."""
+        order = self._reciente(self._confirm([self.product_fum, self.product_jar]))
+        action = order.action_view_project_ids()
+        self.assertEqual(action['context']['active_id'], self.project_combo.id)
+        self.assertEqual(action['context']['search_default_sale_order_id'], order.id)
+
+    def test_17_un_solo_servicio_sigue_ensenando_su_proyecto(self):
+        fum = self._reciente(self._confirm([self.product_fum]))
+        self.assertEqual(fum.project_ids, self.project_fum)
+        jar = self._reciente(self._confirm([self.product_jar]))
+        self.assertEqual(jar.project_ids, self.project_jar)
+
+    def test_18_combo_mas_un_tercero_ensena_el_combinado_y_el_tercero(self):
+        order = self._reciente(self._confirm(
+            [self.product_fum, self.product_jar, self.product_val]))
+        self.assertEqual(order.project_ids, self.project_combo | self.project_val)
+
+    def test_19_la_cotizacion_anticipa_lo_que_hara_la_confirmacion(self):
+        """Sin tareas todavía, el botón no puede decir una cosa hoy y otra mañana."""
+        order = self.env['sale.order'].create({
+            'partner_id': self.partner.id,
+            'pricelist_id': self.env['product.pricelist'].create(
+                {'name': 'Lista test FSM'}).id,
+            'order_line': [(0, 0, {'product_id': p.product_variant_id.id,
+                                   'product_uom_qty': 1})
+                           for p in (self.product_fum, self.product_jar)]})
+        self.assertEqual(order.project_ids, self.project_combo)
+        order.action_confirm()
+        self.assertEqual(self._reciente(order).project_ids, self.project_combo)
+
+    def test_20_manda_la_tarea_no_la_configuracion_de_hoy(self):
+        """Pedidos ya confirmados: el trabajo está donde está la tarea, aunque la
+        configuración de combinados cambie después (o no existiera entonces)."""
+        (self.project_fum | self.project_jar).write(
+            {'visar_fsm_combined_project_id': False})
+        order = self._confirm([self.product_fum, self.product_jar])
+        (self.project_fum | self.project_jar).write(
+            {'visar_fsm_combined_project_id': self.project_combo.id})
+        self.assertEqual(self._reciente(order).project_ids,
+                         self.project_fum | self.project_jar)
+
+    def test_21_el_proyecto_del_pedido_no_se_quita_aunque_no_tenga_la_tarea(self):
+        """Solo se retira un proyecto que estaba ahí POR el producto. Si alguien lo
+        puso a mano como proyecto del pedido, se respeta."""
+        order = self._confirm([self.product_fum, self.product_jar])
+        order.project_id = self.project_fum
+        self.assertEqual(self._reciente(order).project_ids,
+                         self.project_combo | self.project_fum)
+
+    def test_22_un_pedido_sin_servicios_visar_no_cambia(self):
+        otro = self.env['product.template'].create({
+            'name': 'Consultoría Test', 'type': 'service', 'list_price': 50.0,
+            'service_tracking': 'task_global_project',
+            'project_id': self.project_val.id, 'taxes_id': [(6, 0, [])]})
+        order = self._reciente(self._confirm([otro]))
+        self.assertEqual(order.project_ids, self.project_val)
