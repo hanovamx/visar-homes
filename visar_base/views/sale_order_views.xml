@@ -18,6 +18,11 @@
                 <attribute name="string">Actualizar precios</attribute>
                 <attribute name="confirm">Se van a recalcular los precios unitarios de TODAS las líneas con la lista de precios seleccionada. Los descuentos y precios capturados a mano se reemplazan. ¿Continuar?</attribute>
             </xpath>
+            <!-- La zona del CP de la dirección de entrega, para elegir la lista de
+                 precios sin ir a buscar el CP a Citas. -->
+            <xpath expr="//field[@name='partner_shipping_id']" position="after">
+                <field name="visar_zone_id" options="{'no_open': True}"/>
+            </xpath>
         </field>
     </record>
 

@@ -1,9 +1,31 @@
 # -*- coding: utf-8 -*-
-from odoo import _, models
+from odoo import _, api, fields, models
 
 
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
+
+    # --- Zona Visar de la dirección de entrega ---
+    # Visar cobra por zona y la zona sale del CP del domicilio donde se da el
+    # servicio. Sin este campo había que leer el CP de la dirección e ir a Citas
+    # a buscar a qué zona pertenece. No se guarda: si se corrige un CP en la tabla
+    # de zonas o la dirección del cliente, la cotización enseña la zona vigente.
+    visar_zone_id = fields.Many2one(
+        'visar.zone', string="Zona Visar",
+        compute='_compute_visar_zone_id',
+        help="Zona que corresponde al código postal de la dirección de entrega. "
+             "Vacío si la dirección no tiene código postal o si ese código postal "
+             "no está en la cobertura de Visar.")
+
+    @api.depends('partner_shipping_id.zip')
+    def _compute_visar_zone_id(self):
+        ZoneCp = self.env['visar.zone.cp'].sudo()
+        zonas = {}
+        for order in self:
+            cp = ZoneCp._normalize_cp(order.partner_shipping_id.zip)
+            if cp not in zonas:
+                zonas[cp] = ZoneCp._get_zone_for_cp(cp)
+            order.visar_zone_id = zonas[cp]
 
     # --- Lista de precios obligatoria para confirmar (REQ-004) ---
     # Visar cobra por zona (A/B/C). Odoo llenaba la lista de toda cotización con
