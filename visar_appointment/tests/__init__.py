@@ -17,3 +17,4 @@ from . import test_poliza_preagenda
 from . import test_solo_exterior
 from . import test_checkout_conserva_precio
 from . import test_ocultar_tecnico
+from . import test_extras_descripcion

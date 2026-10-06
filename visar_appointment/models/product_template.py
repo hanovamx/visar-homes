@@ -8,6 +8,14 @@ class ProductTemplate(models.Model):
     visar_appointment_type_id = fields.Many2one(
         'appointment.type', string="Tipo de cita web",
         help="Tipo de cita que el cliente elige en la web y que corresponde a este producto/servicio.")
+    # Lo que el cliente lee debajo del nombre cuando este producto se le ofrece
+    # como adicional en la cita web. Campo propio y no `description_sale`, que se
+    # copia a la línea del pedido y a la factura.
+    visar_addon_description = fields.Text(
+        "Descripción como producto adicional",
+        help="Texto que ve el cliente debajo del nombre cuando este producto se "
+             "ofrece en el paso \"Productos adicionales recomendados\" de la cita "
+             "web. Si se deja vacío no se muestra nada.")
 
     @api.model
     def _visar_valuation_price(self, zone=None):

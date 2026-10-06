@@ -1002,6 +1002,7 @@ class AppointmentType(models.Model):
                 'product_id': variant.id,
                 'template_id': opt_tmpl.id,
                 'name': variant.display_name,
+                'description': (opt_tmpl.visar_addon_description or '').strip(),
                 'quantity': qty,
                 'unit_price': unit_price,
                 'subtotal': unit_price * qty,

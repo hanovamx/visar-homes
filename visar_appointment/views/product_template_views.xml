@@ -25,6 +25,10 @@
             <xpath expr="//field[@name='optional_product_ids']" position="after">
                 <xpath expr="//field[@name='visar_optional_line_ids']" position="move"/>
             </xpath>
+            <xpath expr="//field[@name='visar_optional_line_ids']" position="after">
+                <field name="visar_addon_description"
+                       placeholder="Qué es y para qué sirve, en una o dos frases. Lo lee el cliente en la cita web."/>
+            </xpath>
         </field>
     </record>
 

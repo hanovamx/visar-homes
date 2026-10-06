@@ -666,10 +666,10 @@
                        t-value="quote and request.env['res.currency'].browse(quote['currency_id']) or request.env.company.currency_id"/>
                     <div class="row justify-content-center g-4">
                         <div class="col-lg-7">
-                            <h2>¿Deseas agregar algo más?</h2>
+                            <h2>Productos adicionales recomendados</h2>
                             <p class="text-muted">
                                 Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
-                                — Con base en lo que nos compartiste, te recomendamos estos artículos.
+                                — Te sugerimos agregar estos productos para complementar el servicio.
                             </p>
                             <div t-if="error" class="alert alert-warning" role="alert">
                                 <t t-esc="error"/>
@@ -691,6 +691,13 @@
                                                 <span t-if="offer['quantity'] &gt; 1" class="text-muted">
                                                     ×<t t-esc="offer['quantity']"/>
                                                 </span>
+                                                <!-- Qué es el producto: se captura en el
+                                                     producto ("Descripción como producto
+                                                     adicional"). Vacío = no se pinta. -->
+                                                <span t-if="offer.get('description')"
+                                                      class="d-block small text-muted visar_extra_description"
+                                                      style="white-space: pre-line;"
+                                                      t-esc="offer['description']"/>
                                             </label>
                                         </div>
                                         <span class="fw-semibold" t-out="offer['subtotal']"
