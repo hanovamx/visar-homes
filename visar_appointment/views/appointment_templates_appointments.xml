@@ -124,4 +124,35 @@
         </xpath>
     </template>
 
+    <!-- ==================================================================
+         El cliente no ve el nombre del técnico asignado (pedido de Visar,
+         6-oct-2026).
+
+         Los "recursos" de la cita son los técnicos. El core los enseña en tres
+         sitios: el bloque "Su elección" del panel lateral al capturar los datos,
+         la fila "Recursos" de la página de confirmación y la tarjeta del recurso
+         a su lado. Se apagan los tres solo para recursos; una cita por usuario
+         ("Operador") se sigue viendo como en el core.
+         ================================================================== -->
+    <template id="visar_meeting_user_sin_tecnico"
+              inherit_id="appointment.appointment_meeting_user">
+        <xpath expr="//t[@t-if='isDetails or (isDate and not selectionPossible)']" position="attributes">
+            <attribute name="t-if">staff_user and (isDetails or (isDate and not selectionPossible))</attribute>
+        </xpath>
+    </template>
+
+    <template id="visar_appointment_validated_sin_tecnico"
+              inherit_id="appointment.appointment_validated">
+        <xpath expr="//div[@t-foreach='event.appointment_resource_ids']/../.." position="attributes">
+            <attribute name="t-if">False</attribute>
+        </xpath>
+    </template>
+
+    <template id="visar_validated_card_sin_tecnico"
+              inherit_id="appointment.appointment_validated_card">
+        <xpath expr="//h5[@t-out='resource.name']/../../.." position="attributes">
+            <attribute name="t-elif">False</attribute>
+        </xpath>
+    </template>
+
 </odoo>
