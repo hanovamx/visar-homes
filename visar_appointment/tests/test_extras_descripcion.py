@@ -45,3 +45,32 @@ class TestExtrasDescripcion(TransactionCase):
         self.assertNotIn('¿Deseas agregar algo más?', arch)
         self.assertNotIn('Con base en', arch)
         self.assertIn("offer.get('description')", arch)
+
+    def _oferta(self, descripcion):
+        return {'description': descripcion, 'subtotal': 150.0, 'quantity': 1,
+                'currency_id': self.env.company.currency_id.id}
+
+    def test_el_agente_dice_que_es_y_luego_el_precio(self):
+        flujo = self.env['appointment.type']
+        oferta = self._oferta('Trampa de pegamento\npara cocina')
+        self.assertEqual(
+            flujo._visar_wizard_extra_description(oferta),
+            'Trampa de pegamento para cocina. %s'
+            % flujo._visar_wizard_extra_price_text(oferta))
+
+    def test_el_agente_sin_descripcion_solo_dice_el_precio(self):
+        flujo = self.env['appointment.type']
+        oferta = self._oferta('')
+        self.assertEqual(flujo._visar_wizard_extra_description(oferta),
+                         flujo._visar_wizard_extra_price_text(oferta))
+
+    def test_el_paso_del_agente_usa_los_textos_de_la_web(self):
+        paso = self.env['appointment.type']._visar_wizard_step_options(
+            {'zone_id': self.zona.id,
+             'items': [{'product_tmpl_id': self.servicio.id}]}, 'extras')
+        self.assertEqual(paso['title'], 'Productos adicionales recomendados')
+        self.assertEqual(paso['hint'], 'Te sugerimos agregar estos productos '
+                                       'para complementar el servicio.')
+        por_nombre = {o['label']: o for o in paso['options']}
+        self.assertTrue(por_nombre['Adicional con texto']['description']
+                        .startswith('Trampa de pegamento para cocina. '))

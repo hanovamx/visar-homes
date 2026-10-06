@@ -921,7 +921,21 @@ class AppointmentType(models.Model):
 
         El precio unitario va aparte del total porque el add-on se ofrece por
         paquete (3 estaciones): sin el desglose, el total parece el precio de una.
+
+        Delante del precio va QUÉ ES el producto, si el producto lo trae
+        (`visar_addon_description`, la misma que pinta la cita web). En una sola
+        línea: aquí se dice dentro de una viñeta del chat.
         """
+        precio = self._visar_wizard_extra_price_text(offer)
+        que_es = ' '.join((offer.get('description') or '').split())
+        if not que_es:
+            return precio
+        if que_es[-1] not in '.!?':
+            que_es += '.'
+        return '%s %s' % (que_es, precio)
+
+    def _visar_wizard_extra_price_text(self, offer):
+        """Cuánto cuesta el add-on, con desglose si va por paquete."""
         currency = self.env['res.currency'].browse(offer.get('currency_id'))
         if not currency:
             currency = self.env.company.currency_id
@@ -2261,10 +2275,15 @@ class AppointmentType(models.Model):
         if step_key == VISAR_STEP_EXTRAS:
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'extra_ids',
-                'title': _('¿Quieres agregar algo más?'),
-                # Sin `hint` (10-sep-2026): "Si no quieres agregar nada, dime que
-                # no y seguimos" es instruccion de maquina, no conversacion, y
-                # Visar pidio que la pregunta solo ofrezca lo que se agrega.
+                # Mismos textos que el paso de la cita web (pedido de Visar,
+                # 6-oct-2026). Sin `hint` el canal pone su respaldo ("Puedes
+                # decirme varias.").
+                'title': _('Productos adicionales recomendados'),
+                'hint': _('Te sugerimos agregar estos productos para '
+                          'complementar el servicio.'),
+                # El `hint` no vuelve a ser "Si no quieres agregar nada, dime
+                # que no y seguimos" (quitado el 10-sep-2026): eso es instruccion
+                # de maquina, y Visar pidio ofrecer solo lo que se agrega.
                 'options': [{
                     'value': offer['product_id'],
                     'label': offer.get('name') or '',
