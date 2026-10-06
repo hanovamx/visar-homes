@@ -665,3 +665,47 @@ class CrmLead(models.Model):
             if stale:
                 stale.action_set_lost(
                     **({'lost_reason_id': reason.id} if reason else {}))
+
+    # ------------------------------------------------------------------
+    # Botón «Próxima reunión»: abrir la cita donde de verdad está
+    # ------------------------------------------------------------------
+
+    def action_schedule_meeting(self, smart_calendar=True):
+        """Abre las reservas del tipo de cita real, limitadas a esta ficha.
+
+        El nativo abre el Calendario general, que solo pinta los eventos de los
+        asistentes marcados (el usuario que mira). Una cita de Visar no tiene
+        usuario: se reserva contra un técnico, que es un RECURSO, y su único
+        asistente es el cliente. El botón decía «Próxima reunión: 8 oct» y al
+        pulsarlo no aparecía nada.
+
+        Las reservas con técnico se ven en «Reservas de recursos» de Citas, y
+        ahí están bajo el tipo con el que se agendaron (el maestro, «Visar —
+        cita multi-servicio»), no bajo el que eligió el cliente en el sitio. Se
+        abre esa misma vista con el tipo que trae el evento.
+
+        Una ficha sin citas con técnico sigue en el nativo: es donde se agenda
+        una reunión a mano.
+        """
+        self.ensure_one()
+        citas = self.env['calendar.event'].search([
+            ('opportunity_id', '=', self.id),
+            ('appointment_resource_ids', '!=', False),
+        ], order='start')
+        if not citas:
+            return super().action_schedule_meeting(smart_calendar=smart_calendar)
+
+        ahora = fields.Datetime.now()
+        cita = citas.filtered(lambda c: c.stop >= ahora)[:1] or citas[-1:]
+        tipos = citas.appointment_type_id
+        action = cita.appointment_type_id.sudo().action_calendar_meetings()
+        action['domain'] = [('opportunity_id', '=', self.id)]
+        action['context'].update({
+            'initial_date': cita.start,
+            'default_mode': 'week' if len(citas) == 1 else 'month',
+            'default_opportunity_id': self.id,
+        })
+        if len(tipos) > 1:
+            # Con citas de varios tipos, filtrar por uno escondería las demás.
+            action['context'].pop('search_default_appointment_type_id', None)
+        return action
