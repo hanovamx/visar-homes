@@ -2343,8 +2343,10 @@ class AppointmentType(models.Model):
                 # -el mismo bucle que obligo a crear la fila-. Con la bandera,
                 # el copy se edita aqui sin tocar el runtime.
                 'label': _('Un solo servicio'),
+                # La segunda frase es la misma de la cita web (6-oct-2026).
                 'description': _('Pago único, no incluye visitas de refuerzo '
-                                 'ni garantía'),
+                                 'ni garantía. En caso de que se requieran '
+                                 'visitas extras, se cobrarán por separado.'),
                 'salida': True,
                 # Vacío en el código, y esa es la gracia: `extras` necesitó un
                 # despliegue para aprender "nel" y esta fila puede aprenderlo

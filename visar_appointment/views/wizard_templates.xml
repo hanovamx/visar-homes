@@ -863,7 +863,7 @@
                                                    t-att-checked="not selected_plan_id and 'checked' or None"/>
                                             <div>
                                                 <span class="fw-semibold">Solo este servicio, sin póliza</span>
-                                                <div class="small text-muted">Un solo pago, sin renovación</div>
+                                                <div class="small text-muted">Un solo pago, sin renovación. En caso de que se requieran visitas extras, se cobrarán por separado.</div>
                                             </div>
                                         </div>
                                         <!-- Mismo criterio que las pólizas: solo el servicio, para poder

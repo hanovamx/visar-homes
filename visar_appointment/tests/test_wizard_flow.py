@@ -701,6 +701,8 @@ class TestWizardFlow(TransactionCase):
         self.assertEqual(len(salida), 1)
         self.assertEqual(salida[0]['label'], "Un solo servicio")
         self.assertIn('no incluye visitas de refuerzo', salida[0]['description'])
+        self.assertIn('visitas extras, se cobrarán por separado.',
+                      salida[0]['description'])
 
     def test_la_salida_va_marcada_y_no_se_deduce_de_su_nombre(self):
         """La bandera `salida` es lo que la hace reconocible para el chat.
