@@ -1,9 +1,31 @@
 # -*- coding: utf-8 -*-
 import logging
+import re
 
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
+
+# Resolver el código postal desde calle + número + colonia (7-oct-2026).
+#
+# APAGADO por defecto, y no por timidez: medido contra 600 direcciones reales de
+# Nuevo León, Mapbox ubica bien el punto (mediana de 16 m) pero el CP que
+# devuelve coincide solo ~52% de las veces, y la zona ~86%. Sirve como
+# SUGERENCIA que la persona confirma o corrige; no sirve como dato.
+ADDRESS_CP_ENABLED_PARAM = 'visar.address_cp.enabled'
+# Caja 'minLng,minLat,maxLng,maxLat' donde se busca. El default envuelve los CP
+# del catálogo (de Linares a Sabinas Hidalgo) con ~15 km de margen.
+ADDRESS_CP_BBOX_PARAM = 'visar.address_cp.bbox'
+ADDRESS_CP_BBOX_DEFAULT = '-100.786,23.273,-99.030,27.403'
+# Por debajo de esta relevancia el candidato se descarta. Con menos de 0.5 el CP
+# acertó 18% de las veces en la medición: peor que no contestar.
+ADDRESS_CP_MIN_RELEVANCE_PARAM = 'visar.address_cp.min_relevance'
+ADDRESS_CP_MIN_RELEVANCE_DEFAULT = 0.5
+
+# "Palo Blanco No. 8707" → "Palo Blanco 8707"; "Col. La Cima" → "La Cima".
+_NUMBER_NOISE = re.compile(r'\b(?:no\.?|n[uú]m\.?|#)\s*(?=\d)', re.IGNORECASE)
+_COLONIA_NOISE = re.compile(r'^\s*(?:col\.|colonia|fracc\.?|fraccionamiento)\s+',
+                            re.IGNORECASE)
 
 
 class VisarZoneCp(models.Model):
@@ -187,3 +209,96 @@ class VisarZoneCp(models.Model):
             return max(int(raw), 1)
         except (TypeError, ValueError):
             return 200
+
+    # ------------------------------------------------------------------
+    # Dirección → código postal
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _visar_address_cp_enabled(self):
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            ADDRESS_CP_ENABLED_PARAM, '0')
+        return str(raw).strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+
+    @api.model
+    def _visar_address_cp_min_relevance(self):
+        raw = self.env['ir.config_parameter'].sudo().get_param(
+            ADDRESS_CP_MIN_RELEVANCE_PARAM, ADDRESS_CP_MIN_RELEVANCE_DEFAULT)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return ADDRESS_CP_MIN_RELEVANCE_DEFAULT
+
+    @api.model
+    def _visar_address_to_cp(self, street, ext_num, neighborhood, municipality=None):
+        """Calle + número + colonia → el CP cubierto que mejor cuadra.
+
+        Devuelve siempre un dict con `status`:
+
+        - `'disabled'`: la función está apagada (`visar.address_cp.enabled`).
+        - `'incomplete'`: falta calle, número o colonia.
+        - `'not_found'`: Mapbox no devolvió nada utilizable DENTRO de la
+          cobertura. No distingue "fuera de cobertura" de "mal escrita": desde
+          aquí no se puede saber, y quien llama debe pedir el CP en vez de
+          decirle a alguien que no se le atiende.
+        - `'found'`: con `zip`, `municipality`, `street` (como la escribe
+          Mapbox), `ext_num`, `neighborhood` (como llegó), `exact` (¿encontró
+          ese número, o solo la calle?) y `relevance`.
+
+        Se queda con el PRIMER candidato cuyo CP está en el catálogo con zona.
+        Es una sugerencia: hay que enseñársela a la persona antes de usarla
+        (ver la medición junto a `ADDRESS_CP_ENABLED_PARAM`).
+
+        Nunca lanza.
+        """
+        if not self._visar_address_cp_enabled():
+            return {'status': 'disabled'}
+        street = _NUMBER_NOISE.sub('', (street or '')).strip()
+        ext_num = _NUMBER_NOISE.sub('', (ext_num or '')).strip()
+        neighborhood = (neighborhood or '').strip()
+        if not (street and ext_num and neighborhood):
+            return {'status': 'incomplete'}
+
+        partes = ['%s %s' % (street, ext_num), _COLONIA_NOISE.sub('', neighborhood)]
+        if (municipality or '').strip():
+            partes.append(municipality.strip())
+        query = ', '.join(partes)
+        bbox = (self.env['ir.config_parameter'].sudo().get_param(
+            ADDRESS_CP_BBOX_PARAM) or ADDRESS_CP_BBOX_DEFAULT).strip()
+        features = self.env['visar.mapbox.service']._visar_mapbox_geocode_features(
+            query, types='address', language='es', limit=5, bbox=bbox)
+
+        minimo = self._visar_address_cp_min_relevance()
+        for feature in features:
+            try:
+                relevance = float(feature.get('relevance') or 0.0)
+            except (TypeError, ValueError):
+                relevance = 0.0
+            if relevance < minimo:
+                continue
+            postcode = ''
+            for entry in feature.get('context') or []:
+                if str((entry or {}).get('id') or '').startswith('postcode'):
+                    postcode = self._normalize_cp(entry.get('text'))
+                    break
+            record = self._get_cp_record(postcode) if postcode else self.browse()
+            if not record or not record.zone_id:
+                continue
+            result = {
+                'status': 'found',
+                'zip': record.name,
+                'municipality': record.municipality or '',
+                'street': (feature.get('text') or street).strip(),
+                'ext_num': ext_num,
+                'neighborhood': neighborhood,
+                'exact': feature.get('address') is not None,
+                'relevance': relevance,
+            }
+            _logger.info(
+                "Dirección → CP: %r resolvió a %s (%s), relevancia %.2f, número %s.",
+                query, result['zip'], feature.get('place_name'), relevance,
+                'encontrado' if result['exact'] else 'NO encontrado')
+            return result
+        _logger.info("Dirección → CP: %r sin candidato en cobertura (%s resultados).",
+                     query, len(features))
+        return {'status': 'not_found'}

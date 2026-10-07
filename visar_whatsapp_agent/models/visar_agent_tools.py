@@ -353,6 +353,31 @@ class VisarAgentTools(models.AbstractModel):
             'message': "El CP %s pertenece a %s." % (normalized, zone.name),
         }
 
+    @api.model
+    def agent_resolve_address(self, payload):
+        """Calle + numero + colonia -> el CP cubierto que mejor cuadra.
+
+        `payload` = {"street", "ext_num", "neighborhood", "municipality"?}.
+
+        Devuelve {"status": "found"|"not_found"|"incomplete"|"disabled", ...} y,
+        con `found`, tambien "zip", "municipality", "street", "ext_num",
+        "neighborhood" y "exact". Igual que `agent_resolve_zone`, no revela la
+        zona.
+
+        ES UNA SUGERENCIA, NO UN DATO. Medido el 7-oct-2026 contra 600
+        direcciones reales, el CP que sale de aqui coincide ~52% de las veces.
+        El runtime tiene que ensenarle la direccion completa al cliente y
+        esperar su "si" antes de cotizar o agendar con ese CP; con `not_found`
+        se le pide el CP, no se le dice que esta fuera de cobertura (desde aqui
+        no se distingue una direccion ajena de una mal escrita).
+        """
+        payload = payload or {}
+        result = self.env['visar.zone.cp'].sudo()._visar_address_to_cp(
+            payload.get('street'), payload.get('ext_num'),
+            payload.get('neighborhood'), payload.get('municipality'))
+        result.pop('relevance', None)
+        return result
+
     # ------------------------------------------------------------------
     # 2b. Estimacion de m2 de construccion
     # ------------------------------------------------------------------

@@ -330,6 +330,48 @@ class VisarMapboxService(models.AbstractModel):
         return features[0] if features else None
 
     @api.model
+    def _visar_mapbox_geocode_features(self, query, country='mx', types=None,
+                                       language=None, limit=5, bbox=None):
+        """Varios candidatos crudos de Mapbox para un texto (lista, quizá vacía).
+
+        Existe para resolver un código postal desde calle + colonia
+        (`visar.zone.cp._visar_address_to_cp`): ahí el primer resultado no basta,
+        porque hay que quedarse con el primero que cae DENTRO de la cobertura.
+
+        `bbox` es 'minLng,minLat,maxLng,maxLat' y acota la búsqueda a esa caja.
+        Ojo con lo que NO hace: Mapbox contesta por parecido, así que con la caja
+        puesta casi siempre devuelve algo de adentro aunque la dirección sea de
+        otro estado (medido el 7-oct-2026: 193 de 200 direcciones de Coahuila
+        salieron "cubiertas"). Acotar no valida; quien llama tiene que
+        confirmarlo con la persona.
+
+        Nunca lanza: sin token o con Mapbox caído devuelve [].
+        """
+        query = (query or '').strip()
+        if not query:
+            return []
+        token = self._visar_mapbox_token()
+        if not token:
+            return []
+        params = {'access_token': token, 'limit': limit, 'country': country}
+        if types:
+            params['types'] = types
+        if language:
+            params['language'] = language
+        if bbox:
+            params['bbox'] = bbox
+        try:
+            resp = requests.get(
+                _GEOCODE_URL % requests.utils.quote(query, safe=''),
+                params=params,
+                timeout=self._visar_travel_timeout())
+            resp.raise_for_status()
+            return resp.json().get('features') or []
+        except Exception as err:  # noqa: BLE001 - red/API: degradar
+            _logger.warning("Mapbox geocode falló para %r: %s", query, err)
+            return []
+
+    @api.model
     def _visar_mapbox_geocode(self, query, country='mx'):
         """(lat, lng, 'exact'|'approx') para un texto, o None.
 

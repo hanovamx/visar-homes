@@ -50,6 +50,7 @@
                        t-att-value="values.get('state') or 'Nuevo León'"/>
             </div>
         </div>
+        <div id="visar_cp_hint" class="form-text mt-2 text-muted"></div>
         <div id="visar_cp_feedback" class="form-text mt-2"></div>
         <script type="text/javascript">
             (function () {
@@ -87,6 +88,47 @@
                 zip.addEventListener('change', lookup);
                 zip.addEventListener('blur', lookup);
                 if (zip.value) { lookup(); }
+
+                // CP sugerido desde calle + número + colonia. Solo escribe en el
+                // campo si está vacío o si lo que hay lo puso esta misma
+                // sugerencia: lo que tecleó la persona nunca se pisa.
+                var street = document.getElementById('visar_addr_street');
+                var extNum = document.getElementById('visar_addr_ext_num');
+                var colonia = document.getElementById('visar_addr_neighborhood');
+                var hint = document.getElementById('visar_cp_hint');
+                var sugerido = '';
+                var consultado = '';
+                function suggest() {
+                    if (!street || !extNum || !colonia) { return; }
+                    var s = street.value.trim(), n = extNum.value.trim(),
+                        c = colonia.value.trim();
+                    if (!s || !n || !c) { return; }
+                    if (zip.value &amp;&amp; zip.value !== sugerido) { return; }
+                    var clave = s + '|' + n + '|' + c;
+                    if (clave === consultado) { return; }
+                    consultado = clave;
+                    fetch('/appointment/visar/address-cp?street=' + encodeURIComponent(s)
+                          + '&amp;ext_num=' + encodeURIComponent(n)
+                          + '&amp;neighborhood=' + encodeURIComponent(c), {
+                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    }).then(function (r) { return r.json(); }).then(function (data) {
+                        if (!data || !data.found) { return; }
+                        if (zip.value &amp;&amp; zip.value !== sugerido) { return; }
+                        zip.value = data.zip;
+                        sugerido = data.zip;
+                        if (hint) {
+                            hint.textContent = 'Sugerimos el código postal ' + data.zip
+                                + ' por tu dirección. Si no es el tuyo, corrígelo.';
+                        }
+                        lookup();
+                    }).catch(function () {});
+                }
+                [street, extNum, colonia].forEach(function (el) {
+                    if (el) { el.addEventListener('blur', suggest); }
+                });
+                zip.addEventListener('input', function () {
+                    if (hint &amp;&amp; zip.value !== sugerido) { hint.textContent = ''; }
+                });
             })();
         </script>
     </template>

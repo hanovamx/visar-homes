@@ -2248,16 +2248,23 @@ class AppointmentType(models.Model):
             }
 
         if step_key == VISAR_STEP_ADDRESS:
+            # Con la resolución dirección → CP encendida, el canal puede dejar
+            # de PEDIR el código postal: lo propone él y el cliente lo confirma.
+            # El CP sigue siendo obligatorio en la respuesta que llega a
+            # `_visar_wizard_answer_address`; lo que cambia es quién lo aporta.
+            cp_lookup = self.env['visar.zone.cp'].sudo()._visar_address_cp_enabled()
             return {
                 'step': step_key, 'kind': 'text', 'answer_key': None,
                 'title': _('¿A qué dirección vamos?'),
                 'options': [],
+                'cp_lookup': cp_lookup,
                 'fields': [
                     {'name': 'street', 'label': _('Calle'), 'required': True},
                     {'name': 'ext_num', 'label': _('Número exterior'), 'required': True},
                     {'name': 'int_num', 'label': _('Número interior'), 'required': False},
                     {'name': 'neighborhood', 'label': _('Colonia'), 'required': True},
-                    {'name': 'zip', 'label': _('Código postal'), 'required': True},
+                    {'name': 'zip', 'label': _('Código postal'),
+                     'required': not cp_lookup},
                 ],
             }
 

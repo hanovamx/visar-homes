@@ -869,6 +869,26 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             payload = {'found': False}
         return request.make_json_response(payload)
 
+    # Consulta AJAX: CP sugerido para calle + número + colonia. Es una SUGERENCIA
+    # que el formulario escribe en un campo que sigue siendo editable: el CP de
+    # Mapbox coincide ~la mitad de las veces (medido el 7-oct-2026). Apagada
+    # (`visar.address_cp.enabled`) contesta `found: false` sin salir a la red.
+    @http.route(['/appointment/visar/address-cp'],
+                type='http', auth='public', website=True, methods=['GET'], sitemap=False)
+    def visar_address_cp(self, street=None, ext_num=None, neighborhood=None, **kwargs):
+        # Topes de longitud: la ruta es pública y cada consulta buena le cuesta
+        # una llamada a Mapbox.
+        recorte = lambda valor, tope: (valor or '').strip()[:tope]  # noqa: E731
+        result = request.env['visar.zone.cp'].sudo()._visar_address_to_cp(
+            recorte(street, 120), recorte(ext_num, 12), recorte(neighborhood, 120))
+        if result.get('status') != 'found':
+            return request.make_json_response({'found': False})
+        return request.make_json_response({
+            'found': True,
+            'zip': result['zip'],
+            'municipality': result.get('municipality') or '',
+        })
+
     # Muestra (GET) y procesa (POST) el paso de dirección de entrega.
     @http.route(['/appointment/visar/booking/wizard/direccion'],
                 type='http', auth='public', website=True, methods=['GET', 'POST'], sitemap=False)
