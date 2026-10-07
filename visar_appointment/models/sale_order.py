@@ -89,9 +89,7 @@ class SaleOrder(models.Model):
         Partner = self.env['res.partner'].sudo()
         commercial = self.partner_id.commercial_partner_id
         country = self.env.ref('base.mx', raise_if_not_found=False)
-        state = self.env['res.country.state'].sudo().search([
-            ('country_id', '=', country.id), ('code', '=', 'NL'),
-        ], limit=1) if country else self.env['res.country.state'].sudo()
+        state = self._visar_service_state()
 
         street = (address.get('street') or '').strip()
         ext_num = (address.get('ext_num') or '').strip()
@@ -131,6 +129,24 @@ class SaleOrder(models.Model):
 
     # Campos que el checkout exige en la dirección de FACTURACIÓN
     # (`portal._get_mandatory_address_fields`) y que el wizard ya capturó.
+    @api.model
+    def _visar_service_state(self):
+        """Nuevo León: el estado de toda dirección de servicio de Visar.
+
+        Por xmlid. Antes se buscaba por código 'NL' y en Odoo el código es 'NLE':
+        no se encontraba nunca y las direcciones se guardaban SIN estado. México
+        lo exige para facturar, así que el checkout daba la dirección por
+        incompleta y la volvía a pedir (7-oct-2026).
+        """
+        return self.env.ref('base.state_mx_nl', raise_if_not_found=False) \
+            or self.env['res.country.state']
+
+    # La dirección de facturación se SUPUSO igual a la de servicio y el cliente
+    # todavía no la ha visto. El checkout le enseña el formulario una vez, ya
+    # lleno, para que la confirme o la cambie. Ver `controllers/checkout.py`.
+    visar_billing_assumed = fields.Boolean(
+        "Facturación supuesta igual al servicio", copy=False)
+
     _VISAR_BILLING_ADDRESS_FIELDS = (
         'street', 'street2', 'zip', 'city', 'state_id', 'country_id')
 
@@ -163,6 +179,7 @@ class SaleOrder(models.Model):
         if not vals.get('street'):
             return False
         cliente.sudo().write(vals)
+        self.sudo().visar_billing_assumed = True
         return True
 
     def _visar_fill_from_booking(self, booking, calendar_booking, zone, plan=None,

@@ -155,4 +155,28 @@
         </xpath>
     </template>
 
+    <!-- ==================================================================
+         "Finalizar compra": el formulario de dirección dice QUÉ dirección pide.
+
+         Para una cita de Visar es la de facturación; la de servicio ya está en
+         el pedido. Ver `controllers/checkout.py`.
+         ================================================================== -->
+    <template id="visar_checkout_address_facturacion"
+              inherit_id="website_sale.address">
+        <xpath expr="//t[@t-if='not is_anonymous_cart']" position="attributes">
+            <attribute name="t-if">not is_anonymous_cart and not visar_service_address</attribute>
+        </xpath>
+        <xpath expr="//div[@id='errors']" position="before">
+            <div t-if="visar_service_address" class="visar_billing_notice mb-3">
+                <h4 class="mb-2">Dirección de facturación</h4>
+                <p class="text-muted mb-0">
+                    Estos datos son para tu factura, no para el servicio. El servicio
+                    se realizará en <strong t-out="visar_service_address"/>.
+                    Tomamos esa misma dirección para facturar; si tu dirección de
+                    facturación es otra, cámbiala aquí.
+                </p>
+            </div>
+        </xpath>
+    </template>
+
 </odoo>
