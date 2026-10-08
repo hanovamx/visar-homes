@@ -249,6 +249,8 @@
                 <field name="name"/>
                 <field name="provider"/>
                 <field name="model"/>
+                <field name="effort"/>
+                <field name="thinking_headroom" optional="hide"/>
                 <field name="max_tokens"/>
                 <field name="max_tool_iterations"/>
                 <field name="active" column_invisible="1"/>
@@ -276,12 +278,14 @@
                         <h1><field name="name"/></h1>
                     </div>
                     <group>
-                        <group string="Proveedor">
+                        <group string="Proveedor y modelo">
                             <field name="provider"/>
                             <field name="model"/>
+                            <field name="effort"/>
                         </group>
-                        <group string="Limites (se aplican en caliente)">
+                        <group string="Limites">
                             <field name="max_tokens"/>
+                            <field name="thinking_headroom"/>
                             <field name="max_tool_iterations"/>
                         </group>
                     </group>
@@ -292,10 +296,10 @@
                     <div class="alert alert-info" role="alert" colspan="2">
                         <strong>Credenciales:</strong> la API key / token del LLM NO se
                         guarda aqui, vive en el <code>.env</code> del runtime (fuera de la
-                        BD y de los backups). Cambiar el <strong>modelo</strong> o el
-                        <strong>proveedor</strong> requiere <strong>reiniciar</strong> el
-                        servicio; <code>max_tokens</code> e iteraciones surten efecto en el
-                        siguiente mensaje.
+                        BD y de los backups). Cambiar el <strong>proveedor</strong>
+                        requiere <strong>reiniciar</strong> el servicio. Todo lo demas
+                        (modelo, razonamiento, limites) se aplica solo en un maximo de 15
+                        minutos, o al momento con <strong>Aplicar ahora</strong>.
                     </div>
                 </sheet>
             </form>

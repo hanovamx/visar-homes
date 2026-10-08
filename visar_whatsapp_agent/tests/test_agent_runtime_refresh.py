@@ -94,3 +94,32 @@ class TestAgentRuntimeRefresh(TransactionCase):
         config = self.env['visar.llm.config'].sudo().create({'name': "Prueba"})
         with patch(_POST, return_value=_Respuesta()):
             self.assertTrue(config.action_visar_aplicar_ahora())
+
+    def test_el_runtime_recibe_modelo_razonamiento_y_margen(self):
+        """Lo que se elige en la pantalla es lo que viaja: el runtime no tiene
+        otra fuente para el modelo que esta."""
+        Config = self.env['visar.llm.config'].sudo()
+        Config.search([]).unlink()
+        config = Config.create({'name': "Prueba"})
+        self.assertEqual(Config._agent_active_payload(), {
+            'provider': 'anthropic_api_key',
+            'model': 'claude-haiku-5-5',
+            'effort': 'medium',
+            'thinking_headroom': 2048,
+            'max_tokens': 1024,
+            'max_tool_iterations': 4,
+        })
+        # Vacio es una decision ("no indicarle nada"), y tiene que llegar como
+        # tal: una clave ausente dejaria al runtime con el valor de su .env.
+        config.write({'model': 'claude-haiku-4-5', 'effort': False,
+                      'thinking_headroom': 0})
+        payload = Config._agent_active_payload()
+        self.assertIs(payload['effort'], False)
+        self.assertEqual(payload['thinking_headroom'], 0)
+        self.assertEqual(payload['model'], 'claude-haiku-4-5')
+
+    def test_el_margen_para_razonar_no_puede_ser_negativo(self):
+        from odoo.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self.env['visar.llm.config'].sudo().create({
+                'name': "Prueba", 'thinking_headroom': -1})
