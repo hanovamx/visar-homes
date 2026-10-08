@@ -21,7 +21,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.32.0',
+    'version': '19.0.2.33.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
@@ -40,6 +40,9 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
         # bundle del frontend porque el wizard es una página pública del website.
         'web.assets_frontend': [
             'visar_appointment/static/src/js/wizard_poliza.js',
+            # El CP sugerido desde la dirección. En el bundle y no en la plantilla
+            # porque la plantilla tiene copia por website (ver el archivo).
+            'visar_appointment/static/src/js/direccion_cp.js',
         ],
     },
     'data': [
