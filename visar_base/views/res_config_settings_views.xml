@@ -62,6 +62,34 @@
                             ya está cobrado y no existe un flujo de reembolso.
                         </div>
                     </block>
+                    <!-- Un solo interruptor para el agente y el formulario
+                         web. Antes era un parámetro del sistema más una variable
+                         del servidor: encenderlo pedía un desarrollador. -->
+                    <block title="Dirección → código postal" name="visar_address_cp">
+                        <setting string="Sugerir el código postal desde la dirección"
+                                 help="Con calle, número y colonia se propone el código postal en vez de exigirlo. El agente de WhatsApp enseña la dirección completa y espera la confirmación del cliente; el formulario web lo llena en un campo que sigue siendo editable.">
+                            <field name="visar_address_cp_enabled"/>
+                        </setting>
+                        <setting string="Confianza mínima"
+                                 help="Qué tan parecido tiene que ser lo que encontró el mapa a lo que escribió la persona para proponerlo. Por debajo, se pide el código postal."
+                                 invisible="not visar_address_cp_enabled">
+                            <field name="visar_address_cp_min_relevance"/>
+                            <span class="text-muted">de 0 a 1 (recomendado 0.5)</span>
+                        </setting>
+                        <setting string="Área de búsqueda"
+                                 help="Rectángulo del mapa donde se buscan las direcciones: oeste, sur, este, norte. Solo hay que tocarlo si Visar abre una zona fuera de él."
+                                 invisible="not visar_address_cp_enabled">
+                            <field name="visar_address_cp_bbox"/>
+                        </setting>
+                        <div class="text-muted mt-2 ms-1">
+                            Es una <strong>sugerencia</strong>, no un dato: medido contra
+                            600 direcciones reales, el código postal propuesto coincide
+                            cerca de la mitad de las veces. Por eso nunca se usa sin que
+                            la persona lo confirme. En las preguntas de precio por
+                            WhatsApp el cambio tarda hasta 15 minutos en aplicarse; en el
+                            agendado y en el sitio web es inmediato.
+                        </div>
+                    </block>
                 </app>
             </xpath>
         </field>

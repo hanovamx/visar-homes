@@ -216,6 +216,7 @@ class VisarZoneCp(models.Model):
 
     @api.model
     def _visar_address_cp_enabled(self):
+        # Se enciende en Ajustes → Visar → "Dirección → código postal".
         raw = self.env['ir.config_parameter'].sudo().get_param(
             ADDRESS_CP_ENABLED_PARAM, '0')
         return str(raw).strip().lower() in ('1', 'true', 'yes', 'si', 'sí')

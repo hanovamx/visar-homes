@@ -294,6 +294,10 @@ class VisarAgentTools(models.AbstractModel):
             'prompt': Prompt._agent_active_body(),
             'route_prompts': Prompt._agent_route_memories(),
             'llm': self.env['visar.llm.config']._agent_active_payload(),
+            # ¿Puede el modelo proponer el CP desde una dirección? Lo decide el
+            # ajuste de Odoo (Ajustes → Visar); el runtime ofrece la tool
+            # `resolve_address` solo con esto en True. Ausente = no.
+            'address_cp': self.env['visar.zone.cp'].sudo()._visar_address_cp_enabled(),
             # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
             # ausente es "mensaje libre", lo de siempre. Ver
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y

@@ -16,6 +16,14 @@ recontacto— vive en su módulo.
 from odoo import api, fields, models
 from odoo.exceptions import ValidationError
 
+from .visar_zone_cp import (
+    ADDRESS_CP_BBOX_DEFAULT,
+    ADDRESS_CP_BBOX_PARAM,
+    ADDRESS_CP_ENABLED_PARAM,
+    ADDRESS_CP_MIN_RELEVANCE_DEFAULT,
+    ADDRESS_CP_MIN_RELEVANCE_PARAM,
+)
+
 # Cotas de cordura. No son gustos: fuera de ellas el sistema se comporta mal de
 # formas que el usuario no puede ver desde esta pantalla.
 MIN_HOLD_MINUTES = 1
@@ -123,6 +131,60 @@ class ResConfigSettings(models.TransientModel):
         help="Cuántas veces puede el cliente mover la MISMA cita por su cuenta. "
              "Agotados, se le pasa a un asesor. Cancelar nunca está disponible: "
              "el servicio ya está cobrado.")
+
+    # ------------------------------------------------------------------
+    # Dirección → código postal
+    # ------------------------------------------------------------------
+
+    # UN solo interruptor para los tres sitios donde aparece (cuestionario del
+    # agente, preguntas de precio del agente y formulario web). Nació como un
+    # parámetro del sistema más una variable en el .env del runtime, y eso era
+    # tanto como decir que encenderlo exigía un desarrollador.
+    visar_address_cp_enabled = fields.Boolean(
+        string="Sugerir el código postal desde la dirección",
+        config_parameter=ADDRESS_CP_ENABLED_PARAM,
+        help="Con calle, número y colonia, el sistema propone el código postal "
+             "en vez de exigirlo: el agente de WhatsApp le enseña la dirección "
+             "completa al cliente y espera su confirmación, y el formulario web "
+             "lo llena en un campo que sigue siendo editable. Es una SUGERENCIA: "
+             "medido contra 600 direcciones reales coincide cerca de la mitad de "
+             "las veces, así que nunca se usa sin que la persona lo confirme.")
+    visar_address_cp_min_relevance = fields.Float(
+        string="Confianza mínima",
+        config_parameter=ADDRESS_CP_MIN_RELEVANCE_PARAM,
+        default=ADDRESS_CP_MIN_RELEVANCE_DEFAULT,
+        help="De 0 a 1. Por debajo de este parecido entre lo que se escribió y "
+             "lo que encontró el mapa, no se propone nada y se pide el código "
+             "postal. Más alto = menos sugerencias y menos equivocadas.")
+    visar_address_cp_bbox = fields.Char(
+        string="Área de búsqueda",
+        config_parameter=ADDRESS_CP_BBOX_PARAM,
+        default=ADDRESS_CP_BBOX_DEFAULT,
+        help="Rectángulo del mapa donde se buscan las direcciones: longitud "
+             "oeste, latitud sur, longitud este, latitud norte, separadas por "
+             "comas. El valor inicial envuelve todos los códigos postales con "
+             "cobertura. Solo hay que tocarlo si Visar abre una zona fuera de él.")
+
+    @api.constrains('visar_address_cp_min_relevance', 'visar_address_cp_bbox')
+    def _check_visar_address_cp(self):
+        for record in self:
+            confianza = record.visar_address_cp_min_relevance
+            if confianza is not None and not (0.0 <= confianza <= 1.0):
+                raise ValidationError(
+                    "La confianza mínima tiene que estar entre 0 y 1.")
+            caja = (record.visar_address_cp_bbox or '').strip()
+            if not caja:
+                continue
+            try:
+                oeste, sur, este, norte = [float(x) for x in caja.split(',')]
+            except ValueError:
+                raise ValidationError(
+                    "El área de búsqueda son cuatro números separados por comas: "
+                    "longitud oeste, latitud sur, longitud este, latitud norte.")
+            if not (-180 <= oeste < este <= 180 and -90 <= sur < norte <= 90):
+                raise ValidationError(
+                    "El área de búsqueda no es un rectángulo válido: el oeste "
+                    "tiene que ser menor que el este y el sur menor que el norte.")
 
     # ------------------------------------------------------------------
     # Validación

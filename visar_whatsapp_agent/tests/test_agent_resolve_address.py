@@ -61,3 +61,25 @@ class TestAgentResolveAddress(TransactionCase):
             campo_cp = [f for f in opciones['fields'] if f['name'] == 'zip'][0]
             self.assertEqual(opciones['cp_lookup'], encendido == '1')
             self.assertEqual(campo_cp['required'], encendido != '1')
+
+    def test_el_ajuste_de_la_pantalla_es_el_unico_interruptor(self):
+        """Encender en Ajustes → Visar llega al paso, al RPC y al runtime."""
+        Ajustes = self.env['res.config.settings']
+        for valor in (True, False):
+            Ajustes.create({'visar_address_cp_enabled': valor}).execute()
+            self.assertEqual(
+                self.env['visar.zone.cp'].sudo()._visar_address_cp_enabled(), valor)
+            self.assertEqual(self.Tools.agent_runtime_config()['address_cp'], valor)
+            opciones = self.env['appointment.type']._visar_wizard_step_options(
+                {}, 'address')
+            self.assertEqual(opciones['cp_lookup'], valor)
+
+    def test_los_ajustes_rechazan_valores_que_romperian_la_busqueda(self):
+        from odoo.exceptions import ValidationError
+        Ajustes = self.env['res.config.settings']
+        with self.assertRaises(ValidationError):
+            Ajustes.create({'visar_address_cp_min_relevance': 1.5})
+        with self.assertRaises(ValidationError):
+            Ajustes.create({'visar_address_cp_bbox': 'Monterrey'})
+        with self.assertRaises(ValidationError):
+            Ajustes.create({'visar_address_cp_bbox': '-99,23,-100,27'})
