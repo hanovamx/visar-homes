@@ -167,11 +167,6 @@ class AppointmentType(models.Model):
         'preventivo': 'Preventivo',
         'correctivo': 'Correctivo (plaga activa)',
     }
-    _VISAR_SERVICIO_PLAGA_LABELS = {
-        'rastreros': 'Rastreros',
-        'voladores': 'Voladores',
-        'roedores': 'Roedores',
-    }
     _VISAR_MOTIVO_VALORACION_LABELS = {
         'termitas': 'Termitas',
         'chinches': 'Chinches de cama',
@@ -298,8 +293,11 @@ class AppointmentType(models.Model):
             servicio = [s for s in servicio.split(',') if s]
         plaga_bits = []
         if servicio:
-            plaga_bits.append(', '.join(
-                self._VISAR_SERVICIO_PLAGA_LABELS.get(s, s) for s in servicio))
+            # Con las archivadas: la reserva pudo empezarse antes de archivarla.
+            nombres = {
+                plaga.code: plaga.name for plaga in
+                self.env['visar.plaga'].sudo().with_context(active_test=False).search([])}
+            plaga_bits.append(', '.join(nombres.get(s, s) for s in servicio))
         upsells = [
             self._VISAR_UPSELL_LABELS[key]
             for key in ('upsell_cebaderos', 'upsell_tapon', 'upsell_guardapolvo')
@@ -571,15 +569,18 @@ class AppointmentType(models.Model):
         return values
 
     @api.model
-    def _visar_selections_has_roedores(self, selections):
-        """True si el cliente pidió control de roedores en el wizard.
+    def _visar_selections_plagas(self, selections):
+        """Códigos de las plagas (`visar.plaga`) que el cliente eligió en el wizard.
 
         Vive aquí -y no como literal repetido- porque lo consultan el controlador
-        web y el agente de WhatsApp. Ojo con el `== 'si'`: la respuesta guardada
-        es 'si'/'no', y ambas son *truthy*; comparar por verdad booleana añadiría
-        roedores a toda reserva donde el cliente dijo que NO.
+        web, el agente de WhatsApp y el pedido. Deciden qué add-ons atados a una
+        plaga se ofrecen o se añaden; «Protección general» ya viene desglosada
+        en todas las del catálogo.
         """
-        return (selections or {}).get('roedores') == 'si'
+        plagas = (selections or {}).get('servicio_plaga') or []
+        if isinstance(plagas, str):
+            plagas = [p for p in plagas.split(',') if p]
+        return list(plagas)
 
     # ------------------------------------------------------------------
     # Apartados temporales (visar.slot.hold)
@@ -959,19 +960,16 @@ class AppointmentType(models.Model):
         return offers
 
     @api.model
-    def _visar_offered_addons(self, items, zone, include_roedores=False):
+    def _visar_offered_addons(self, items, zone, plagas=None):
         """Add-ons OPCIONALES (Obligatorio=No) ofrecibles como extras/upsell.
 
-        Junta las líneas opcionales de los productos de la reserva (+ producto de
-        roedores si aplica), suma cantidades por producto y resuelve variante/precio
-        por zona. Omite los de precio 0 (Odoo bloquea líneas a 0)."""
+        Junta las líneas opcionales de los productos de la reserva que aplican a
+        las `plagas` elegidas (códigos; una línea sin plagas aplica siempre),
+        suma cantidades por producto y resuelve variante/precio por zona. Omite
+        los de precio 0 (Odoo bloquea líneas a 0)."""
         ProductTemplate = self.env['product.template']
         templates = ProductTemplate.browse(
             [i['product_tmpl_id'] for i in items if i.get('product_tmpl_id')]).exists()
-        if include_roedores:
-            roedores_tmpl = ProductTemplate._visar_get_roedores_template()
-            if roedores_tmpl:
-                templates |= roedores_tmpl
 
         # Un mismo add-on puede estar listado como opcional en varios productos de la
         # reserva. Para una oferta opt-in (un solo checkbox) se toma el MÁXIMO de las
@@ -979,7 +977,8 @@ class AppointmentType(models.Model):
         qty_by_tmpl = {}
         for tmpl in templates:
             for line in tmpl.visar_optional_line_ids.filtered(
-                    lambda l: not l.is_mandatory and l.optional_product_id):
+                    lambda l: not l.is_mandatory and l.optional_product_id
+                    )._visar_aplica_a_plagas(plagas):
                 qty_by_tmpl[line.optional_product_id] = max(
                     qty_by_tmpl.get(line.optional_product_id, 0), line.quantity)
 
@@ -1092,7 +1091,7 @@ class AppointmentType(models.Model):
 
     # Construye las líneas de venta con variante por zona, descuento combo e incluidos al 100%.
     @api.model
-    def _visar_build_sale_lines(self, items, zone, include_roedores=False, extra_addons=None):
+    def _visar_build_sale_lines(self, items, zone, plagas=None, extra_addons=None):
         if any(item.get('is_valuation') for item in items):
             valuation_tmpl = self.env['product.template']._visar_get_valuation_template()
             variant = valuation_tmpl.product_variant_id if valuation_tmpl else False
@@ -1151,21 +1150,6 @@ class AppointmentType(models.Model):
             })
 
         ProductTemplate = self.env['product.template']
-        roedores_tmpl = ProductTemplate._visar_get_roedores_template() if include_roedores \
-            else ProductTemplate
-        if roedores_tmpl and roedores_tmpl.product_variant_id:
-            roedores_variant = ProductTemplate._visar_variant_for_zone(
-                roedores_tmpl.product_variant_id, zone)
-            # Producto disparador a $0: no genera línea; solo sus add-ons obligatorios.
-            if self._visar_list_unit_price(roedores_variant, zone) > 0:
-                lines.append({
-                    'product_id': roedores_variant.id,
-                    'discount': 0.0,
-                    'dimension_id': False,
-                    'tier_name': roedores_tmpl.name,
-                    'is_roedores': True,
-                })
-
         addon_qty = {}
         seen_addon_tmpls = set()
         for item in items:
@@ -1180,10 +1164,8 @@ class AppointmentType(models.Model):
             tmpl = ProductTemplate.browse(tmpl_id).exists()
             if not tmpl:
                 continue
-            for product_id, qty in tmpl._visar_get_mandatory_addon_map(zone).items():
-                addon_qty[product_id] = addon_qty.get(product_id, 0) + qty
-        if roedores_tmpl:
-            for product_id, qty in roedores_tmpl._visar_get_mandatory_addon_map(zone).items():
+            for product_id, qty in tmpl._visar_get_mandatory_addon_map(
+                    zone, plagas=plagas).items():
                 addon_qty[product_id] = addon_qty.get(product_id, 0) + qty
 
         Product = self.env['product.product']
@@ -1213,7 +1195,7 @@ class AppointmentType(models.Model):
 
     # Calcula los precios estimados de la reserva respetando pricelist de zona y descuentos combo.
     @api.model
-    def _visar_quote_booking(self, items, zone, quantity=1, include_roedores=False,
+    def _visar_quote_booking(self, items, zone, quantity=1, plagas=None,
                              extra_addons=None, plan=None):
         """Cotización de la reserva. Con `plan` cotiza como póliza.
 
@@ -1222,7 +1204,7 @@ class AppointmentType(models.Model):
         resultado para que el paso pueda enseñar "hoy pagas X, luego Y al mes".
         """
         sale_lines = self._visar_build_sale_lines(
-            items, zone, include_roedores=include_roedores, extra_addons=extra_addons)
+            items, zone, plagas=plagas, extra_addons=extra_addons)
         if not sale_lines:
             return False
 

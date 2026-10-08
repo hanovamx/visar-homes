@@ -11,7 +11,6 @@
                     <group>
                         <field name="visar_is_service"/>
                         <field name="visar_is_valuation"/>
-                        <field name="visar_is_roedores"/>
                         <field name="visar_dimension_id"
                                invisible="not visar_is_service"/>
                     </group>
@@ -48,6 +47,9 @@
                         <field name="optional_product_id" readonly="1" force_save="1"/>
                         <field name="is_mandatory"/>
                         <field name="quantity"/>
+                        <field name="plaga_ids" widget="many2many_tags"
+                               options="{'no_create': True}"
+                               placeholder="Todas"/>
                     </list>
                 </field>
             </field>

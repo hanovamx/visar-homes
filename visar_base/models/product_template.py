@@ -33,10 +33,6 @@ class ProductTemplate(models.Model):
     visar_is_valuation = fields.Boolean(
         "Producto de valoración técnica",
         help="Producto usado en el flujo de valoración técnica (solo zona).")
-    visar_is_roedores = fields.Boolean(
-        "Producto control de roedores",
-        help="Producto que se agrega cuando el cliente declara problema de roedores. "
-             "Sus add-ons obligatorios (estaciones antirroedores) se inyectan automáticamente.")
     visar_dimension_id = fields.Many2one(
         'visar.service.dimension', string="Dimensión Visar",
         help="Dimensión del wizard asociada a este producto (configuración alternativa).")
@@ -138,11 +134,15 @@ class ProductTemplate(models.Model):
                     'quantity': 1,
                 })
 
-    def _visar_get_mandatory_addon_map(self, zone=None):
-        """Retorna {product_id: qty} para add-ons obligatorios de este servicio."""
+    def _visar_get_mandatory_addon_map(self, zone=None, plagas=None):
+        """Retorna {product_id: qty} para add-ons obligatorios de este servicio.
+
+        `plagas` son los códigos que el cliente eligió al agendar: un add-on
+        atado a plagas solo entra si eligió alguna de ellas."""
         self.ensure_one()
         addon_qty = {}
-        for line in self.visar_optional_line_ids.filtered('is_mandatory'):
+        for line in self.visar_optional_line_ids.filtered(
+                'is_mandatory')._visar_aplica_a_plagas(plagas):
             variant = line.optional_product_id.product_variant_id
             if not variant:
                 continue
@@ -220,19 +220,6 @@ class ProductTemplate(models.Model):
                 return tmpl
         return self.search([
             ('visar_is_valuation', '=', True),
-            ('active', '=', True),
-        ], limit=1)
-
-    @api.model
-    def _visar_get_roedores_template(self):
-        param = self.env['ir.config_parameter'].sudo().get_param(
-            'visar.roedores_product_tmpl_id')
-        if param and param.isdigit():
-            tmpl = self.browse(int(param)).exists()
-            if tmpl and tmpl.visar_is_roedores:
-                return tmpl
-        return self.search([
-            ('visar_is_roedores', '=', True),
             ('active', '=', True),
         ], limit=1)
 

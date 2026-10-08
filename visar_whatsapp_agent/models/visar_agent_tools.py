@@ -180,6 +180,11 @@ class VisarAgentTools(models.AbstractModel):
             'zones': zones_payload,
             'combos': combos_payload,
             'polizas': self._agent_poliza_plans(),
+            'plagas': [
+                {'code': plaga.code, 'name': plaga.name,
+                 'description': plaga.description or ''}
+                for plaga in self.env['visar.plaga']._visar_ofrecidas()
+            ],
             'notes': notes,
         }
 
@@ -574,7 +579,11 @@ class VisarAgentTools(models.AbstractModel):
 
         `payload` = {"service_code": str, "cp": str, "m2": float}
                     o {"cp": str, "items": [{"service_code": str, "m2": float}, ...],
-                       "include_roedores": bool, "plan_id": int}
+                       "plagas": [str], "plan_id": int}
+
+        `plagas` son los `code` de PLAGAS en el catalogo que el cliente quiere
+        tratar: deciden que add-ons obligatorios atados a una plaga entran en
+        el total. Un codigo que no existe se ignora, no rompe la cotizacion.
 
         Con `plan_id` (de los `polizas` del catalogo) cotiza como POLIZA en vez
         de contado: `total` pasa a ser lo recurrente por periodo y `poliza`
@@ -627,7 +636,12 @@ class VisarAgentTools(models.AbstractModel):
         if error:
             return {**base, **error}
 
-        include_roedores = bool(payload.get('include_roedores'))
+        pedidas = payload.get('plagas') or []
+        if isinstance(pedidas, str):
+            pedidas = [pedidas]
+        plagas = [
+            code for code in self.env['visar.plaga']._visar_ofrecidas().mapped('code')
+            if code in pedidas]
 
         # Con `plan` el motor cotiza contra la tarifa (zona x plan): el mismo
         # basket, la misma regla de combo, otro precio de lista. Es un
@@ -640,7 +654,7 @@ class VisarAgentTools(models.AbstractModel):
             return {**base, **plan_error}
 
         quote = self.env['appointment.type']._visar_quote_booking(
-            items, zone, include_roedores=include_roedores, plan=plan or None)
+            items, zone, plagas=plagas, plan=plan or None)
 
         if not quote:
             return {**base, 'message': "No se pudo calcular el precio con esos datos."}

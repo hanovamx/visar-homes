@@ -21,6 +21,12 @@ class VisarProductOptionalLine(models.Model):
     quantity = fields.Integer(
         "Cantidad", default=1, required=True,
         help="Unidades del add-on (por defecto si el cliente acepta una sugerencia opcional).")
+    plaga_ids = fields.Many2many(
+        'visar.plaga', 'visar_product_optional_line_plaga_rel',
+        'line_id', 'plaga_id', string="Plagas",
+        help="Vacío: el add-on aplica sea cual sea la plaga. Con plagas: solo "
+             "aplica cuando el cliente eligió alguna de ellas al agendar "
+             "(«Protección general» cuenta como todas).")
 
     _sql_constraints = [
         (
@@ -41,3 +47,15 @@ class VisarProductOptionalLine(models.Model):
                 raise ValidationError(
                     "La cantidad del add-on '%s' debe ser al menos 1."
                     % (line.optional_product_id.display_name or ''))
+
+    def _visar_aplica_a_plagas(self, plagas=None):
+        """Las líneas que aplican a una reserva con esas plagas (códigos).
+
+        Una línea sin plagas aplica siempre. Una con plagas, solo si el cliente
+        eligió alguna; sin plagas elegidas —un pedido capturado en el backoffice,
+        un servicio que no pregunta por plagas— no aplica: no hay de dónde saber
+        que hacía falta.
+        """
+        elegidas = set(plagas or ())
+        return self.filtered(
+            lambda l: not l.plaga_ids or elegidas & set(l.plaga_ids.mapped('code')))

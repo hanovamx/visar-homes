@@ -19,6 +19,12 @@
               action="visar_service_group_action"
               sequence="81"/>
 
+    <menuitem id="menu_visar_plaga"
+              name="Plagas"
+              parent="appointment.appointment_menu_config"
+              action="visar_plaga_action"
+              sequence="81"/>
+
     <menuitem id="menu_visar_service_tier"
               name="Tabulador de servicios"
               parent="appointment.appointment_menu_config"

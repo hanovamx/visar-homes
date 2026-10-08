@@ -288,28 +288,13 @@
                                   method="post" class="mt-3">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                                 <fieldset class="mb-4">
-                                    <div class="form-check">
+                                    <!-- Las plagas son el catálogo `visar.plaga` (Citas → Configuración → Plagas). -->
+                                    <div class="form-check" t-foreach="plagas" t-as="plaga">
                                         <input class="form-check-input" type="checkbox" name="servicio_plaga"
-                                               id="plaga_rastreros" value="rastreros"
-                                               t-att-checked="'rastreros' in sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="plaga_rastreros">
-                                            Rastreros <small class="text-muted d-block">Cucarachas, alacranes, hormigas, arañas</small>
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
-                                               id="plaga_voladores" value="voladores"
-                                               t-att-checked="'voladores' in sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="plaga_voladores">
-                                            Voladores <small class="text-muted d-block">Moscas, mosquitos o zancudos</small>
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="servicio_plaga"
-                                               id="plaga_roedores" value="roedores"
-                                               t-att-checked="'roedores' in sel and 'checked' or None"/>
-                                        <label class="form-check-label" for="plaga_roedores">
-                                            Roedores <small class="text-muted d-block">Ratas y ratones</small>
+                                               t-attf-id="plaga_#{plaga.code}" t-att-value="plaga.code"
+                                               t-att-checked="plaga.code in sel and 'checked' or None"/>
+                                        <label class="form-check-label" t-attf-for="plaga_#{plaga.code}">
+                                            <t t-out="plaga.name"/> <small t-if="plaga.description" class="text-muted d-block" t-out="plaga.description"/>
                                         </label>
                                     </div>
 
@@ -318,7 +303,7 @@
                                         <input class="form-check-input" type="checkbox" name="servicio_plaga"
                                                id="plaga_general" value="proteccion_general"/>
                                         <label class="form-check-label" for="plaga_general">
-                                            Protección general <small class="text-muted d-block">Las tres: rastreros, voladores y roedores</small>
+                                            Protección general <small class="text-muted d-block" t-out="proteccion_general_descripcion"/>
                                         </label>
                                     </div>
 

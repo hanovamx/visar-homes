@@ -88,8 +88,8 @@ _VISAR_CLEARS_TIERS = ('services', 'cobertura', 'group')
 # para la etiqueta del chat y se reemplaza por un subtítulo escrito aquí.
 _VISAR_TRAILING_PAREN = re.compile(r'\s*\([^()]*\)\s*$')
 
-# Categorías de plaga que SÍ se atienden con el tabulador (no cortan a valoración).
-VISAR_PLAGA_CATEGORIES = ('rastreros', 'voladores', 'roedores')
+# Las plagas que SÍ se atienden con el tabulador ya no están aquí: son el
+# catálogo `visar.plaga` (Citas → Configuración → Plagas).
 
 # Opciones que cortan a valoración, y con qué motivo. Solo en la rama correctiva:
 # en preventivo el cliente no está reportando una plaga, está contratando protección.
@@ -890,8 +890,8 @@ class AppointmentType(models.Model):
     # ------------------------------------------------------------------
 
     @api.model
-    def _visar_wizard_has_roedores(self, booking):
-        return self._visar_selections_has_roedores((booking or {}).get('selections'))
+    def _visar_wizard_plagas(self, booking):
+        return self._visar_selections_plagas((booking or {}).get('selections'))
 
     @api.model
     def _visar_wizard_extras_offers(self, booking):
@@ -909,7 +909,7 @@ class AppointmentType(models.Model):
         if not zone or not items:
             return []
         return self._visar_offered_addons(
-            items, zone, include_roedores=self._visar_wizard_has_roedores(booking))
+            items, zone, plagas=self._visar_wizard_plagas(booking))
 
     @api.model
     def _visar_wizard_extra_description(self, offer):
@@ -1096,7 +1096,7 @@ class AppointmentType(models.Model):
         if not plans:
             return None
         sale_lines = master._visar_build_sale_lines(
-            items, zone, include_roedores=self._visar_wizard_has_roedores(booking),
+            items, zone, plagas=self._visar_wizard_plagas(booking),
             extra_addons=booking.get('extras_accepted'))
         Product = self.env['product.product'].sudo()
         if not any(Product.browse(l['product_id']).recurring_invoice for l in sale_lines):
@@ -1111,16 +1111,16 @@ class AppointmentType(models.Model):
             return []
         zone, master, plans = context
         items = booking.get('items') or []
-        include_roedores = self._visar_wizard_has_roedores(booking)
+        plagas = self._visar_wizard_plagas(booking)
         extras = booking.get('extras_accepted')
 
         base = master._visar_quote_booking(
-            items, zone, include_roedores=include_roedores, extra_addons=extras)
+            items, zone, plagas=plagas, extra_addons=extras)
         contado = (base or {}).get('recurring_total', 0.0)
         offers = []
         for plan in plans:
             quote = master._visar_quote_booking(
-                items, zone, include_roedores=include_roedores,
+                items, zone, plagas=plagas,
                 extra_addons=extras, plan=plan)
             if not quote:
                 continue
@@ -1224,7 +1224,7 @@ class AppointmentType(models.Model):
                 int(selections.get('poliza_plan_id') or 0)).exists()
             quote = self._visar_quote_booking(
                 items, zone,
-                include_roedores=self._visar_wizard_has_roedores(booking),
+                plagas=self._visar_wizard_plagas(booking),
                 extra_addons=booking.get('extras_accepted'),
                 plan=plan or None)
             if quote:
@@ -1413,6 +1413,20 @@ class AppointmentType(models.Model):
         return self._visar_wizard_commit(booking, 'motivo', {'motivo': motivo}), None
 
     @api.model
+    def _visar_proteccion_general_descripcion(self, catalogo):
+        """«Las tres: rastreros, voladores y roedores», con las que haya."""
+        nombres = [(plaga.name or '').lower() for plaga in catalogo]
+        if not nombres:
+            return ''
+        if len(nombres) == 1:
+            return nombres[0].capitalize()
+        cuantas = {2: _('Las dos'), 3: _('Las tres')}.get(len(nombres), _('Todas'))
+        ultima = nombres[-1]
+        # "y" pasa a "e" ante i-/hi- ("voladores e insectos").
+        conj = 'e' if ultima.startswith(('i', 'hi')) else 'y'
+        return '%s: %s %s %s' % (cuantas, ', '.join(nombres[:-1]), conj, ultima)
+
+    @api.model
     def _visar_wizard_answer_plagas(self, booking, answer):
         selections = booking.get('selections') or {}
         motivo = selections.get('motivo')
@@ -1420,11 +1434,12 @@ class AppointmentType(models.Model):
         if isinstance(raw, str):
             raw = [raw]
         chosen = set(raw or [])
-        categories = [c for c in VISAR_PLAGA_CATEGORIES if c in chosen]
+        catalogo = self.env['visar.plaga']._visar_ofrecidas().mapped('code')
+        categories = [c for c in catalogo if c in chosen]
 
-        # Protección general (rama preventiva): activa las tres, sin corte.
+        # Protección general (rama preventiva): activa todas, sin corte.
         if 'proteccion_general' in chosen:
-            categories = list(VISAR_PLAGA_CATEGORIES)
+            categories = list(catalogo)
 
         # Cortes a valoración: SOLO en la rama correctiva. En preventivo el
         # cliente no está reportando una plaga, está contratando protección.
@@ -1836,12 +1851,20 @@ class AppointmentType(models.Model):
     def _visar_vocabulario_claves(self, paso):
         """Las claves validas de un paso, para validar y para ensenarlas.
 
-        `services` es el unico dinamico: sus claves son los `code` de los grupos
-        de servicio, que viven en la base. Los demas los fija el codigo.
+        `services` es dinamico: sus claves son los `code` de los grupos de
+        servicio, que viven en la base. `plagas` lo es a medias: a las que fija
+        el codigo se suman las del catalogo `visar.plaga`, para que una plaga
+        dada de alta desde Odoo tambien pueda tener sus palabras. Los demas los
+        fija el codigo.
         """
         if paso == VISAR_STEP_SERVICES:
             return [g.code for g in self._visar_wizard_groups() if g.code]
-        return list(_VISAR_VOCABULARIO_BASE.get(paso) or ())
+        claves = list(_VISAR_VOCABULARIO_BASE.get(paso) or ())
+        if paso == 'plagas':
+            claves += [code for code in
+                       self.env['visar.plaga']._visar_ofrecidas().mapped('code')
+                       if code not in claves]
+        return claves
 
     @api.model
     def _visar_vocabulario_lineas(self, texto):
@@ -2019,22 +2042,20 @@ class AppointmentType(models.Model):
             def palabras(clave):
                 return self._visar_vocabulario(vocab, 'plagas', clave)
 
+            # Las plagas son el catálogo `visar.plaga`: las mismas que se
+            # eligen en la columna «Plagas» de los add-ons de un producto.
+            catalogo = self.env['visar.plaga']._visar_ofrecidas()
             options = [
-                {'value': 'rastreros', 'label': _('Rastreros'),
-                 'description': _('Cucarachas, alacranes, hormigas, arañas'),
-                 'keywords': palabras('rastreros')},
-                {'value': 'voladores', 'label': _('Voladores'),
-                 'description': _('Moscas, mosquitos o zancudos'),
-                 'keywords': palabras('voladores')},
-                {'value': 'roedores', 'label': _('Roedores'),
-                 'description': _('Ratas y ratones'),
-                 'keywords': palabras('roedores')},
+                {'value': plaga.code, 'label': plaga.name,
+                 'description': plaga.description or '',
+                 'keywords': palabras(plaga.code)}
+                for plaga in catalogo
             ]
             if not correctivo:
                 options.append({
                     'value': 'proteccion_general',
                     'label': _('Protección general'),
-                    'description': _('Las tres: rastreros, voladores y roedores'),
+                    'description': self._visar_proteccion_general_descripcion(catalogo),
                     'keywords': palabras('proteccion_general'),
                 })
             else:

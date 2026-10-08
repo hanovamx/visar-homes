@@ -211,8 +211,7 @@ class SaleOrder(models.Model):
 
         sale_lines = master._visar_build_sale_lines(
             booking.get('items', []), zone,
-            include_roedores=master._visar_selections_has_roedores(
-                booking.get('selections')),
+            plagas=master._visar_selections_plagas(booking.get('selections')),
             extra_addons=booking.get('extras_accepted'))
         if not sale_lines:
             return 0

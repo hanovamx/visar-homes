@@ -67,8 +67,8 @@ class TestAhorroDePoliza(TransactionCase):
         with patch.object(type(self.Flow), '_visar_wizard_poliza_context',
                           return_value=(zone, master, planes)), \
              patch.object(type(self.Flow), '_visar_quote_booking', fake_quote), \
-             patch.object(type(self.Flow), '_visar_wizard_has_roedores',
-                          return_value=False):
+             patch.object(type(self.Flow), '_visar_wizard_plagas',
+                          return_value=[]):
             return {o['name']: o for o in self.Flow._visar_wizard_poliza_offers(booking)}
 
     def test_todos_los_planes_muestran_su_ahorro(self):

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="visar_plaga_view_list" model="ir.ui.view">
+        <field name="name">visar.plaga.list</field>
+        <field name="model">visar.plaga</field>
+        <field name="arch" type="xml">
+            <list string="Plagas" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="description"/>
+                <field name="code" optional="hide"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_plaga_view_search" model="ir.ui.view">
+        <field name="name">visar.plaga.search</field>
+        <field name="model">visar.plaga</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <filter name="archived" string="Archivadas" domain="[('active', '=', False)]"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_plaga_action" model="ir.actions.act_window">
+        <field name="name">Plagas</field>
+        <field name="res_model">visar.plaga</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Añade una plaga</p>
+            <p>
+                Son las opciones de la pregunta de plagas al agendar una
+                fumigación (en la web y por WhatsApp), y las que se pueden
+                elegir en la columna «Plagas» de los add-ons de un producto.
+            </p>
+        </field>
+    </record>
+
+</odoo>

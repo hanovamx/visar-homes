@@ -166,7 +166,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         plan = self._visar_booking_poliza_plan(booking)
         quote = AppointmentType._visar_quote_booking(
             items, zone, quantity=int(asked_capacity or 1),
-            include_roedores=self._visar_booking_has_roedores(booking),
+            plagas=self._visar_booking_plagas(booking),
             extra_addons=booking.get('extras_accepted'),
             plan=plan or None)
         return {'visar_quote': quote or False}
@@ -251,9 +251,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
     def _visar_fum_dimensions_for_coverage(self, coverage):
         return self._visar_flow()._visar_wizard_fum_dimensions_for_coverage(coverage)
 
-    # True si el cliente declaró problema de roedores en el paso de calificación.
-    def _visar_booking_has_roedores(self, booking):
-        return self._visar_flow()._visar_wizard_has_roedores(booking)
+    # Plagas (códigos) que el cliente eligió en el paso de calificación.
+    def _visar_booking_plagas(self, booking):
+        return self._visar_flow()._visar_wizard_plagas(booking)
 
     # Add-ons opcionales ofrecibles como extras para la reserva actual.
     def _visar_extras_offers(self, booking):
@@ -617,17 +617,26 @@ class VisarAppointmentController(WebsiteAppointmentSale):
         if not self._visar_fumigacion_selected(selections) or not selections.get('motivo'):
             return request.redirect(self._visar_wizard_next(selections))
 
+        # Las plagas salen del catálogo `visar.plaga`, igual que en el agente.
+        catalogo = request.env['visar.plaga']._visar_ofrecidas()
+        plagas_ctx = {
+            'plagas': catalogo,
+            'proteccion_general_descripcion':
+                self._visar_flow()._visar_proteccion_general_descripcion(catalogo),
+        }
+
         if request.httprequest.method == 'GET':
             ctx = self._visar_wizard_context_base('plagas', selections=selections, values=post)
+            ctx.update(plagas_ctx)
             return request.render('visar_appointment.visar_wizard_plagas', ctx)
 
         motivo = selections.get('motivo')
         chosen = set(request.httprequest.form.getlist('servicio_plaga'))
-        categories = [c for c in ('rastreros', 'voladores', 'roedores') if c in chosen]
+        categories = [c for c in catalogo.mapped('code') if c in chosen]
 
-        # Protección general (rama preventiva): activa las tres categorías, sin corte.
+        # Protección general (rama preventiva): activa todas las categorías, sin corte.
         if 'proteccion_general' in chosen:
-            categories = ['rastreros', 'voladores', 'roedores']
+            categories = catalogo.mapped('code')
 
         # Cortes a valoración: solo en la rama correctiva.
         cut_reason = False
@@ -643,6 +652,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             ctx = self._visar_wizard_context_base(
                 'plagas', selections=selections,
                 error=_('Selecciona al menos una opción.'), values=post)
+            ctx.update(plagas_ctx)
             return request.render('visar_appointment.visar_wizard_plagas', ctx)
 
         updates = {
@@ -973,7 +983,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             # Sidebar base (sin extras); el total se actualiza en vivo por JS.
             quote = AptType._visar_quote_booking(
                 booking.get('items') or [], zone,
-                include_roedores=self._visar_booking_has_roedores(booking))
+                plagas=self._visar_booking_plagas(booking))
             ctx = self._visar_wizard_context_base(
                 'extras', selections=booking.get('selections') or {}, values=post)
             ctx.update({
@@ -1034,7 +1044,7 @@ class VisarAppointmentController(WebsiteAppointmentSale):
             # Cotización de compra única, para comparar contra cada póliza.
             quote = request.env['appointment.type'].sudo()._visar_quote_booking(
                 booking.get('items') or [], zone,
-                include_roedores=self._visar_booking_has_roedores(booking),
+                plagas=self._visar_booking_plagas(booking),
                 extra_addons=booking.get('extras_accepted'))
             ctx = self._visar_wizard_context_base(
                 'poliza', selections=selections, values=post)
