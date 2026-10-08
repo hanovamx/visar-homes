@@ -99,6 +99,14 @@ VISAR_PLAGA_CUTS = (
     ('no_se', 'plaga_no_identificada'),
 )
 
+# La valoración que el cliente pide POR SU NOMBRE. No es un corte: nadie midió ni
+# calificó nada, él llegó diciendo "quiero una valoración técnica". Hasta el
+# 8-oct-2026 el cuestionario no tenía por dónde entrar con eso y le contestaba
+# "¿Qué servicio necesitas? Fumigación / Áreas verdes" a quien ya lo había dicho.
+# Es una fila más del primer paso: el `value` que publica, y el motivo que deja.
+VISAR_SERVICIO_VALORACION = 'valoracion'
+VISAR_MOTIVO_VALORACION_PEDIDA = 'solicitada'
+
 # Cómo se le nombra al cliente el motivo del corte, en el aviso de valoración.
 # Sin `_()` a nivel de módulo por lo mismo que `_VISAR_STEP_LABELS`: se evaluaría
 # al importar, con el idioma equivocado. Encajan en "Para ___ necesitamos…".
@@ -155,6 +163,14 @@ _VISAR_GRUPO_KEYWORDS = {
         'cucarach', 'cuca', 'alacran', 'escorpion', 'hormig', 'arana',
         'araña', 'mosca', 'mosquit', 'zancud', 'rata', 'raton', 'roedor',
         'termit', 'chinch', 'pulga', 'garrapat', 'grillo', 'ciempies',
+    ],
+    # No es un grupo de servicio: es la fila "Visita de valoración técnica" del
+    # primer paso (`VISAR_SERVICIO_VALORACION`). Vive aquí para que un consultor
+    # le añada palabras desde Odoo igual que a las otras dos.
+    'valoracion': [
+        'valoracion', 'valorar', 'diagnostico', 'inspeccion', 'evaluacion',
+        'revision tecnica', 'visita tecnica', 'que vengan a revisar',
+        'que vengan a ver',
     ],
     'corte': [
         'jardin', 'jardiner', 'pasto', 'cesped', 'podar', 'poda', 'cortar',
@@ -619,7 +635,11 @@ class AppointmentType(models.Model):
         (ver `_visar_wizard_next_after_address`).
         """
         selections = (booking or {}).get('selections') or {}
-        if not selections.get('group_ids'):
+        # La valoración pedida por su nombre contesta el primer paso SIN elegir
+        # grupo: no hay grupo que elegir, lo que se vende es la visita. El web
+        # nunca llega aquí con ese estado, así que su orden no cambia.
+        if (not selections.get('group_ids')
+                and not selections.get('requiere_valoracion')):
             return VISAR_STEP_SERVICES
 
         inline = self._visar_wizard_valuation_inline(booking)
@@ -1367,7 +1387,21 @@ class AppointmentType(models.Model):
     def _visar_wizard_answer_services(self, booking, answer):
         Group = self.env['visar.service.group'].sudo()
         offered = self._visar_wizard_groups()
-        ids = self._visar_wizard_id_list(answer.get('group_ids'))
+        crudo = answer.get('group_ids')
+        crudo = crudo if isinstance(crudo, (list, tuple)) else [crudo]
+        if VISAR_SERVICIO_VALORACION in [str(v) for v in crudo]:
+            # Pidió la valoración por su nombre. Gana aunque venga junto a un
+            # grupo ("una valoración para fumigar"): preguntarle después si es
+            # preventivo o qué plaga ve es justo lo que vino a evitarse, y el
+            # técnico lo ve en sitio. Las claves del corte van en `updates`
+            # porque el commit de este paso las limpia antes de aplicarlas.
+            return self._visar_wizard_commit(booking, VISAR_STEP_SERVICES, {
+                'group_ids': [],
+                'dimension_ids': [],
+                'requiere_valoracion': True,
+                'motivo_valoracion': VISAR_MOTIVO_VALORACION_PEDIDA,
+            }), None
+        ids = self._visar_wizard_id_list(crudo)
         # No se confía en lo que llega: solo grupos realmente ofrecidos.
         groups = Group.browse([i for i in ids if i in offered.ids]).exists()
         if not groups:
@@ -1858,7 +1892,8 @@ class AppointmentType(models.Model):
         fija el codigo.
         """
         if paso == VISAR_STEP_SERVICES:
-            return [g.code for g in self._visar_wizard_groups() if g.code]
+            return ([g.code for g in self._visar_wizard_groups() if g.code]
+                    + [VISAR_SERVICIO_VALORACION])
         claves = list(_VISAR_VOCABULARIO_BASE.get(paso) or ())
         if paso == 'plagas':
             claves += [code for code in
@@ -1979,6 +2014,27 @@ class AppointmentType(models.Model):
         vocab = self._visar_vocabulario_overlay()
 
         if step_key == VISAR_STEP_SERVICES:
+            filas = [{
+                'value': group.id,
+                'label': group._visar_wizard_label(),
+                'description': group.wizard_help or '',
+                # Ver `_VISAR_GRUPO_KEYWORDS`: nadie pide "Fumigación",
+                # pide que le quiten las termitas.
+                'keywords': self._visar_vocabulario(
+                    vocab, VISAR_STEP_SERVICES, group.code or ''),
+            } for group in self._visar_wizard_groups()]
+            # Ver `VISAR_SERVICIO_VALORACION`. Solo si hay qué vender: sin
+            # producto o sin tipo de cita de valoración la fila llevaría a un
+            # paso que no puede cerrar.
+            if self._visar_wizard_valuation_items():
+                filas.append({
+                    'value': VISAR_SERVICIO_VALORACION,
+                    'label': _('Visita de valoración técnica'),
+                    'description': _('Un técnico revisa en sitio y te pasamos '
+                                     'la propuesta'),
+                    'keywords': self._visar_vocabulario(
+                        vocab, VISAR_STEP_SERVICES, VISAR_SERVICIO_VALORACION),
+                })
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'group_ids',
                 'title': _('¿Qué servicio necesitas?'),
@@ -1997,15 +2053,7 @@ class AppointmentType(models.Model):
                 'hint': _('Puedes decirme varios. Y por aquí agendamos '
                           'servicios para casa: si es para tu negocio, dímelo '
                           'y te canalizo con nuestro equipo.'),
-                'options': [{
-                    'value': group.id,
-                    'label': group._visar_wizard_label(),
-                    'description': group.wizard_help or '',
-                    # Ver `_VISAR_GRUPO_KEYWORDS`: nadie pide "Fumigación",
-                    # pide que le quiten las termitas.
-                    'keywords': self._visar_vocabulario(
-                        vocab, VISAR_STEP_SERVICES, group.code or ''),
-                } for group in self._visar_wizard_groups()],
+                'options': filas,
             }
 
         if step_key == 'motivo':
@@ -2239,12 +2287,26 @@ class AppointmentType(models.Model):
                 selections.get('motivo_valoracion'),
                 "lo que nos describes")
             precio = format_amount(self.env, price, currency) if price else None
+            pedida = (selections.get('motivo_valoracion')
+                      == VISAR_MOTIVO_VALORACION_PEDIDA)
             # El precio va en el titulo y no en la descripcion de la opcion: es lo
             # que el cliente necesita para decidir, y una fila de WhatsApp son 24
             # caracteres. Mismo dato que ensena el aviso del web
             # (`visar_wizard_valuation_notice`), para que los dos canales digan lo
             # mismo.
-            if precio:
+            if pedida and precio:
+                # La pidió él: no hay un "para qué" que explicarle, y lo primero
+                # que necesita es la cifra.
+                title = _(
+                    'La visita de valoración técnica cuesta %(precio)s. El '
+                    'técnico revisa en sitio y te pasamos la propuesta. ¿Te la '
+                    'agendamos?'
+                ) % {'precio': precio}
+            elif pedida:
+                title = _(
+                    'En la visita de valoración técnica el técnico revisa en '
+                    'sitio y te pasamos la propuesta. ¿Te la agendamos?')
+            elif precio:
                 title = _(
                     'Para %(motivo)s necesitamos una visita de valoración '
                     'técnica (%(precio)s). El técnico revisa en sitio y te '

@@ -1000,3 +1000,73 @@ class TestWizardFlow(TransactionCase):
         self.assertEqual(len(items), 1, "Una valoración es UNA visita")
         self.assertTrue(items[0]['is_valuation'])
         self.assertTrue(items[0]['variant_id'])
+
+    # ------------------------------------------------------------------
+    # La valoración pedida por su nombre (8-oct-2026)
+    # ------------------------------------------------------------------
+
+    def _pide_valoracion(self, junto_a=()):
+        return self.AptType._visar_wizard_apply_answer(
+            {'mode': 'wizard', 'selections': {}, 'valuation_inline': True},
+            'services', {'group_ids': list(junto_a) + ['valoracion']})
+
+    def test_el_primer_paso_ofrece_la_valoracion(self):
+        """Quien pide "una valoración técnica" tiene que poder contestar el
+        primer paso con eso: antes solo había Fumigación y Áreas verdes."""
+        if not self.AptType._visar_wizard_valuation_items():
+            self.skipTest("La base no trae producto/tipo de cita de valoración")
+        paso = self.AptType._visar_wizard_step_options({}, 'services')
+        fila = [o for o in paso['options'] if o['value'] == 'valoracion']
+        self.assertEqual(len(fila), 1)
+        self.assertIn('valoracion', fila[0]['keywords'])
+
+    def test_pedir_la_valoracion_no_pregunta_que_servicio_ni_que_plaga(self):
+        """Del primer paso al aviso con el precio, y de ahí a la dirección."""
+        booking, error = self._pide_valoracion()
+        self.assertIsNone(error)
+        sel = booking['selections']
+        self.assertTrue(sel['requiere_valoracion'])
+        self.assertEqual(sel['motivo_valoracion'], 'solicitada')
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'valuation')
+
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'valuation', {'valuation_ack': 'continuar'})
+        self.assertIsNone(error)
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'address')
+        self.assertEqual(
+            self.AptType._visar_wizard_summary(booking)['lines'],
+            ['Visita de valoración técnica'])
+
+    def test_la_valoracion_gana_aunque_venga_con_un_servicio(self):
+        """"Una valoración para fumigar": seguir por fumigación le preguntaría
+        si es preventivo y qué plaga ve, que es lo que vino a evitarse."""
+        booking, error = self._pide_valoracion(junto_a=[self.fum_group.id])
+        self.assertIsNone(error)
+        self.assertEqual(booking['selections']['group_ids'], [])
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'valuation')
+
+    def test_el_aviso_de_la_valoracion_pedida_abre_con_el_precio(self):
+        if not self.AptType._visar_wizard_valuation_items():
+            self.skipTest("La base no trae producto/tipo de cita de valoración")
+        booking, _error = self._pide_valoracion()
+        titulo = self.AptType._visar_wizard_step_options(booking, 'valuation')['title']
+        self.assertTrue(titulo.startswith('La visita de valoración técnica cuesta'),
+                        titulo)
+        self.assertNotIn('Para ', titulo)
+
+    def test_cambiar_de_la_valoracion_a_un_servicio_quita_el_corte(self):
+        """Corregir el primer paso es contestarlo otra vez: el corte no puede
+        sobrevivir, o fumigación se quedaría vendiéndose como valoración."""
+        booking, _error = self._pide_valoracion()
+        self.assertIn('services', [
+            p['key'] for p in self.AptType._visar_wizard_editable_steps(booking)])
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            booking, 'services', {'group_ids': [self.fum_group.id]})
+        self.assertIsNone(error)
+        self.assertFalse(booking['selections'].get('requiere_valoracion'))
+        self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'motivo')
+
+    def test_sin_valoracion_pedida_el_primer_paso_sigue_siendo_el_servicio(self):
+        self.assertEqual(
+            self.AptType._visar_wizard_next_step({'selections': {}}), 'services')
+

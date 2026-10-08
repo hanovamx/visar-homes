@@ -172,6 +172,7 @@ class AppointmentType(models.Model):
         'chinches': 'Chinches de cama',
         'plaga_no_identificada': 'Plaga no identificada',
         'area_excede_limite': 'Área excede el límite del tabulador',
+        'solicitada': 'Solicitada por el cliente',
     }
     _VISAR_NIVELES_LABELS = {
         'planta_baja': 'Solo planta baja',

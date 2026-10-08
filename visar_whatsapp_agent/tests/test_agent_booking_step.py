@@ -287,3 +287,33 @@ class TestAgentBookingStep(TransactionCase):
         self.assertEqual(
             self.Tools._agent_booking_mode({'mode': 'valuation'}), 'valuation')
         self.assertEqual(self.Tools._agent_booking_mode({}), 'wizard')
+
+    def test_la_valoracion_pedida_por_su_nombre_va_derecho_al_aviso(self):
+        """Quien pide "una valoración técnica" no contesta qué servicio quiere
+        ni qué plaga ve: el primer paso ya lo dijo todo."""
+        state = self.Tools.agent_booking_step({
+            'booking': {}, 'step': 'services',
+            'answer': {'group_ids': ['valoracion']},
+        })
+        self.assertIsNone(state['error'])
+        self.assertTrue(state['requires_valuation'])
+        self.assertEqual(state['step'], 'valuation')
+        self.assertEqual(state['summary']['lines'], ['Visita de valoración técnica'])
+        self.assertEqual(self.Tools._agent_booking_mode(state), 'valuation')
+
+        state = self.Tools.agent_booking_step({
+            'booking': state, 'step': 'valuation',
+            'answer': {'valuation_ack': 'continuar'},
+        })
+        self.assertIsNone(state['error'])
+        self.assertEqual(state['step'], 'address')
+
+    def test_el_catalogo_trae_el_precio_de_la_valoracion(self):
+        """Es de donde el modelo saca la cifra: sin CP y sin cuestionario."""
+        template = self.env['product.template'].sudo()._visar_get_valuation_template()
+        if not template:
+            self.skipTest("La base no trae producto de valoración")
+        valoracion = self.Tools.agent_catalog_snapshot()['valuation']
+        self.assertEqual(valoracion['price'], template.product_variant_id.lst_price)
+        self.assertTrue(valoracion['name'])
+

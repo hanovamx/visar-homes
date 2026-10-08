@@ -185,7 +185,29 @@ class VisarAgentTools(models.AbstractModel):
                  'description': plaga.description or ''}
                 for plaga in self.env['visar.plaga']._visar_ofrecidas()
             ],
+            'valuation': self._agent_valuation_payload(),
             'notes': notes,
+        }
+
+    @api.model
+    def _agent_valuation_payload(self):
+        """La visita de valoracion tecnica y su precio, o `{}` si no se vende.
+
+        El modelo no tenia de donde sacar esta cifra: el cuestionario la dice en
+        su aviso, pero a quien preguntaba "¿cuanto cuesta la valoracion?" se le
+        contestaba que dependia del codigo postal o que se le confirmaba al
+        agendar. Es UN precio, sin zona: el del producto de valoracion. Si
+        Visar lo cambia en el producto, cambia aqui.
+        """
+        Template = self.env['product.template'].sudo()
+        template = Template._visar_get_valuation_template()
+        price = template.product_variant_id.lst_price if template else 0.0
+        if not price:
+            return {}
+        return {
+            'name': template.name,
+            'price': price,
+            'currency': (template.currency_id or self.env.company.currency_id).name,
         }
 
     @api.model
