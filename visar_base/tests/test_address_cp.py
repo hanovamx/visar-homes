@@ -103,3 +103,24 @@ class TestAddressCp(TransactionCase):
             neighborhood='Col. Tecnológico', municipality='Monterrey')
         self.assertEqual(llamada.call_args.args[0],
                          'Filosofos 315, Tecnológico, Monterrey')
+
+    def test_la_caja_sale_del_catalogo_e_ignora_centroides_descabellados(self):
+        """Un CP de Linares con el centroide en Puebla no estira la búsqueda."""
+        zona = self.env['visar.zone'].search([], limit=1)
+        self.ZoneCp.search([]).write(
+            {'visar_centroid_lat': 0.0, 'visar_centroid_lng': 0.0})
+        self.assertEqual(self.ZoneCp._visar_address_cp_bbox(),
+                         '-100.786,23.273,-99.030,27.403',
+                         "sin centroides, el respaldo fijo")
+        for i in range(12):
+            self.ZoneCp.create({
+                'name': '991%02d' % i, 'zone_id': zona.id,
+                'visar_centroid_lat': 25.0 + i * 0.1,
+                'visar_centroid_lng': -100.5 + i * 0.05})
+        self.ZoneCp.create({'name': '99199', 'zone_id': zona.id,
+                            'visar_centroid_lat': 19.07, 'visar_centroid_lng': -98.27})
+        # Uno SIN zona, lejos pero creíble: no cuenta, no tiene cobertura.
+        self.ZoneCp.create({'name': '99198', 'zone_id': False,
+                            'visar_centroid_lat': 27.5, 'visar_centroid_lng': -99.0})
+        self.assertEqual(self.ZoneCp._visar_address_cp_bbox(),
+                         '-100.650,24.850,-99.800,26.250')

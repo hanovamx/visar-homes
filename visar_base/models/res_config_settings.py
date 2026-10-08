@@ -17,8 +17,6 @@ from odoo import api, fields, models
 from odoo.exceptions import ValidationError
 
 from .visar_zone_cp import (
-    ADDRESS_CP_BBOX_DEFAULT,
-    ADDRESS_CP_BBOX_PARAM,
     ADDRESS_CP_ENABLED_PARAM,
     ADDRESS_CP_MIN_RELEVANCE_DEFAULT,
     ADDRESS_CP_MIN_RELEVANCE_PARAM,
@@ -156,35 +154,16 @@ class ResConfigSettings(models.TransientModel):
         help="De 0 a 1. Por debajo de este parecido entre lo que se escribió y "
              "lo que encontró el mapa, no se propone nada y se pide el código "
              "postal. Más alto = menos sugerencias y menos equivocadas.")
-    visar_address_cp_bbox = fields.Char(
-        string="Área de búsqueda",
-        config_parameter=ADDRESS_CP_BBOX_PARAM,
-        default=ADDRESS_CP_BBOX_DEFAULT,
-        help="Rectángulo del mapa donde se buscan las direcciones: longitud "
-             "oeste, latitud sur, longitud este, latitud norte, separadas por "
-             "comas. El valor inicial envuelve todos los códigos postales con "
-             "cobertura. Solo hay que tocarlo si Visar abre una zona fuera de él.")
+    # El área de búsqueda NO está aquí a propósito: se deriva sola de los
+    # códigos postales con cobertura (`visar.zone.cp._visar_address_cp_bbox`).
 
-    @api.constrains('visar_address_cp_min_relevance', 'visar_address_cp_bbox')
+    @api.constrains('visar_address_cp_min_relevance')
     def _check_visar_address_cp(self):
         for record in self:
             confianza = record.visar_address_cp_min_relevance
             if confianza is not None and not (0.0 <= confianza <= 1.0):
                 raise ValidationError(
                     "La confianza mínima tiene que estar entre 0 y 1.")
-            caja = (record.visar_address_cp_bbox or '').strip()
-            if not caja:
-                continue
-            try:
-                oeste, sur, este, norte = [float(x) for x in caja.split(',')]
-            except ValueError:
-                raise ValidationError(
-                    "El área de búsqueda son cuatro números separados por comas: "
-                    "longitud oeste, latitud sur, longitud este, latitud norte.")
-            if not (-180 <= oeste < este <= 180 and -90 <= sur < norte <= 90):
-                raise ValidationError(
-                    "El área de búsqueda no es un rectángulo válido: el oeste "
-                    "tiene que ser menor que el este y el sur menor que el norte.")
 
     # ------------------------------------------------------------------
     # Validación

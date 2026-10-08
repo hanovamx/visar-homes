@@ -76,16 +76,13 @@
                             <field name="visar_address_cp_min_relevance"/>
                             <span class="text-muted">de 0 a 1 (recomendado 0.5)</span>
                         </setting>
-                        <setting string="Área de búsqueda"
-                                 help="Rectángulo del mapa donde se buscan las direcciones: oeste, sur, este, norte. Solo hay que tocarlo si Visar abre una zona fuera de él."
-                                 invisible="not visar_address_cp_enabled">
-                            <field name="visar_address_cp_bbox"/>
-                        </setting>
                         <div class="text-muted mt-2 ms-1">
                             Es una <strong>sugerencia</strong>, no un dato: medido contra
                             600 direcciones reales, el código postal propuesto coincide
                             cerca de la mitad de las veces. Por eso nunca se usa sin que
-                            la persona lo confirme. En las preguntas de precio por
+                            la persona lo confirme. Se busca solo dentro del área que
+                            cubren los códigos postales con zona; esa área se calcula
+                            sola. En las preguntas de precio por
                             WhatsApp el cambio tarda hasta 15 minutos en aplicarse; en el
                             agendado y en el sitio web es inmediato.
                         </div>

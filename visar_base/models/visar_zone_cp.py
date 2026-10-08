@@ -13,10 +13,18 @@ _logger = logging.getLogger(__name__)
 # devuelve coincide solo ~52% de las veces, y la zona ~86%. Sirve como
 # SUGERENCIA que la persona confirma o corrige; no sirve como dato.
 ADDRESS_CP_ENABLED_PARAM = 'visar.address_cp.enabled'
-# Caja 'minLng,minLat,maxLng,maxLat' donde se busca. El default envuelve los CP
-# del catálogo (de Linares a Sabinas Hidalgo) con ~15 km de margen.
-ADDRESS_CP_BBOX_PARAM = 'visar.address_cp.bbox'
+# Caja 'minLng,minLat,maxLng,maxLat' donde se busca. NO se configura: se deriva
+# de los centroides del catálogo (`_visar_address_cp_bbox`), así que si Visar
+# abre una zona nueva la caja crece sola. Este valor es solo el respaldo para un
+# catálogo sin centroides.
 ADDRESS_CP_BBOX_DEFAULT = '-100.786,23.273,-99.030,27.403'
+# Margen alrededor de los centroides, en grados (~15 km): un centroide es el
+# centro del CP, y la casa del cliente puede estar en su orilla.
+ADDRESS_CP_BBOX_MARGIN = 0.15
+# Un centroide a más de estos grados (~300 km) de la mediana se ignora. No es
+# teórico: el 8-oct-2026 había 32 CP de Linares, Rayones y Pesquería con el
+# centroide en Puebla, y uno solo de esos estira la caja 700 km al sur.
+ADDRESS_CP_BBOX_OUTLIER = 3.0
 # Por debajo de esta relevancia el candidato se descarta. Con menos de 0.5 el CP
 # acertó 18% de las veces en la medición: peor que no contestar.
 ADDRESS_CP_MIN_RELEVANCE_PARAM = 'visar.address_cp.min_relevance'
@@ -231,6 +239,40 @@ class VisarZoneCp(models.Model):
             return ADDRESS_CP_MIN_RELEVANCE_DEFAULT
 
     @api.model
+    def _visar_address_cp_bbox(self):
+        """La caja de búsqueda, derivada de los CP con cobertura.
+
+        Envuelve los centroides de los CP que tienen zona, más un margen. Sale
+        del catálogo y no de un ajuste porque es un dato que el catálogo ya
+        sabe: pedirle a alguien cuatro coordenadas en una pantalla era pedirle
+        que lo copiara a mano, y que se acordara de volver cuando cambie.
+
+        Los centroides descabellados se ignoran (ver `ADDRESS_CP_BBOX_OUTLIER`),
+        y con menos de diez utilizables se devuelve el respaldo fijo.
+        """
+        self.flush_model(['zone_id', 'visar_centroid_lat', 'visar_centroid_lng'])
+        self.env.cr.execute("""
+            SELECT visar_centroid_lng, visar_centroid_lat
+              FROM visar_zone_cp
+             WHERE zone_id IS NOT NULL
+               AND COALESCE(visar_centroid_lat, 0) <> 0
+               AND COALESCE(visar_centroid_lng, 0) <> 0
+        """)
+        puntos = self.env.cr.fetchall()
+        if len(puntos) < 10:
+            return ADDRESS_CP_BBOX_DEFAULT
+        lngs = sorted(p[0] for p in puntos)
+        lats = sorted(p[1] for p in puntos)
+        centro_lng, centro_lat = lngs[len(lngs) // 2], lats[len(lats) // 2]
+        buenos = [(lng, lat) for lng, lat in puntos
+                  if abs(lng - centro_lng) <= ADDRESS_CP_BBOX_OUTLIER
+                  and abs(lat - centro_lat) <= ADDRESS_CP_BBOX_OUTLIER]
+        margen = ADDRESS_CP_BBOX_MARGIN
+        return '%.3f,%.3f,%.3f,%.3f' % (
+            min(p[0] for p in buenos) - margen, min(p[1] for p in buenos) - margen,
+            max(p[0] for p in buenos) + margen, max(p[1] for p in buenos) + margen)
+
+    @api.model
     def _visar_address_to_cp(self, street, ext_num, neighborhood, municipality=None):
         """Calle + número + colonia → el CP cubierto que mejor cuadra.
 
@@ -264,8 +306,7 @@ class VisarZoneCp(models.Model):
         if (municipality or '').strip():
             partes.append(municipality.strip())
         query = ', '.join(partes)
-        bbox = (self.env['ir.config_parameter'].sudo().get_param(
-            ADDRESS_CP_BBOX_PARAM) or ADDRESS_CP_BBOX_DEFAULT).strip()
+        bbox = self._visar_address_cp_bbox()
         features = self.env['visar.mapbox.service']._visar_mapbox_geocode_features(
             query, types='address', language='es', limit=5, bbox=bbox)
 

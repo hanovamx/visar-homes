@@ -79,7 +79,5 @@ class TestAgentResolveAddress(TransactionCase):
         Ajustes = self.env['res.config.settings']
         with self.assertRaises(ValidationError):
             Ajustes.create({'visar_address_cp_min_relevance': 1.5})
-        with self.assertRaises(ValidationError):
-            Ajustes.create({'visar_address_cp_bbox': 'Monterrey'})
-        with self.assertRaises(ValidationError):
-            Ajustes.create({'visar_address_cp_bbox': '-99,23,-100,27'})
+        self.assertNotIn('visar_address_cp_bbox', Ajustes._fields,
+                         "el área de búsqueda se deriva, no se captura")
