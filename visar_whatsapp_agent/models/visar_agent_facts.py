@@ -45,9 +45,16 @@ CABECERA = (
     "alguien que ya conoces.\n"
     "REGLAS, y no son negociables:\n"
     "- NO contestes ningun paso del cuestionario con esto, ni des por sabido nada "
-    "que afecte al precio. Los metros y el interior/exterior se preguntan "
-    "SIEMPRE, aunque aqui aparezcan. El codigo postal solo se toma de aqui "
-    "cuando el cliente ELIGE una de sus direcciones.\n"
+    "que afecte al precio. El interior/exterior se pregunta SIEMPRE. El codigo "
+    "postal solo se toma de aqui cuando el cliente ELIGE una de sus "
+    "direcciones.\n"
+    "- Los METROS guardados de una direccion no se dan por buenos, se "
+    "CONFIRMAN: cuando el cliente elija esa direccion, diselos y preguntale si "
+    "siguen igual (\"Tengo que tu casa mide unos 185 m2 de construccion y 50 de "
+    "jardin, ¿sigue igual?\"). Solo si dice que si, usalos para cotizar, y al "
+    "agendar pasalos en `ya_dicho` (\"la casa son 185 metros\", \"el patio son "
+    "50 metros\"). Si dice otra cifra, usa la suya. Si esa direccion no tiene "
+    "metros guardados, pidelos como siempre.\n"
     "- Puede estar desactualizado. Si algo importa para esta cita, CONFIRMALO en "
     "una frase corta en vez de suponerlo."
 )
@@ -77,7 +84,8 @@ VARIOS_DOMICILIOS = (
     "ni el codigo postal: ya los tenemos.\n"
     "- Si es una direccion NUEVA, pidele donde es como a cualquier cliente.\n"
     "- Que tenga direcciones con nosotros no significa que esta cita sea para "
-    "una de ellas. Los metros se piden igual."
+    "una de ellas. Los metros se piden igual, salvo los que esa direccion "
+    "tenga guardados, que se confirman."
 )
 # Con UNA sola tambien se pregunta (Visar, 9-oct-2026). Antes no se decia nada
 # -"nombrarsela invitaria al modelo a darla por buena"- y el cliente de una
@@ -93,7 +101,8 @@ UN_DOMICILIO = (
     "`resolve_zone` y `quote_service`. NO le pidas la direccion, ni la calle, "
     "ni el codigo postal: ya los tenemos.\n"
     "- Si es una direccion NUEVA, pidele donde es como a cualquier cliente.\n"
-    "- Los metros se piden igual."
+    "- Los metros se piden igual, salvo los que esa direccion tenga guardados, "
+    "que se confirman."
 )
 # Con muchas direcciones no se enumeran, pero el aviso sigue haciendo falta: lo
 # que no puede pasar es que el agente suponga.

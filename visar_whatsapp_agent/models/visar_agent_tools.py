@@ -2802,6 +2802,44 @@ class VisarAgentTools(models.AbstractModel):
         }
 
     @api.model
+    def _agent_guardar_medidas(self, domicilio, payload):
+        """Guarda en el domicilio los metros que el cliente dijo al agendar.
+
+        `payload['medidas']` = {"interior": {"m2": 185, "estimado": bool},
+                                "exterior": {"m2": 50, "estimado": bool}}
+        Lo manda el runtime, que es quien oyó el número: el cuestionario solo
+        conserva el tramo. Sirven para no volver a preguntarlos la próxima vez
+        —el agente los dice y pide confirmación—, nunca para cobrar.
+
+        Solo se guarda la medida de lo que esta reserva cubre: quien pidió solo
+        interior pudo haber dicho antes los metros del patio y corregido después.
+        Nunca levanta: un dato de contexto no puede costarle la reserva a nadie.
+        """
+        try:
+            medidas = (payload or {}).get('medidas') or {}
+            if not domicilio or not isinstance(medidas, dict):
+                return
+            cobertura = ((payload or {}).get('selections') or {}).get('cobertura')
+            cubre = {'interior': ('interior', 'ambos'),
+                     'exterior': ('exterior', 'ambos')}
+            Fact = self.env['visar.partner.fact'].sudo()
+            for lugar, slot in (('interior', 'm2_construccion'),
+                                ('exterior', 'm2_exterior')):
+                dato = medidas.get(lugar) or {}
+                if cobertura and cobertura not in cubre[lugar]:
+                    continue
+                try:
+                    m2 = int(float(dato.get('m2') or 0))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if not 0 < m2 < 100000:
+                    continue
+                valor = "%d (estimado)" % m2 if dato.get('estimado') else "%d" % m2
+                Fact._visar_fact_set(domicilio, slot, valor, origen='agente')
+        except Exception:  # noqa: BLE001 - ver el docstring
+            _logger.exception("No se pudieron guardar las medidas del domicilio")
+
+    @api.model
     def agent_prepare_booking(self, payload):
         """Deja la reserva lista para pagar y devuelve la liga de pago.
 
@@ -2926,8 +2964,9 @@ class VisarAgentTools(models.AbstractModel):
             return self._agent_booking_fail(
                 'cart_failed', "No pude armar el pedido para ese servicio.")
 
-        order._visar_apply_delivery_address(
+        domicilio = order._visar_apply_delivery_address(
             payload.get('delivery_address'), partner_name=partner.name)
+        self._agent_guardar_medidas(domicilio, payload)
         # Sin esto el portal puede mostrar la orden sin boton de pago.
         order.require_payment = True
 

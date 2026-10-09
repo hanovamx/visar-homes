@@ -86,12 +86,25 @@ VISAR_FACT_SLOTS = [
     ('quien_es', "Quién autoriza", 'domicilio',
      "Dueño, inquilino o administrador. Cambia quién puede aprobar un trabajo "
      "en ESTA dirección."),
+    # Los metros SÍ son un dato de precio, y por eso no se dan por buenos: el
+    # agente se los dice al cliente y le pregunta si siguen igual (9-oct-2026).
+    # Los escribe el agente al crear la reserva, con lo que el cliente dijo.
+    ('m2_construccion', "Metros de construcción", 'domicilio',
+     "Metros cuadrados construidos (interior). Lo que dijo el cliente al "
+     "agendar; lleva «(estimado)» si salió de contar recámaras y baños. "
+     "Corrígelo aquí si el técnico midió otra cosa."),
+    ('m2_exterior', "Metros de jardín o exterior", 'domicilio',
+     "Metros cuadrados de jardín, patio o exterior. Lo que dijo el cliente al "
+     "agendar. Corrígelo aquí si el técnico midió otra cosa."),
     ('preferencia_horario', "Cuándo le conviene", 'cliente',
      "Mañanas, tardes, sábados. Es de la persona, no del lugar."),
 ]
 
 VISAR_FACT_AMBITO_DE = {clave: ambito for clave, _e, ambito, _h in VISAR_FACT_SLOTS}
 VISAR_FACT_ETIQUETA_DE = {clave: etiqueta for clave, etiqueta, _a, _h in VISAR_FACT_SLOTS}
+
+# Quién manda cuando dos orígenes escriben el mismo dato: gana el mayor.
+_FACT_RANGO = {'agente': 1, 'hoja': 2, 'persona': 3}
 
 VISAR_FACT_ORIGENES = [
     ('hoja', "De la hoja de trabajo"),
@@ -198,6 +211,10 @@ class VisarPartnerFact(models.Model):
         en cada guardado de la hoja, así que sin esa regla una corrección manual
         duraría hasta el siguiente guardado del técnico — el fallo de «lo edité y
         se perdió», pero automatizado.
+
+        Y por lo mismo el `agente` no sobrescribe ni a la `persona` ni a la
+        `hoja`: lo que el cliente dice por chat vale menos que lo que alguien
+        corrigió a mano o midió en la visita.
         """
         valor = (value or '').strip()
         if not partner or slot not in VISAR_FACT_AMBITO_DE or not valor:
@@ -207,7 +224,7 @@ class VisarPartnerFact(models.Model):
                 existente = self.sudo().search(
                     [('partner_id', '=', partner.id), ('slot', '=', slot)], limit=1)
                 if existente:
-                    if origen == 'hoja' and existente.origen == 'persona':
+                    if _FACT_RANGO.get(existente.origen, 0) > _FACT_RANGO.get(origen, 0):
                         return existente
                     if existente.value != valor or existente.origen != origen:
                         existente.write({'value': valor, 'origen': origen})

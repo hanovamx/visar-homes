@@ -234,6 +234,54 @@ class TestAgentFacts(TransactionCase):
         self.assertEqual(datos, {'block': '', 'cliente': {}, 'domicilios': [],
                                  'partner_id': None})
 
+    # ------------------------------------------------------------------
+    # Los metros de cada dirección (9-oct-2026)
+    # ------------------------------------------------------------------
+
+    def _guardar(self, medidas, cobertura='ambos', domicilio=None):
+        self.T._agent_guardar_medidas(domicilio or self.casa, {
+            'medidas': medidas, 'selections': {'cobertura': cobertura}})
+        return self.Fact._visar_facts_de(domicilio or self.casa)
+
+    def test_los_metros_que_dijo_al_agendar_se_guardan_en_el_domicilio(self):
+        facts = self._guardar({'interior': {'m2': 185, 'estimado': True},
+                               'exterior': {'m2': 50}})
+        self.assertEqual(facts.get('m2_construccion'), '185 (estimado)')
+        self.assertEqual(facts.get('m2_exterior'), '50')
+        self.assertFalse(self.Fact._visar_facts_de(self.local),
+                         "son de ESA dirección, no del cliente")
+
+    def test_solo_se_guarda_la_medida_de_lo_que_se_reservo(self):
+        facts = self._guardar({'interior': {'m2': 185}, 'exterior': {'m2': 50}},
+                              cobertura='interior')
+        self.assertEqual(facts.get('m2_construccion'), '185')
+        self.assertNotIn('m2_exterior', facts)
+
+    def test_una_medida_absurda_no_se_guarda_ni_levanta(self):
+        facts = self._guardar({'interior': {'m2': 'muchos'}, 'exterior': {'m2': 0}})
+        self.assertFalse(facts)
+        self.T._agent_guardar_medidas(self.casa, {'medidas': 'basura'})
+        self.T._agent_guardar_medidas(self.env['res.partner'], {'medidas': {}})
+
+    def test_lo_corregido_a_mano_no_lo_pisa_el_agente(self):
+        self.Fact._visar_fact_set(self.casa, 'm2_construccion', '260')
+        facts = self._guardar({'interior': {'m2': 185}})
+        self.assertEqual(facts.get('m2_construccion'), '260')
+
+    def test_el_agente_si_actualiza_lo_que_el_mismo_guardo(self):
+        self._guardar({'interior': {'m2': 185}})
+        facts = self._guardar({'interior': {'m2': 200}})
+        self.assertEqual(facts.get('m2_construccion'), '200')
+
+    def test_el_bloque_ensenia_los_metros_y_manda_confirmarlos(self):
+        self._guardar({'interior': {'m2': 185}, 'exterior': {'m2': 50}})
+        bloque = self._facts()['block']
+        self.assertIn('Metros de construcción: 185', bloque)
+        self.assertIn('Metros de jardín o exterior: 50', bloque)
+        self.assertIn('se CONFIRMAN', bloque)
+        self.assertIn('sigue igual', bloque)
+        self.assertIn('El interior/exterior se pregunta SIEMPRE', bloque)
+
     def test_el_contrato_es_estable(self):
         self.assertEqual(set(self._facts()),
                          {'block', 'cliente', 'domicilios', 'partner_id'})
