@@ -111,7 +111,7 @@
                             que decidir si ya sobra.
                         </div>
                         <field name="motivo" nolabel="1" colspan="2"
-                               placeholder="El 29-sep abrio tres conversaciones con «Holi». Suena a cuenta personal, no a Visar Homes."/>
+                               placeholder="El 29-sep abrio tres conversaciones con «Holi». Suena a cuenta personal, no a la empresa."/>
                     </group>
 
                     <group string="Lo que recibe el modelo">

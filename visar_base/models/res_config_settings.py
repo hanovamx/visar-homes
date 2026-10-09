@@ -22,6 +22,29 @@ from .visar_zone_cp import (
     ADDRESS_CP_MIN_RELEVANCE_PARAM,
 )
 
+# El nombre con el que la empresa se presenta al cliente. Era "Visar Homes"
+# escrito a mano en cada mensaje; desde el 9-oct-2026 es "Visar Go" y sale de
+# Ajustes → Visar, para que el siguiente cambio de marca no pida un despliegue.
+# Lo leen el agente de WhatsApp (su saludo, su despedida y su prompt, donde va
+# como `{{marca}}`) y los avisos que Odoo manda por WhatsApp.
+BRAND_NAME_PARAM = 'visar.brand_name'
+BRAND_NAME_DEFAULT = "Visar Go"
+BRAND_PLACEHOLDER = '{{marca}}'
+
+
+def visar_brand_name(env):
+    """La marca vigente. En blanco o sin guardar = la de fábrica."""
+    valor = env['ir.config_parameter'].sudo().get_param(BRAND_NAME_PARAM)
+    return (valor or '').strip() or BRAND_NAME_DEFAULT
+
+
+def visar_con_marca(env, texto):
+    """`texto` con `{{marca}}` sustituido por la marca vigente."""
+    if not texto or BRAND_PLACEHOLDER not in texto:
+        return texto
+    return texto.replace(BRAND_PLACEHOLDER, visar_brand_name(env))
+
+
 # Cotas de cordura. No son gustos: fuera de ellas el sistema se comporta mal de
 # formas que el usuario no puede ver desde esta pantalla.
 MIN_HOLD_MINUTES = 1
@@ -38,6 +61,13 @@ DEFAULT_CLUSTER_MARGIN = 10
 class ResConfigSettings(models.TransientModel):
     _inherit = 'res.config.settings'
 
+    visar_brand_name = fields.Char(
+        string="Nombre de la marca",
+        config_parameter=BRAND_NAME_PARAM,
+        default=BRAND_NAME_DEFAULT,
+        help="Cómo se presenta la empresa ante el cliente en WhatsApp: el saludo "
+             "y la despedida del agente, su prompt y los avisos que salen de "
+             "Odoo. En blanco se usa «Visar Go».")
     visar_combo_corte_factor = fields.Float(
         string="Factor combo (legacy)",
         config_parameter='visar.combo_corte_factor',

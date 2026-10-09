@@ -22,6 +22,10 @@ from dateutil.relativedelta import relativedelta
 from markupsafe import Markup, escape
 
 from odoo import api, fields, models
+from odoo.addons.visar_base.models.res_config_settings import (
+    BRAND_PLACEHOLDER,
+    visar_brand_name,
+)
 from odoo.addons.visar_appointment.models.visar_travel_feasibility import TIER_VACIO
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     VISAR_STEP_ADDRESS,
@@ -303,6 +307,12 @@ class VisarAgentTools(models.AbstractModel):
                           DESPUES de la memoria de ruta y ANTES del contexto
                           del turno.
           `llm`           dict. Sin cambios ({} si no hay config).
+          `brand`         str, nunca vacio. El nombre de la marca (Ajustes →
+                          Visar). El runtime lo pone en su saludo, su despedida
+                          y sus textos de respaldo. En `prompt`,
+                          `route_prompts` y `correcciones` el marcador
+                          `{{marca}}` llega YA sustituido: un runtime viejo, que
+                          no conoce `brand`, tambien dice la marca nueva.
 
         Las dos direcciones de compatibilidad:
 
@@ -316,10 +326,18 @@ class VisarAgentTools(models.AbstractModel):
         sirve la config anterior hasta que caduque su TTL (15 min).
         """
         Prompt = self.env['visar.agent.prompt']
+        marca = visar_brand_name(self.env)
+
+        def con_marca(texto):
+            return texto.replace(BRAND_PLACEHOLDER, marca) if texto else texto
+
         return {
             'generated_at': fields.Datetime.now().isoformat(),
-            'prompt': Prompt._agent_active_body(),
-            'route_prompts': Prompt._agent_route_memories(),
+            'brand': marca,
+            'prompt': con_marca(Prompt._agent_active_body()),
+            'route_prompts': {
+                ruta: con_marca(cuerpo)
+                for ruta, cuerpo in Prompt._agent_route_memories().items()},
             'llm': self.env['visar.llm.config']._agent_active_payload(),
             # ¿Puede el modelo proponer el CP desde una dirección? Lo decide el
             # ajuste de Odoo (Ajustes → Visar); el runtime ofrece la tool
@@ -335,7 +353,9 @@ class VisarAgentTools(models.AbstractModel):
             # cabecera de precedencia exista en un solo sitio y la vista previa
             # de Odoo sea literalmente lo que se manda. Ver
             # `visar_agent_correccion.py`.
-            'correcciones': self.env['visar.agent.correccion']._agent_payload(),
+            'correcciones': {
+                ruta: con_marca(bloque) for ruta, bloque in
+                self.env['visar.agent.correccion']._agent_payload().items()},
         }
 
     # ------------------------------------------------------------------

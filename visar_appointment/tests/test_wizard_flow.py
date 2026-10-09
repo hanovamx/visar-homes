@@ -1066,6 +1066,64 @@ class TestWizardFlow(TransactionCase):
         self.assertFalse(booking['selections'].get('requiere_valoracion'))
         self.assertEqual(self.AptType._visar_wizard_next_step(booking), 'motivo')
 
+    def test_la_valoracion_se_contesta_pero_no_se_ofrece(self):
+        """Visar, 9-oct-2026: la valoración no es una opción más del primer
+        paso. La fila sigue —es por donde entra quien la aceptó en Información—
+        pero marcada para no pintarse, y detrás de las que sí se ven."""
+        if not self.AptType._visar_wizard_valuation_items():
+            self.skipTest("La base no trae producto/tipo de cita de valoración")
+        filas = self.AptType._visar_wizard_step_options({}, 'services')['options']
+        self.assertEqual(filas[-1]['value'], 'valoracion')
+        self.assertTrue(filas[-1].get('oculta'))
+        self.assertFalse([f for f in filas[:-1] if f.get('oculta')])
+
+    # ------------------------------------------------------------------
+    # El combo de fumigación y áreas verdes (9-oct-2026)
+    # ------------------------------------------------------------------
+
+    def _grupos_del_combo(self):
+        grupos = self.AptType._visar_wizard_combo_groups()
+        if not grupos:
+            self.skipTest("La base no ofrece los dos grupos del combo")
+        return grupos
+
+    def test_el_primer_paso_ofrece_el_combo(self):
+        self._grupos_del_combo()
+        filas = self.AptType._visar_wizard_step_options({}, 'services')['options']
+        fila = [f for f in filas if f['value'] == 'combo']
+        self.assertEqual(len(fila), 1)
+        self.assertFalse(fila[0].get('oculta'))
+        self.assertIn('combo', fila[0]['keywords'])
+        # "Los dos" solo vale contestando la pregunta: fuera de ella suele
+        # querer decir interior y exterior.
+        self.assertIn('los dos', fila[0]['keywords_directas'])
+        self.assertNotIn('los dos', fila[0]['keywords'])
+        self.assertTrue(fila[0]['solo_sinonimos'],
+                        "la etiqueta nombra a las otras dos filas: no puntúa")
+
+    def test_elegir_el_combo_elige_los_dos_servicios(self):
+        grupos = self._grupos_del_combo()
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            {'mode': 'wizard', 'selections': {}}, 'services',
+            {'group_ids': ['combo']})
+        self.assertIsNone(error)
+        self.assertEqual(sorted(booking['selections']['group_ids']),
+                         sorted(grupos.ids))
+        self.assertFalse(booking['selections'].get('requiere_valoracion'))
+
+    def test_el_combo_junto_a_un_servicio_no_lo_repite(self):
+        grupos = self._grupos_del_combo()
+        booking, error = self.AptType._visar_wizard_apply_answer(
+            {'mode': 'wizard', 'selections': {}}, 'services',
+            {'group_ids': [self.fum_group.id, 'combo']})
+        self.assertIsNone(error)
+        self.assertEqual(sorted(booking['selections']['group_ids']),
+                         sorted(grupos.ids))
+
+    def test_el_combo_tiene_su_ranura_de_vocabulario(self):
+        self.assertIn(
+            'combo', self.AptType._visar_vocabulario_claves('services'))
+
     def test_sin_valoracion_pedida_el_primer_paso_sigue_siendo_el_servicio(self):
         self.assertEqual(
             self.AptType._visar_wizard_next_step({'selections': {}}), 'services')

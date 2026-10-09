@@ -126,11 +126,31 @@ class TestAgentPromptRoutes(TransactionCase):
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
-                           'wa_templates', 'correcciones', 'address_cp'})
+                           'wa_templates', 'correcciones', 'address_cp',
+                           'brand'})
         self.assertIsInstance(payload['route_prompts'], dict)
         self.assertEqual(set(payload['route_prompts']), {'info', 'schedule'})
         # El base no se ve afectado por que existan memorias.
         self.assertEqual(payload['prompt'], self.base.body)
+
+    def test_la_marca_sale_de_ajustes_y_llena_el_marcador(self):
+        """Visar, 9-oct-2026: «Visar Homes» pasa a «Visar Go», y que el
+        siguiente cambio no pida un despliegue. El prompt dice `{{marca}}` y al
+        runtime le llega ya con el nombre puesto."""
+        Param = self.env['ir.config_parameter'].sudo()
+        self.base.body = "Eres el asistente de {{marca}}."
+        self._memoria('info', body="Que hace {{marca}}.")
+
+        Param.set_param('visar.brand_name', '')
+        payload = self.env['visar.agent.tools'].agent_runtime_config()
+        self.assertEqual(payload['brand'], "Visar Go", "en blanco, la de fabrica")
+        self.assertEqual(payload['prompt'], "Eres el asistente de Visar Go.")
+
+        Param.set_param('visar.brand_name', '  Visar Otra  ')
+        payload = self.env['visar.agent.tools'].agent_runtime_config()
+        self.assertEqual(payload['brand'], "Visar Otra")
+        self.assertEqual(payload['prompt'], "Eres el asistente de Visar Otra.")
+        self.assertEqual(payload['route_prompts']['info'], "Que hace Visar Otra.")
 
     def test_sin_ningun_registro_no_revienta(self):
         """El caso de una base recien instalada, clavado."""
@@ -299,7 +319,8 @@ class TestAgentRouteMeta(TransactionCase):
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
-                           'wa_templates', 'correcciones', 'address_cp'})
+                           'wa_templates', 'correcciones', 'address_cp',
+                           'brand'})
         self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
         for cuerpo in payload['route_prompts'].values():
             self.assertNotIn('resolve_zone  (lee)', cuerpo)

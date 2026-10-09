@@ -45,6 +45,7 @@ from datetime import timedelta
 from markupsafe import Markup
 
 from odoo import fields, models
+from odoo.addons.visar_base.models.res_config_settings import visar_brand_name
 
 PARAM_PAGO_PRUEBA = 'visar_field.upsell_permitir_pago_prueba'
 PARAM_PRODUCTO_CREDITO = 'visar_field.upsell_producto_credito_valoracion'
@@ -419,8 +420,9 @@ class ProjectTask(models.Model):
 
     def _visar_msg_upsell_payment(self, monto, link):
         """Texto y parámetros del aviso `upsell_payment` ({{1}} monto, {{2}} liga)."""
-        text = ("Hola, le saluda Visar Homes. Le compartimos la liga para pagar el "
-                "servicio adicional de hoy (%s): %s" % (monto, link))
+        text = ("Hola, le saluda %s. Le compartimos la liga para pagar el "
+                "servicio adicional de hoy (%s): %s" % (
+                    visar_brand_name(self.env), monto, link))
         return text, [monto, link]
 
     # ------------------------------------------------------------------

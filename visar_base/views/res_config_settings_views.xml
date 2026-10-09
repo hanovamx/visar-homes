@@ -9,6 +9,10 @@
             <xpath expr="//form" position="inside">
                 <app string="Visar" name="visar_base">
                     <block title="Configuración Visar">
+                        <setting string="Nombre de la marca"
+                                 help="Cómo se presenta la empresa ante el cliente en WhatsApp: el saludo y la despedida del agente, su prompt y los avisos que manda Odoo. El agente tarda hasta 15 minutos en tomar el cambio, o al momento con «Aplicar ahora» en su prompt.">
+                            <field name="visar_brand_name" placeholder="Visar Go"/>
+                        </setting>
                         <setting string="Producto valoración técnica"
                                  help="Producto cobrado en el flujo de valoración (solo zona).">
                             <field name="visar_valuation_product_tmpl_id"/>

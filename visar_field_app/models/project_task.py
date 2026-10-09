@@ -24,6 +24,7 @@ except Exception:  # noqa: BLE001
 from odoo import api, fields, models
 from odoo.exceptions import UserError
 from odoo.tools import formatLang, html2plaintext
+from odoo.addons.visar_base.models.res_config_settings import visar_brand_name
 
 from ..hooks import (
     COMBO_NAME,
@@ -895,11 +896,11 @@ class ProjectTask(models.Model):
         Event = self.env['calendar.event']
         politica = Event._visar_reschedule_policy_text()
         horas = Event._visar_reschedule_min_hours()
-        text = ("Hola, le saluda Visar Homes. Su técnico%s acudió a su domicilio, "
+        text = ("Hola, le saluda %s. Su técnico%s acudió a su domicilio, "
                 "pero no fue posible realizar el servicio.\n\n"
                 "¿Elegimos un nuevo horario? Presione el botón para ver los "
                 "horarios disponibles.\n\n"
-                "_%s_" % (tech, politica))
+                "_%s_" % (visar_brand_name(self.env), tech, politica))
         return text, [name, horas]
 
     def _visar_enroute_eta_minutes(self, tech_lat=None, tech_lng=None):

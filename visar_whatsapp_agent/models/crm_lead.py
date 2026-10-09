@@ -51,6 +51,7 @@ import logging
 import pytz
 
 from odoo import api, fields, models
+from odoo.addons.visar_base.models.res_config_settings import visar_brand_name
 
 _logger = logging.getLogger(__name__)
 
@@ -385,5 +386,6 @@ class CrmLead(models.Model):
         mucho mejor que ninguno.
         """
         self.ensure_one()
-        return ("Hola, te escribo de Visar Homes. Nos quedamos a medias el otro "
-                "día. ¿Sigues interesado? Con gusto retomamos donde lo dejamos.")
+        return ("Hola, te escribo de %s. Nos quedamos a medias el otro "
+                "día. ¿Sigues interesado? Con gusto retomamos donde lo dejamos."
+                % visar_brand_name(self.env))

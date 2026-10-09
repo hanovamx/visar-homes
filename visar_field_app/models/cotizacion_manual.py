@@ -35,6 +35,7 @@ from markupsafe import Markup
 
 from odoo import _, fields, models
 from odoo.exceptions import UserError
+from odoo.addons.visar_base.models.res_config_settings import visar_brand_name
 
 _logger = logging.getLogger(__name__)
 
@@ -251,10 +252,10 @@ class SaleOrder(models.Model):
         monto = self.currency_id.format(self.amount_total)
         con_descuento = bool(self.order_line.filtered('visar_valuation_credit'))
         texto = (
-            "Hola, le saluda Visar Homes. La cotización de su servicio de *%s* ya está "
+            "Hola, le saluda %s. La cotización de su servicio de *%s* ya está "
             "lista: *%s*%s.\n\nToque *Elegir fecha* para agendarlo; al confirmar le "
             "enviamos su liga de pago." % (
-                servicio, monto,
+                visar_brand_name(self.env), servicio, monto,
                 ", con el descuento de su visita de valoración ya aplicado"
                 if con_descuento else ""))
         aviso = self.env['visar.wa.message'].sudo()._visar_wa_enqueue(

@@ -220,6 +220,11 @@
                             listarlo aqui. Aqui van el alcance, el tono, el formato de
                             WhatsApp y las reglas de precio.
                         </div>
+                        <div class="text-muted" colspan="2">
+                            El nombre de la empresa va como <code>{{marca}}</code>: al
+                            agente le llega el que este puesto en Ajustes → Visar →
+                            Nombre de la marca.
+                        </div>
                         <field name="body" nolabel="1" colspan="2" widget="text"
                                placeholder="Eres el asistente de atencion a clientes de Visar por WhatsApp..."/>
                     </group>

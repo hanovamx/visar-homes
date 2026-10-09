@@ -104,8 +104,33 @@ VISAR_PLAGA_CUTS = (
 # 8-oct-2026 el cuestionario no tenía por dónde entrar con eso y le contestaba
 # "¿Qué servicio necesitas? Fumigación / Áreas verdes" a quien ya lo había dicho.
 # Es una fila más del primer paso: el `value` que publica, y el motivo que deja.
+#
+# Desde el 9-oct-2026 la fila se CONTESTA pero no se DICE (`oculta`): Visar pidió
+# que la valoración no se ofrezca como un servicio más. Se propone cuando hace
+# falta —los cortes de siempre, o el agente en la ruta de Información— y quien la
+# acepta ahí o la pide por su nombre sigue entrando por esta fila.
 VISAR_SERVICIO_VALORACION = 'valoracion'
 VISAR_MOTIVO_VALORACION_PEDIDA = 'solicitada'
+
+# La tercera opción del primer paso (9-oct-2026): fumigación y corte de áreas
+# verdes juntos. No es un grupo ni un producto: es un ATAJO que elige los dos
+# grupos de una vez, y de ahí el cuestionario sigue igual que si el cliente
+# hubiera dicho "fumigación y jardín". El descuento de combo lo sigue decidiendo
+# `visar.combo.rule` sobre lo que termine en la canasta; esta fila no promete
+# ninguno. Los grupos van por `code`, que es lo que sobrevive entre bases.
+VISAR_SERVICIO_COMBO = 'combo'
+VISAR_COMBO_GRUPOS = ('fumigacion', 'corte')
+
+# Cómo se elige el combo CONTESTANDO la pregunta, y solo así. "Los dos" es la
+# respuesta natural a una lista cuya tercera fila son las otras dos juntas, pero
+# suelta en la conversación anterior quiere decir otra cosa —casi siempre
+# interior y exterior—, y el autopiloto, que relee esas frases, le colaría un
+# servicio a quien no lo pidió. El runtime las lee de `keywords_directas`, que el
+# autopiloto no mira. Las que valen en cualquier contexto ("combo", "paquete")
+# son vocabulario normal: `_VISAR_GRUPO_KEYWORDS['combo']`.
+_VISAR_COMBO_KEYWORDS_DIRECTAS = [
+    'los dos', 'las dos', 'los 2', 'las 2', 'ambos', 'ambas', 'dos cosas',
+]
 
 # Cómo se le nombra al cliente el motivo del corte, en el aviso de valoración.
 # Sin `_()` a nivel de módulo por lo mismo que `_VISAR_STEP_LABELS`: se evaluaría
@@ -176,6 +201,13 @@ _VISAR_GRUPO_KEYWORDS = {
         'jardin', 'jardiner', 'pasto', 'cesped', 'podar', 'poda', 'cortar',
         'corte', 'arbol', 'arbust', 'maleza', 'hierba', 'area verde',
         'areas verdes', 'yarda',
+    ],
+    # Tampoco es un grupo: es la fila del combo (`VISAR_SERVICIO_COMBO`). Solo
+    # palabras que lo nombren en CUALQUIER contexto; "los dos" y compañía van
+    # aparte, en `_VISAR_COMBO_KEYWORDS_DIRECTAS`, y ahí se explica por qué.
+    'combo': [
+        'combo', 'paquete', 'los dos servicios', 'ambos servicios',
+        'los 2 servicios',
     ],
 }
 
@@ -448,6 +480,19 @@ class AppointmentType(models.Model):
             ('active', '=', True),
             ('show_in_wizard', '=', True),
         ])
+
+    @api.model
+    def _visar_wizard_combo_groups(self):
+        """Los grupos que junta la fila del combo, o ninguno si falta alguno.
+
+        Ver `VISAR_SERVICIO_COMBO`. Vacío = la fila no se publica y contestarla
+        no elige nada.
+        """
+        grupos = self._visar_wizard_groups().filtered(
+            lambda g: g.code in VISAR_COMBO_GRUPOS)
+        if set(grupos.mapped('code')) != set(VISAR_COMBO_GRUPOS):
+            return grupos.browse()
+        return grupos
 
     @api.model
     def _visar_wizard_selected_groups(self, selections):
@@ -1401,7 +1446,13 @@ class AppointmentType(models.Model):
                 'requiere_valoracion': True,
                 'motivo_valoracion': VISAR_MOTIVO_VALORACION_PEDIDA,
             }), None
-        ids = self._visar_wizard_id_list(crudo)
+        ids = self._visar_wizard_id_list(
+            [v for v in crudo if str(v) != VISAR_SERVICIO_COMBO])
+        if VISAR_SERVICIO_COMBO in [str(v) for v in crudo]:
+            # El combo es un atajo: suma sus grupos a lo que venga con él.
+            # Sin repetir: "fumigación y el combo" nombra fumigación dos veces.
+            ids = list(dict.fromkeys(
+                ids + self._visar_wizard_combo_groups().ids))
         # No se confía en lo que llega: solo grupos realmente ofrecidos.
         groups = Group.browse([i for i in ids if i in offered.ids]).exists()
         if not groups:
@@ -1893,7 +1944,7 @@ class AppointmentType(models.Model):
         """
         if paso == VISAR_STEP_SERVICES:
             return ([g.code for g in self._visar_wizard_groups() if g.code]
-                    + [VISAR_SERVICIO_VALORACION])
+                    + [VISAR_SERVICIO_COMBO, VISAR_SERVICIO_VALORACION])
         claves = list(_VISAR_VOCABULARIO_BASE.get(paso) or ())
         if paso == 'plagas':
             claves += [code for code in
@@ -2023,9 +2074,26 @@ class AppointmentType(models.Model):
                 'keywords': self._visar_vocabulario(
                     vocab, VISAR_STEP_SERVICES, group.code or ''),
             } for group in self._visar_wizard_groups()]
+            # Ver `VISAR_SERVICIO_COMBO`. Solo si se ofrecen los dos grupos
+            # que junta: con uno solo sería la misma fila dos veces.
+            if self._visar_wizard_combo_groups():
+                filas.append({
+                    'value': VISAR_SERVICIO_COMBO,
+                    'label': _('Combo de fumigación y áreas verdes'),
+                    'description': '',
+                    'keywords': self._visar_vocabulario(
+                        vocab, VISAR_STEP_SERVICES, VISAR_SERVICIO_COMBO),
+                    'keywords_directas': list(_VISAR_COMBO_KEYWORDS_DIRECTAS),
+                    # La etiqueta NO puntúa. Nombra a las otras dos filas, y
+                    # con ella "fumigación" a secas elegiría también el combo.
+                    # Quien la copie de la pantalla nombra los dos servicios,
+                    # que es el mismo resultado.
+                    'solo_sinonimos': True,
+                })
             # Ver `VISAR_SERVICIO_VALORACION`. Solo si hay qué vender: sin
             # producto o sin tipo de cita de valoración la fila llevaría a un
-            # paso que no puede cerrar.
+            # paso que no puede cerrar. Va la ÚLTIMA, detrás de las que se ven,
+            # para que una posición escrita ("la tercera") caiga en lo pintado.
             if self._visar_wizard_valuation_items():
                 filas.append({
                     'value': VISAR_SERVICIO_VALORACION,
@@ -2034,6 +2102,8 @@ class AppointmentType(models.Model):
                                      'la propuesta'),
                     'keywords': self._visar_vocabulario(
                         vocab, VISAR_STEP_SERVICES, VISAR_SERVICIO_VALORACION),
+                    # Se CONTESTA pero no se DICE (Visar, 9-oct-2026).
+                    'oculta': True,
                 })
             return {
                 'step': step_key, 'kind': 'multi', 'answer_key': 'group_ids',
