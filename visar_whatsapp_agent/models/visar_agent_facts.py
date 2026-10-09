@@ -28,6 +28,7 @@ ningún sitio: un fact equivocado no es un dato que falta, es el agente hablánd
 a alguien de la casa de otra persona.
 """
 import logging
+import re
 
 from odoo import api, models
 
@@ -44,8 +45,9 @@ CABECERA = (
     "alguien que ya conoces.\n"
     "REGLAS, y no son negociables:\n"
     "- NO contestes ningun paso del cuestionario con esto, ni des por sabido nada "
-    "que afecte al precio. Los metros, el interior/exterior y el codigo postal se "
-    "preguntan SIEMPRE, aunque aqui aparezcan.\n"
+    "que afecte al precio. Los metros y el interior/exterior se preguntan "
+    "SIEMPRE, aunque aqui aparezcan. El codigo postal solo se toma de aqui "
+    "cuando el cliente ELIGE una de sus direcciones.\n"
     "- Puede estar desactualizado. Si algo importa para esta cita, CONFIRMALO en "
     "una frase corta en vez de suponerlo."
 )
@@ -60,12 +62,22 @@ MAX_DOMICILIOS_NOMBRADOS = 4
 # tres casas con nosotros no impide mudarse, comprar otra o pedirlo para un
 # familiar. Y sin la ultima linea, un modelo pequenio da por hecha la primera de
 # la lista — que es exactamente lo que el nivel "informa" existe para evitar.
+#
+# Desde el 9-oct-2026 cada direccion viaja con su codigo postal. Antes solo iba
+# la colonia: el cliente contestaba "Contry", el agente sabia cual era pero no
+# tenia con que cotizar, y le pedia la direccion entera otra vez.
 VARIOS_DOMICILIOS = (
     "- Este cliente tiene VARIAS direcciones con nosotros: %(lista)s.\n"
-    "- No adivines para cual es. Preguntale, nombrandoselas por su colonia, y "
-    "ofrece SIEMPRE la salida de que sea una direccion NUEVA.\n"
+    "- No adivines para cual es. ANTES de pedirle ninguna direccion ni codigo "
+    "postal, preguntale si es para una de ellas, nombrandoselas SOLO por su "
+    "colonia (no le digas el codigo postal ni la calle), y ofrece SIEMPRE la "
+    "salida de que sea una direccion NUEVA.\n"
+    "- Si ELIGE una de ellas, ya tienes su codigo postal: usalo tal cual en "
+    "`resolve_zone` y `quote_service`. NO le pidas la direccion, ni la calle, "
+    "ni el codigo postal: ya los tenemos.\n"
+    "- Si es una direccion NUEVA, pidele donde es como a cualquier cliente.\n"
     "- Que tenga direcciones con nosotros no significa que esta cita sea para "
-    "una de ellas. El codigo postal y los metros se piden igual."
+    "una de ellas. Los metros se piden igual."
 )
 # Con muchas direcciones no se enumeran, pero el aviso sigue haciendo falta: lo
 # que no puede pasar es que el agente suponga.
@@ -96,7 +108,7 @@ class VisarAgentFacts(models.AbstractModel):
                 or domicilio.city or domicilio.display_name or '').strip()
 
     @api.model
-    def _visar_facts_render(self, cliente_facts, domicilios):
+    def _visar_facts_render(self, cliente_facts, domicilios, cps=None):
         """El bloque tal y como lo recibe el modelo. `''` si no hay nada que decir.
 
         **Las direcciones se nombran aunque no sepamos NADA de ellas**, y esa es la
@@ -117,7 +129,7 @@ class VisarAgentFacts(models.AbstractModel):
                 for r, v in sorted(facts.items()))
             lineas.append("- Direccion «%s» -> %s" % (nombre, detalle))
 
-        aviso = self._visar_facts_aviso_domicilios(domicilios)
+        aviso = self._visar_facts_aviso_domicilios(domicilios, cps=cps)
         if not lineas and not aviso:
             return ''
         cuerpo = [CABECERA, ""]
@@ -130,7 +142,7 @@ class VisarAgentFacts(models.AbstractModel):
         return "\n".join(cuerpo)
 
     @api.model
-    def _visar_facts_aviso_domicilios(self, domicilios):
+    def _visar_facts_aviso_domicilios(self, domicilios, cps=None):
         """El aviso de varias direcciones, o `''`.
 
         Con UNA sola no se dice nada: no hay nada que desambiguar, y nombrarsela
@@ -142,7 +154,31 @@ class VisarAgentFacts(models.AbstractModel):
         nombres = [n for n, _f in domicilios if n]
         if len(domicilios) > MAX_DOMICILIOS_NOMBRADOS or not nombres:
             return MUCHOS_DOMICILIOS % {'cuantas': len(domicilios)}
-        return VARIOS_DOMICILIOS % {'lista': ", ".join(nombres)}
+        cps = cps or {}
+        return VARIOS_DOMICILIOS % {'lista': ", ".join(
+            "%s (CP %s)" % (n, cps[n]) if cps.get(n) else n for n in nombres)}
+
+    @api.model
+    def _visar_facts_direccion(self, domicilio):
+        """La direccion de un contacto de entrega, por piezas, para el runtime.
+
+        Es la inversa de `sale.order._visar_apply_delivery_address`, que guarda
+        la calle como *"Ruiz Cortines No. 123 Int. 4"*. Si la calle no tiene esa
+        forma (capturada a mano en Odoo) el numero sale vacio, y el runtime no la
+        propone: el cuestionario la pide como siempre.
+        """
+        calle, numero, interior = (domicilio.street or '').strip(), '', ''
+        hallado = re.match(r'^(.*?)\s+No\.\s+(\S+)(?:\s+Int\.\s+(.+))?$', calle)
+        if hallado:
+            calle, numero, interior = (
+                hallado.group(1), hallado.group(2), hallado.group(3) or '')
+        cp = ''.join(ch for ch in (domicilio.zip or '') if ch.isdigit())
+        return {
+            'street': calle.strip(), 'ext_num': numero, 'int_num': interior.strip(),
+            'neighborhood': (domicilio.street2 or '').strip(),
+            'zip': cp if len(cp) == 5 else '',
+            'city': (domicilio.city or '').strip(),
+        }
 
     # ------------------------------------------------------------------
     # El RPC
@@ -190,7 +226,7 @@ class VisarAgentFacts(models.AbstractModel):
         cliente_facts = {
             r: v for r, v in Fact._visar_facts_de(comercial).items()
             if VISAR_FACT_AMBITO_DE.get(r) == 'cliente'}
-        domicilios = []
+        domicilios, direcciones = [], []
         registros = comercial._visar_domicilios_de_servicio()
         etiquetas = [self._visar_facts_etiqueta_domicilio(d) for d in registros]
         for domicilio, nombre in zip(registros, etiquetas):
@@ -202,9 +238,14 @@ class VisarAgentFacts(models.AbstractModel):
             facts = {r: v for r, v in Fact._visar_facts_de(domicilio).items()
                      if VISAR_FACT_AMBITO_DE.get(r) == 'domicilio'}
             domicilios.append((nombre, facts))
+            direcciones.append(self._visar_facts_direccion(domicilio))
+        cps = {n: d['zip'] for (n, _f), d in zip(domicilios, direcciones) if n}
         return {
-            'block': self._visar_facts_render(cliente_facts, domicilios),
+            'block': self._visar_facts_render(cliente_facts, domicilios, cps=cps),
             'cliente': cliente_facts,
-            'domicilios': [{'nombre': n, 'facts': f} for n, f in domicilios],
+            # `direccion` es para el RUNTIME, no para el modelo: es lo que le
+            # deja proponer esa direccion al agendar sin volver a pedirla.
+            'domicilios': [{'nombre': n, 'facts': f, 'direccion': d}
+                           for (n, f), d in zip(domicilios, direcciones)],
             'partner_id': comercial.id,
         }

@@ -133,11 +133,36 @@ class TestAgentFacts(TransactionCase):
         bloque = self._facts()['block']
         self.assertIn('NUEVA', bloque)
 
-    def test_el_bloque_recuerda_que_el_CP_se_pide_igual(self):
+    def test_el_bloque_recuerda_que_los_metros_se_piden_igual(self):
         """Tener direcciones registradas no es haber contestado el precio."""
         bloque = self._facts()['block'].lower()
-        self.assertIn('codigo postal', bloque)
-        self.assertIn('metros', bloque)
+        self.assertIn('los metros se piden igual', bloque)
+
+    def test_cada_direccion_viaja_con_su_codigo_postal(self):
+        """9-oct-2026: el cliente decía «Las Torres» y el agente, sin CP con qué
+        cotizar, le pedía la dirección entera otra vez."""
+        bloque = self._facts()['block']
+        self.assertIn('Las Torres (CP 64000)', bloque)
+        self.assertIn('Centro (CP 64010)', bloque)
+        self.assertIn('NO le pidas la direccion', bloque)
+        self.assertNotIn('Calle 1 No. 10', bloque, "la calle sigue sin leerse")
+
+    def test_la_direccion_completa_viaja_aparte_para_el_runtime(self):
+        casa = self._facts()['domicilios'][0]
+        self.assertEqual(casa['direccion'], {
+            'street': 'Calle 1', 'ext_num': '10', 'int_num': '',
+            'neighborhood': 'Las Torres', 'zip': '64000', 'city': ''})
+
+    def test_una_calle_escrita_a_mano_no_inventa_numero(self):
+        self.casa.street = 'Privada sin numero'
+        casa = self._facts()['domicilios'][0]['direccion']
+        self.assertEqual((casa['street'], casa['ext_num']), ('Privada sin numero', ''))
+
+    def test_el_numero_interior_se_separa(self):
+        self.casa.street = 'Calle 1 No. 10 Int. 4 B'
+        casa = self._facts()['domicilios'][0]['direccion']
+        self.assertEqual((casa['street'], casa['ext_num'], casa['int_num']),
+                         ('Calle 1', '10', '4 B'))
 
     def test_con_demasiadas_direcciones_no_se_enumeran(self):
         """En producción hay un cliente con 31 y otro con 13.
