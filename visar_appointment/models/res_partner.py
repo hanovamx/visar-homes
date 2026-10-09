@@ -88,3 +88,24 @@ class ResPartner(models.Model):
         for partner in self:
             if partner.specific_property_product_pricelist != partner.property_product_pricelist:
                 partner.specific_property_product_pricelist = partner.property_product_pricelist
+
+    def can_edit_vat(self):
+        """El cliente puede capturar su RFC por PRIMERA vez aunque ya tenga pedidos.
+
+        El core bloquea el RFC en el sitio en cuanto el cliente tiene un pedido
+        confirmado o una factura emitida: cambiarlo dejaría esos documentos a
+        nombre de otro contribuyente. Tiene sentido para CAMBIAR un RFC, pero el
+        candado no distingue eso de capturarlo por primera vez, y el paso
+        "Información de facturación" del checkout pinta el campo de solo lectura:
+        quien compró una vez sin factura (público en general) y a la siguiente sí
+        la pide se topa con un campo vacío que no puede llenar y un "El RFC es
+        obligatorio" al enviar. No tiene salida.
+
+        Con el RFC vacío no hay documento emitido a un RFC que proteger, así que
+        se deja capturar. Uno ya capturado sigue bloqueado igual que en el core.
+        Los contactos hijos siguen sin poder: el RFC es de la entidad comercial.
+        """
+        self.ensure_one()
+        if super().can_edit_vat():
+            return True
+        return not self.parent_id and not self.vat

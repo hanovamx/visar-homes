@@ -20,3 +20,4 @@ from . import test_ocultar_tecnico
 from . import test_extras_descripcion
 from . import test_checkout_facturacion
 from . import test_addons_por_plaga
+from . import test_rfc_primera_captura
