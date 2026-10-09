@@ -120,8 +120,25 @@ class TestAgentFacts(TransactionCase):
         self.Fact._visar_fact_set(self.casa, 'tipo_inmueble', 'Casa')
         self.assertNotIn('VARIAS', self._facts()['block'])
 
-    def test_una_sola_direccion_y_sin_datos_no_deja_bloque(self):
+    def test_con_una_sola_direccion_tambien_se_pregunta(self):
+        """Visar, 9-oct-2026: el cliente de una sola casa también merece no
+        reescribir su dirección. Se le pregunta si es para esa o una nueva."""
         self.local.unlink()
+        bloque = self._facts()['block']
+        self.assertIn('UNA direccion', bloque)
+        self.assertIn('Las Torres (CP 64000)', bloque)
+        self.assertIn('NUEVA', bloque, "la salida que impide darla por buena")
+        self.assertIn('NO le pidas la direccion', bloque)
+        self.assertNotIn('Calle 1 No. 10', bloque)
+
+    def test_una_sola_direccion_sin_codigo_postal_no_deja_bloque(self):
+        """Sin CP no habría con qué cotizar: se pide la dirección como siempre."""
+        self.local.unlink()
+        self.casa.zip = False
+        self.assertEqual(self._facts()['block'], '')
+
+    def test_sin_direcciones_no_hay_bloque(self):
+        (self.casa | self.local).unlink()
         self.assertEqual(self._facts()['block'], '')
 
     def test_SIEMPRE_se_ofrece_la_salida_de_una_direccion_nueva(self):

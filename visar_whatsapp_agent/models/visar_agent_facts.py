@@ -79,6 +79,22 @@ VARIOS_DOMICILIOS = (
     "- Que tenga direcciones con nosotros no significa que esta cita sea para "
     "una de ellas. Los metros se piden igual."
 )
+# Con UNA sola tambien se pregunta (Visar, 9-oct-2026). Antes no se decia nada
+# -"nombrarsela invitaria al modelo a darla por buena"- y el cliente de una
+# sola casa, que es el caso mas comun, tenia que escribir su direccion entera
+# cada vez. La salida de la direccion NUEVA es lo que impide darla por buena.
+UN_DOMICILIO = (
+    "- Este cliente tiene UNA direccion con nosotros: %(lista)s.\n"
+    "- No des por hecho que es para ella. ANTES de pedirle ninguna direccion ni "
+    "codigo postal, preguntale si el servicio es para esa direccion, "
+    "nombrandosela SOLO por su colonia (no le digas el codigo postal ni la "
+    "calle), o si es para una direccion NUEVA.\n"
+    "- Si dice que es ESA, ya tienes su codigo postal: usalo tal cual en "
+    "`resolve_zone` y `quote_service`. NO le pidas la direccion, ni la calle, "
+    "ni el codigo postal: ya los tenemos.\n"
+    "- Si es una direccion NUEVA, pidele donde es como a cualquier cliente.\n"
+    "- Los metros se piden igual."
+)
 # Con muchas direcciones no se enumeran, pero el aviso sigue haciendo falta: lo
 # que no puede pasar es que el agente suponga.
 MUCHOS_DOMICILIOS = (
@@ -143,18 +159,23 @@ class VisarAgentFacts(models.AbstractModel):
 
     @api.model
     def _visar_facts_aviso_domicilios(self, domicilios, cps=None):
-        """El aviso de varias direcciones, o `''`.
+        """El aviso de las direcciones que ya tiene con nosotros, o `''`.
 
-        Con UNA sola no se dice nada: no hay nada que desambiguar, y nombrarsela
-        solo invitaria al modelo a darla por buena. El cuestionario pregunta la
-        direccion de todas formas.
+        Con UNA sola tambien se pregunta si es para esa o para una nueva, pero
+        solo si sabemos su colonia y su codigo postal: sin CP el agente no
+        tendria con que cotizar y acabaria pidiendole la direccion igual.
         """
-        if len(domicilios) < 2:
+        cps = cps or {}
+        if not domicilios:
             return ''
+        if len(domicilios) == 1:
+            nombre = domicilios[0][0]
+            if not nombre or not cps.get(nombre):
+                return ''
+            return UN_DOMICILIO % {'lista': "%s (CP %s)" % (nombre, cps[nombre])}
         nombres = [n for n, _f in domicilios if n]
         if len(domicilios) > MAX_DOMICILIOS_NOMBRADOS or not nombres:
             return MUCHOS_DOMICILIOS % {'cuantas': len(domicilios)}
-        cps = cps or {}
         return VARIOS_DOMICILIOS % {'lista': ", ".join(
             "%s (CP %s)" % (n, cps[n]) if cps.get(n) else n for n in nombres)}
 
