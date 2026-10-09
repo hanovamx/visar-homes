@@ -370,7 +370,7 @@ _VISAR_STEP_LABELS = {
     'address': "Dirección",
     'nombre': "Nombre",
     'extras': "Extras",
-    'poliza': "Póliza",
+    'poliza': "Suscripción",
 }
 
 # Sin `_()`: a nivel de modulo se evaluaria una sola vez, al importar, con el
@@ -1259,7 +1259,7 @@ class AppointmentType(models.Model):
                     self.env['res.currency'].browse(quote.get('currency_id'))
                     or self.env.company.currency_id).name
                 if plan and quote.get('recurring_total'):
-                    lines.append(_('Póliza: %(plan)s') % {'plan': plan.name})
+                    lines.append(_('Suscripción: %(plan)s') % {'plan': plan.name})
                     # Un total a secas miente por omision en una poliza: son
                     # DOS cifras -lo que se cobra hoy y lo que se repite- y el
                     # cliente necesita las dos antes de pagar.
@@ -2446,12 +2446,12 @@ class AppointmentType(models.Model):
             })
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'plan_id',
-                'title': _('¿Te interesa contratarlo como póliza?'),
+                'title': _('¿Te interesa contratarlo como suscripción?'),
                 # Qué ES una póliza, en una línea. Sin esto, cada opción tenía
                 # que explicarse a sí misma y la pregunta llegaba como un muro
                 # de cifras: el cliente leía cuatro precios sin saber todavía
                 # qué se le está ofreciendo.
-                'hint': _('Con póliza el técnico regresa cada periodo sin que '
+                'hint': _('Con suscripción el técnico regresa cada periodo sin que '
                           'tengas que agendarlo, y el servicio te sale más '
                           'barato.'),
                 'options': options,

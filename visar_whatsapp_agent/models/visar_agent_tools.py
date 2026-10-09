@@ -255,7 +255,7 @@ class VisarAgentTools(models.AbstractModel):
         if not plan_id:
             return None, None
         if 'sale.subscription.plan' not in self.env:
-            return None, {'message': "Las polizas no estan disponibles."}
+            return None, {'message': "Las suscripciones no estan disponibles."}
         try:
             plan_id = int(plan_id)
         except (TypeError, ValueError):
@@ -269,7 +269,7 @@ class VisarAgentTools(models.AbstractModel):
             return plan, None
         validos = self._agent_poliza_plans()
         return None, {'message': (
-            "No existe el plan de poliza %s. Los planes validos son: %s."
+            "No existe el plan de suscripcion %s. Los planes validos son: %s."
             % (plan_id, ", ".join(
                 "%s (plan_id %s)" % (p['name'], p['plan_id']) for p in validos)
                or "ninguno")
@@ -716,7 +716,7 @@ class VisarAgentTools(models.AbstractModel):
             # porque este texto es lo ultimo que el modelo lee antes de
             # redactar.
             message = (
-                "Poliza '%s' en %s: %s %.2f por periodo (lo recurrente). "
+                "Suscripcion '%s' en %s: %s %.2f por periodo (lo recurrente). "
                 "Primer cobro %s %.2f, que cubre %d periodo(s) por adelantado."
                 % (plan.name, zone.name, currency_name,
                    quote['recurring_total'], currency_name,

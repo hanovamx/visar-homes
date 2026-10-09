@@ -57,7 +57,7 @@ _TOOLS = {
     'start_booking': ("entrega", "Entrega la conversacion al cuestionario de "
                                  "agendado, que reserva de punta a punta."),
     'my_services': ("entrega", "Muestra lo que el cliente YA tiene con Visar: "
-                               "proxima visita, historial, poliza."),
+                               "proxima visita, historial, suscripcion."),
     'escalate_to_human': ("entrega", "Entrega la conversacion a un asesor y deja "
                                      "registro con el contexto recogido."),
 }
