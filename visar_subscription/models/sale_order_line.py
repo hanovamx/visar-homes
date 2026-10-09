@@ -1,6 +1,6 @@
 from dateutil.relativedelta import relativedelta
 
-from odoo import _, fields, models
+from odoo import _, api, fields, models
 
 
 class SaleOrderLine(models.Model):
@@ -26,6 +26,39 @@ class SaleOrderLine(models.Model):
         help="Nº de periodos ADICIONALES que cobra esta línea de anticipo (N-1: el "
              "primer periodo lo cobra la propia línea recurrente).",
     )
+
+    # ------------------------------------------------------------------
+    # Descuento de combo: sobrevive a cualquier recálculo de precios
+    #
+    # El descuento de combo NO sale de la lista de precios: lo escribe a mano el
+    # flujo Visar (wizard web, agente, `_visar_apply_combo_discount`). Y Odoo, cada
+    # vez que reprecia (`_recompute_prices`), pone `discount` en cero y lo vuelve a
+    # calcular desde la lista — o sea, lo borra. `/shop/payment` reprecia SIEMPRE
+    # antes de enseñar los métodos de pago, así que con "Finalizar compra" una
+    # póliza combo cotizada en 2,850 se cobraba en 3,230: la línea de servicio
+    # perdía el 50% y su mensualidad adelantada (que no se reprecia) lo conservaba.
+    # Al confirmar, el anticipo se re-espejaba ya sin descuento y el pedido quedaba
+    # en 3,990: "el monto pagado es diferente al total del carrito" (S00024,
+    # 8-oct-2026).
+    #
+    # Guardar el porcentaje en la línea lo vuelve parte del cálculo en vez de un
+    # valor que hay que vigilar en cada sitio que reprecia.
+    # ------------------------------------------------------------------
+    visar_combo_discount = fields.Float(
+        string="Descuento de combo (%)", digits='Discount', default=0.0,
+        help="Descuento de combo fijado por el flujo Visar. Se vuelve a aplicar "
+             "cada vez que Odoo recalcula el descuento de la línea, que de otro "
+             "modo lo dejaría en lo que diga la lista de precios (cero).",
+    )
+
+    @api.depends('visar_combo_discount')
+    def _compute_discount(self):
+        super()._compute_discount()
+        for line in self:
+            # En un upsell el descuento es el prorrateo del periodo en curso
+            # (sale_subscription); ahí manda el core.
+            if line.visar_combo_discount and line.order_id.subscription_state != '7_upsell':
+                line.discount = line.visar_combo_discount
 
     def _prepare_invoice_line(self, **optional_values):
         """Da a la línea de anticipo el periodo diferido que realmente cubre.

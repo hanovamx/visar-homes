@@ -244,7 +244,9 @@ class SaleOrder(models.Model):
                     and calendar_booking in line.calendar_booking_ids
                 )[-1:]
                 if sol:
-                    sol.write({'discount': discount})
+                    # `visar_combo_discount` es lo que lo hace sobrevivir a un
+                    # recálculo de precios (`/shop/payment` reprecia siempre).
+                    sol.write({'discount': discount, 'visar_combo_discount': discount})
 
         if not lines_added:
             return 0

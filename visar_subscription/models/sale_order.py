@@ -320,7 +320,7 @@ class SaleOrder(models.Model):
             pct = rule._visar_discount_percent()
             for line in lines:
                 if line.product_id.product_tmpl_id.visar_dimension_id.id in rule.discount_dimension_ids.ids:
-                    line.discount = pct
+                    line.write({'discount': pct, 'visar_combo_discount': pct})
             break  # primera regla aplicable por secuencia
 
     def action_visar_apply_combo_discount(self):

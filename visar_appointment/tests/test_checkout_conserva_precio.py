@@ -87,6 +87,26 @@ class TestCheckoutConservaPrecio(TransactionCase):
         self.assertEqual(orden.order_line.discount, 50.0)
         self.assertEqual(orden.amount_total, 400.0)
 
+    def test_el_paso_de_pago_no_borra_el_descuento_de_combo(self):
+        """`/shop/payment` reprecia SIEMPRE (`_recompute_cart`), sin tocar la lista.
+
+        La foto de `_update_address` no llega hasta ahí. Una póliza combo cotizada
+        en 2,850 se cobraba en 3,230 y el pedido quedaba en 3,990 (S00024).
+        """
+        orden = self._orden()
+        orden.order_line.write({'discount': 50.0, 'visar_combo_discount': 50.0})
+        with MockRequest(self.env, website=self.website, sale_order_id=orden.id):
+            orden._recompute_cart()
+        self.assertEqual(orden.order_line.discount, 50.0)
+        self.assertEqual(orden.amount_total, 400.0)
+
+    def test_sin_el_campo_el_paso_de_pago_si_lo_borra(self):
+        """El fallo existe: un descuento escrito a mano no sobrevive al repreciado."""
+        orden = self._orden()
+        with MockRequest(self.env, website=self.website, sale_order_id=orden.id):
+            orden._recompute_cart()
+        self.assertEqual(orden.order_line.discount, 0.0)
+
     def test_la_direccion_de_servicio_sigue_bloqueada(self):
         orden = self._orden()
         self._checkout_escribe_el_cliente(orden, ['partner_shipping_id'])

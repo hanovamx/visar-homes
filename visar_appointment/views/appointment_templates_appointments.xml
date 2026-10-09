@@ -28,14 +28,12 @@
                     <div class="d-flex justify-content-between gap-2 small mb-1"
                          t-att-class="'text-muted' if line.get('is_free') else ('ps-2' if line.get('is_addon') else None)">
                         <span t-esc="line['name']"/>
-                        <span>
-                            <span t-if="line.get('has_discounted_price') and line.get('list_price')"
-                                  class="oe_striked_price me-1"
-                                  t-out="line['list_price']"
-                                  t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
-                            <span t-out="line['price']"
-                                  t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
-                        </span>
+                        <!-- UN precio por renglón, el que se cobra: igual que el
+                             paso de póliza. Antes el renglón con descuento de combo
+                             traía además el precio de lista tachado, y se leía como
+                             dos precios para lo mismo (9-oct-2026). -->
+                        <span t-out="line['price']"
+                              t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
                     </div>
                 </t>
                 <!-- Con póliza, lo que se cobra HOY no es el importe de un periodo:
