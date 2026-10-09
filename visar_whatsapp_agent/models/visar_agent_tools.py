@@ -711,6 +711,17 @@ class VisarAgentTools(models.AbstractModel):
                 "para poder cotizar."
             )
         elif plan:
+            # Cuanto AHORRA frente a pagar de contado las mismas visitas. Es la
+            # misma cuenta del paso de suscripcion del cuestionario
+            # (`_visar_wizard_poliza_offers`): desde el 9-oct-2026 ese paso se
+            # salta cuando el cliente ya eligio plan en el chat, asi que la
+            # cifra tiene que haberla visto aqui.
+            contado = self.env['appointment.type']._visar_quote_booking(
+                items, zone, plagas=plagas) or {}
+            ahorro = max(0.0, (contado.get('recurring_total') or 0.0)
+                         * plan._visar_visits_per_period()
+                         - quote['recurring_total'])
+            periodo = self.env['appointment.type']._visar_wizard_plan_period_label(plan)
             # Con poliza el total NO es lo que se paga hoy: es lo recurrente
             # por periodo. Decirlo aqui, y no solo en el esquema de la tool,
             # porque este texto es lo ultimo que el modelo lee antes de
@@ -721,6 +732,9 @@ class VisarAgentTools(models.AbstractModel):
                 % (plan.name, zone.name, currency_name,
                    quote['recurring_total'], currency_name,
                    quote['upfront_total'], quote['periods']))
+            if ahorro:
+                message += (" Ahorra %s %.2f %s frente a pagar de contado las "
+                            "mismas visitas." % (currency_name, ahorro, periodo))
             if quote['addons_total']:
                 message += (" Incluye %s %.2f de cargo unico que no se repite."
                             % (currency_name, quote['addons_total']))
@@ -770,6 +784,8 @@ class VisarAgentTools(models.AbstractModel):
                 'periodos_primer_cobro': quote['periods'],
                 'primer_cobro': quote['upfront_total'],
                 'cargo_unico': quote['addons_total'],
+                'ahorro_por_periodo': ahorro,
+                'periodo': periodo,
             } if plan else None,
             'message': message,
         }
