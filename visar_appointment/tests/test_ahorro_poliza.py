@@ -158,7 +158,7 @@ class TestReservaSigueAlPlan(TransactionCase):
                       "cada opción necesita su propio bloque para poder alternarlos")
         self.assertIn("offer['upfront_total']", arch,
                       "con póliza se enseña lo que se cobra HOY, no el importe del periodo")
-        self.assertIn('Total sin póliza', arch,
+        self.assertIn('Total sin suscripción', arch,
                       "y sigue existiendo el bloque de contado, que es el que se ve sin JS")
 
     def test_la_pantalla_de_fecha_y_hora_enseña_lo_que_se_cobra_hoy(self):

@@ -873,7 +873,6 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'zip': cp_record.name,
                 'municipality': cp_record.municipality or '',
                 'state': 'Nuevo León',
-                'zone_name': cp_record.zone_id.name,
             }
         else:
             payload = {'found': False}

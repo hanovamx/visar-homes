@@ -75,14 +75,16 @@
                             if (state) { state.value = data.state || 'Nuevo León'; }
                             if (feedback) {
                                 feedback.className = 'form-text mt-2 text-success';
-                                feedback.textContent = 'Zona detectada: ' + (data.zone_name || '');
+                                // Solo si hay cobertura o no: el nombre de la zona (A, B, C)
+                                // es la lista de precios y no se le enseña al cliente.
+                                feedback.textContent = 'Zona Cubierta';
                             }
                         } else {
                             if (city) { city.value = ''; }
                             if (feedback) {
                                 feedback.className = 'form-text mt-2 text-danger';
                                 feedback.textContent =
-                                    'No damos servicio en este código postal. Contáctanos.';
+                                    'Aun no damos servicio en este código postal, pero puedes solicitar que habilitemos tu domicilio.';
                             }
                         }
                     }).catch(function () {});
@@ -758,10 +760,10 @@
                        t-value="quote and request.env['res.currency'].browse(quote['currency_id']) or request.env.company.currency_id"/>
                     <div class="row justify-content-center g-4">
                         <div class="col-lg-7">
-                            <h2>¿Prefieres contratarlo como póliza?</h2>
+                            <h2>¿Prefieres contratarlo como suscripción?</h2>
                             <p class="text-muted">
                                 Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
-                                — Con una póliza tu servicio se repite solo y las visitas de
+                                — Con una suscripción tu servicio se repite solo y las visitas de
                                 garantía van incluidas.
                             </p>
                             <div t-if="error" class="alert alert-warning" role="alert">
@@ -851,7 +853,7 @@
                                                    name="plan_id" id="plan_none" value=""
                                                    t-att-checked="not selected_plan_id and 'checked' or None"/>
                                             <div>
-                                                <span class="fw-semibold">Solo este servicio, sin póliza</span>
+                                                <span class="fw-semibold">Solo este servicio, sin suscripción</span>
                                                 <div class="small text-muted">Un solo pago, sin renovación. En caso de que se requieran visitas extras, se cobrarán por separado.</div>
                                             </div>
                                         </div>
@@ -912,7 +914,7 @@
                                             </div>
                                         </t>
                                         <div class="d-flex justify-content-between pt-2 border-top">
-                                            <strong>Total sin póliza</strong>
+                                            <strong>Total sin suscripción</strong>
                                             <strong t-out="quote['total']"
                                                     t-options="{'widget': 'monetary', 'display_currency': quote_currency}"/>
                                         </div>
@@ -1031,7 +1033,7 @@
                             <div class="alert alert-info mt-3" role="alert">
                                 No hay un horario en el que todos los técnicos necesarios estén
                                 disponibles a la vez para los servicios seleccionados
-                                <t t-if="zone"> en la zona <strong t-esc="zone.name"/></t>.
+                                <t t-if="zone"> en tu zona</t>.
                                 Intenta con otra zona o contáctanos.
                             </div>
                             <a href="/appointment/visar/booking" class="btn btn-secondary">Volver al inicio</a>
