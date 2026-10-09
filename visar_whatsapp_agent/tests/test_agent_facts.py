@@ -279,7 +279,7 @@ class TestAgentFacts(TransactionCase):
         self.assertIn('Metros de construcción: 185', bloque)
         self.assertIn('Metros de jardín o exterior: 50', bloque)
         self.assertIn('se CONFIRMAN', bloque)
-        self.assertIn('sigue igual', bloque)
+        self.assertIn('¿es correcto?', bloque)
         self.assertIn('El interior/exterior se pregunta SIEMPRE', bloque)
 
     def test_el_contrato_es_estable(self):

@@ -39,6 +39,9 @@ from odoo.addons.visar_base.models.visar_partner_fact import (
 
 _logger = logging.getLogger(__name__)
 
+# La pregunta de los metros es "¿es correcto?" y NO "¿sigue igual?": probado en
+# vivo el 9-oct-2026, el cliente contestaba "si, sigue igual" y el detector de
+# quejas del runtime lo leia como una plaga que persiste ("sigue...").
 CABECERA = (
     "=== LO QUE YA SABEMOS DE ESTE CLIENTE ===\n"
     "Contexto de conversaciones y visitas anteriores. Sirve para hablarle como a "
@@ -50,8 +53,9 @@ CABECERA = (
     "direcciones.\n"
     "- Los METROS guardados de una direccion no se dan por buenos, se "
     "CONFIRMAN: cuando el cliente elija esa direccion, diselos y preguntale si "
-    "siguen igual (\"Tengo que tu casa mide unos 185 m2 de construccion y 50 de "
-    "jardin, ¿sigue igual?\"). Solo si dice que si, usalos para cotizar, y al "
+    "son correctos, con estas palabras: \"Tengo que tu casa mide unos 185 m2 de "
+    "construccion y 50 de jardin, ¿es correcto?\". No preguntes si \"sigue "
+    "igual\". Solo si dice que si, usalos para cotizar, y al "
     "agendar pasalos en `ya_dicho` (\"la casa son 185 metros\", \"el patio son "
     "50 metros\"). Si dice otra cifra, usa la suya. Si esa direccion no tiene "
     "metros guardados, pidelos como siempre.\n"
