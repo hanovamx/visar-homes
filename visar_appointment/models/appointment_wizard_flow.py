@@ -1281,6 +1281,7 @@ class AppointmentType(models.Model):
             if items:
                 lines += [label
                           for label in self._visar_metros_labels(items) if label]
+            lines += self._visar_wizard_summary_extras(booking)
 
         zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
         total = currency = poliza = None
@@ -1318,6 +1319,30 @@ class AppointmentType(models.Model):
                     }
         return {'lines': lines, 'total': total, 'currency': currency,
                 'poliza': poliza}
+
+    @api.model
+    def _visar_wizard_summary_extras(self, booking):
+        """Una línea del resumen por cada producto adicional ACEPTADO.
+
+        Faltaban (Visar, 12-oct-2026): quien aceptaba la estación antirroedores
+        veía un total más alto que la suma de lo que el resumen enumeraba, sin
+        nada que lo explicara. Sin adicionales aceptados no añade nada.
+
+        El precio es el mismo texto con el que se le ofreció
+        (`_visar_wizard_extra_price_text`), para que reconozca la cifra.
+        """
+        aceptados = {
+            extra.get('product_id')
+            for extra in (booking or {}).get('extras_accepted') or []
+            if isinstance(extra, dict)}
+        if not aceptados:
+            return []
+        return [
+            _('Adicional: %(name)s, %(price)s') % {
+                'name': offer.get('name') or '',
+                'price': self._visar_wizard_extra_price_text(offer)}
+            for offer in self._visar_wizard_extras_offers(booking)
+            if offer.get('product_id') in aceptados]
 
     # ------------------------------------------------------------------
     # Dirección

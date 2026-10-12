@@ -967,6 +967,29 @@ class TestWizardFlow(TransactionCase):
             self.AptType._visar_wizard_schedule_key(wizard),
             self.AptType._visar_wizard_schedule_key(valoracion))
 
+    def test_el_resumen_enumera_los_adicionales_aceptados(self):
+        """Visar, 12-oct-2026: aceptó la estación antirroedores y el resumen
+        no la nombraba; el total salía más alto que lo enumerado."""
+        from unittest.mock import patch
+        oferta = {'product_id': 4242, 'name': 'Estación antirroedores',
+                  'quantity': 3, 'unit_price': 100.0, 'subtotal': 300.0,
+                  'currency_id': self.env.company.currency_id.id}
+        otra = dict(oferta, product_id=4243, name='No aceptada')
+        booking = {'selections': {'group_ids': [self.fum_group.id]},
+                   'extras_accepted': [{'product_id': 4242, 'quantity': 3}]}
+        with patch.object(type(self.AptType), '_visar_wizard_extras_offers',
+                          lambda _self, _booking: [oferta, otra]):
+            lineas = self.AptType._visar_wizard_summary(booking)['lines']
+            sin = self.AptType._visar_wizard_summary(
+                dict(booking, extras_accepted=[]))['lines']
+        adicionales = [l for l in lineas if l.startswith('Adicional: ')]
+        self.assertEqual(len(adicionales), 1, lineas)
+        self.assertIn('Estación antirroedores', adicionales[0])
+        self.assertIn('3 × ', adicionales[0])
+        self.assertIn('300', adicionales[0])
+        self.assertFalse([l for l in sin if l.startswith('Adicional')],
+                         "sin adicionales no hay línea")
+
     def test_valoracion_no_ofrece_extras(self):
         """Se ofrecían y luego `_visar_build_sale_lines` los tiraba.
 
