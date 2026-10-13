@@ -231,6 +231,7 @@ class TestAgentFacts(TransactionCase):
         with patch.object(type(self.T), '_agent_partner_facts_ahora',
                           side_effect=RuntimeError("boom")):
             datos = self._facts()
+        datos.pop('saludo')     # el saludo tiene su propia red: test_agent_saludo
         self.assertEqual(datos, {'block': '', 'cliente': {}, 'domicilios': [],
                                  'partner_id': None})
 
@@ -284,4 +285,5 @@ class TestAgentFacts(TransactionCase):
 
     def test_el_contrato_es_estable(self):
         self.assertEqual(set(self._facts()),
-                         {'block', 'cliente', 'domicilios', 'partner_id'})
+                         {'block', 'cliente', 'domicilios', 'partner_id',
+                          'saludo'})

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- El saludo del agente vive en Ajustes → Visar, con el resto de lo que
+         Visar cambia sin pedir un despliegue. Se cuelga de la pantalla de
+         `visar_base` en vez de abrir otra: es donde ya se busca. -->
+    <record id="res_config_settings_view_form_visar_saludo" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.visar.saludo</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="visar_base.res_config_settings_view_form_visar"/>
+        <field name="arch" type="xml">
+            <xpath expr="//block[@name='visar_address_cp']" position="after">
+                <block title="Saludo del agente de WhatsApp" name="visar_agent_saludo">
+                    <setting string="Saludar según el cliente"
+                             help="Apagado, todos reciben el saludo de siempre. Encendido, quien ya había escrito o ya es cliente recibe el suyo, y quien tiene una suscripción con visita agendada, la fecha de esa visita. Los botones son los mismos para todos.">
+                        <field name="visar_agent_saludo_enabled"/>
+                    </setting>
+                    <setting string="A quien ya nos conoce"
+                             help="{{nombre}} es el nombre de pila; si no lo sabemos se quita junto con su coma."
+                             invisible="not visar_agent_saludo_enabled">
+                        <field name="visar_agent_saludo_conocido"
+                               placeholder="¡Hola de nuevo, {{nombre}}! ¿Cómo te puedo ayudar?"/>
+                    </setting>
+                    <setting string="A quien tiene suscripción"
+                             help="Solo se usa si tiene una visita con fecha que ya conoce. {{fecha}} es el día de la visita y {{colonia}} dónde es."
+                             invisible="not visar_agent_saludo_enabled">
+                        <field name="visar_agent_saludo_suscriptor"
+                               placeholder="¡Hola, {{nombre}}! Tu próxima visita en {{colonia}} es el {{fecha}}. ¿Cómo te puedo ayudar?"/>
+                    </setting>
+                    <div class="text-muted mt-2 ms-1"
+                         invisible="not visar_agent_saludo_enabled">
+                        Quien nunca ha escrito y no es cliente sigue recibiendo el
+                        saludo de siempre. Una visita que el sistema pre-agendó y
+                        nadie le ha confirmado al cliente <strong>no</strong> se
+                        menciona. El cambio se aplica en la siguiente conversación
+                        de cada cliente.
+                    </div>
+                </block>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
