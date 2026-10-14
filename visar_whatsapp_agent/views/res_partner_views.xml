@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_res_partner_filter_visar_chat" model="ir.ui.view">
+        <field name="name">res.partner.search.visar.chat</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_res_partner_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='inactive']" position="before">
+                <filter string="Del chat, sin reserva" name="visar_chat_sin_reserva"
+                        domain="[('visar_chat_sin_reserva', '=', True)]"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate: el staff puede ajustar frecuencia/activo sin que un upgrade lo
+         pise (mismo patron que el resto de crons de Visar). -->
+    <data noupdate="1">
+        <!-- El plazo NO esta aqui: sale de Ajustes -> Visar -> "Dirección del
+             cliente por WhatsApp". -->
+        <record id="visar_chat_sin_reserva_cron" model="ir.cron">
+            <field name="name">Visar: archivar fichas del chat que no reservaron</field>
+            <field name="model_id" ref="base.model_res_partner"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_archivar_chat_sin_reserva()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field name="nextcall"
+                   eval="(DateTime.now().replace(hour=9, minute=40, second=0) + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')"/>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>

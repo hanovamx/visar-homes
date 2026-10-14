@@ -86,8 +86,21 @@ class SaleOrder(models.Model):
         address = address or {}
         if not address or not self.partner_id:
             return self.env['res.partner'].browse()
+        delivery_partner, _created = self._visar_delivery_partner_for(
+            self.partner_id, address, partner_name=partner_name)
+        self._visar_set_service_shipping(delivery_partner)
+        return delivery_partner
+
+    @api.model
+    def _visar_delivery_partner_for(self, partner, address, partner_name=None):
+        """(contacto de entrega, ¿se creó?) de `partner` para esa dirección.
+
+        Es la mitad de `_visar_apply_delivery_address` que no necesita pedido:
+        el agente de WhatsApp guarda la dirección en cuanto el cliente la
+        confirma, cuando todavía no hay nada que vender (14-oct-2026).
+        """
         Partner = self.env['res.partner'].sudo()
-        commercial = self.partner_id.commercial_partner_id
+        commercial = partner.commercial_partner_id
         country = self.env.ref('base.mx', raise_if_not_found=False)
         state = self._visar_service_state()
 
@@ -100,7 +113,7 @@ class SaleOrder(models.Model):
             street = ('%s Int. %s' % (street, int_num)).strip()
 
         vals = {
-            'name': partner_name or self.partner_id.name or "Dirección de servicio",
+            'name': partner_name or partner.name or "Dirección de servicio",
             'type': 'delivery',
             'parent_id': commercial.id,
             'street': street,
@@ -117,15 +130,14 @@ class SaleOrder(models.Model):
             ('street', '=', vals['street']),
             ('zip', '=', vals['zip']),
         ], limit=1)
-        delivery_partner = existing or Partner.create(vals)
         if existing:
             # Keep name/details fresh when reusing (e.g. new booking contact name).
             existing.write({
                 k: vals[k] for k in ('name', 'street2', 'city', 'state_id', 'country_id')
                 if vals.get(k)
             })
-        self._visar_set_service_shipping(delivery_partner)
-        return delivery_partner
+            return existing, False
+        return Partner.create(vals), True
 
     # Campos que el checkout exige en la dirección de FACTURACIÓN
     # (`portal._get_mandatory_address_fields`) y que el wizard ya capturó.

@@ -23,6 +23,7 @@ from markupsafe import Markup, escape
 
 from odoo import api, fields, models
 from odoo.addons.visar_base.models.res_config_settings import (
+    visar_chat_address_enabled,
     BRAND_PLACEHOLDER,
     visar_brand_name,
 )
@@ -343,6 +344,10 @@ class VisarAgentTools(models.AbstractModel):
             # ajuste de Odoo (Ajustes → Visar); el runtime ofrece la tool
             # `resolve_address` solo con esto en True. Ausente = no.
             'address_cp': self.env['visar.zone.cp'].sudo()._visar_address_cp_enabled(),
+            # ¿Se guarda la direccion en cuanto el cliente la confirma? Con esto
+            # en True el runtime pregunta el nombre antes de la direccion a
+            # quien no es cliente y llama a `agent_save_address`. Ausente = no.
+            'save_address': visar_chat_address_enabled(self.env),
             # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
             # ausente es "mensaje libre", lo de siempre. Ver
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y
@@ -2457,6 +2462,105 @@ class VisarAgentTools(models.AbstractModel):
             return Partner.browse(), 'name_required'
         return Partner.create({'name': name.strip(), 'phone': phone}), None
 
+    # ------------------------------------------------------------------
+    # La direccion, en cuanto el cliente la confirma
+    # ------------------------------------------------------------------
+
+    @api.model
+    def agent_save_address(self, payload):
+        """Guarda una direccion CONFIRMADA en la ficha del cliente. Nunca levanta.
+
+        `payload` = {
+            "phone": "5218112345678",
+            "name": "Juan Perez",       # solo hace falta si el telefono es nuevo
+            "delivery_address": {"street", "ext_num", "int_num",
+                                 "neighborhood", "zip", "city"},
+        }
+
+        Devuelve {"saved": bool, "reason": None|str, "partner_created": bool,
+        "address_created": bool}. `reason` es 'disabled', 'incomplete',
+        'out_of_coverage', 'phone_invalid', 'phone_ambiguous', 'name_required'
+        o 'error'.
+
+        Antes la direccion solo se guardaba en `agent_prepare_booking`, al
+        generar la liga de pago: quien la daba para cotizar y volvia otro dia
+        tenia que repetirla (14-oct-2026). El runtime llama aqui cuando el
+        cliente YA dijo que esa es su direccion; lo que solo propuso el mapa no
+        llega nunca.
+
+        Un telefono nuevo estrena ficha de cliente con el nombre que dio. Tanto
+        esa ficha como la direccion quedan marcadas `visar_chat_sin_reserva`
+        hasta que reserve. Y de las direcciones marcadas de un cliente solo se
+        conserva la ULTIMA: la anterior sin pedidos se archiva, para que
+        "Reforma 123" y "Av. Reforma 123" no acaben siendo dos domicilios que
+        el agente le ofrece a elegir.
+        """
+        fallo = {'saved': False, 'reason': 'error',
+                 'partner_created': False, 'address_created': False}
+        try:
+            with self.env.cr.savepoint():
+                return self._agent_save_address_ahora(payload or {})
+        except Exception:  # noqa: BLE001 - guardar de mas nunca tumba el turno
+            _logger.exception(
+                "agent_save_address: no se pudo guardar la direccion de %r",
+                (payload or {}).get('phone'))
+            return fallo
+
+    @api.model
+    def _agent_save_address_ahora(self, payload):
+        def no(reason):
+            return {'saved': False, 'reason': reason,
+                    'partner_created': False, 'address_created': False}
+
+        if not visar_chat_address_enabled(self.env):
+            return no('disabled')
+        direccion = {
+            k: ' '.join(str((payload.get('delivery_address') or {}).get(k) or '').split())
+            for k in ('street', 'ext_num', 'int_num', 'neighborhood', 'zip', 'city')}
+        if not all(direccion[k] for k in ('street', 'ext_num', 'neighborhood')) \
+                or not re.fullmatch(r'\d{5}', direccion['zip']):
+            return no('incomplete')
+        if not self._agent_booking_zone({'cp': direccion['zip']}):
+            return no('out_of_coverage')
+
+        Partner = self.env['res.partner'].sudo()
+        key = Partner._visar_phone_nat10_value(payload.get('phone'))
+        if not key:
+            return no('phone_invalid')
+        matches = Partner.search([('visar_phone_nat10', '=', key)])
+        if len(matches) > 1:
+            return no('phone_ambiguous')
+        partner_created = False
+        partner = matches
+        if not partner:
+            nombre = ' '.join((payload.get('name') or '').split())
+            # La misma vara que el paso del nombre del cuestionario.
+            if len(nombre) < 3 or not any(ch.isalpha() for ch in nombre):
+                return no('name_required')
+            partner = Partner.create({
+                'name': nombre, 'phone': payload.get('phone'),
+                'visar_chat_sin_reserva': True,
+            })
+            partner_created = True
+
+        domicilio, address_created = \
+            self.env['sale.order'].sudo()._visar_delivery_partner_for(
+                partner, direccion, partner_name=partner.name)
+        if address_created:
+            domicilio.visar_chat_sin_reserva = True
+            anteriores = Partner.search([
+                ('parent_id', '=', partner.commercial_partner_id.id),
+                ('type', '=', 'delivery'),
+                ('visar_chat_sin_reserva', '=', True),
+                ('id', '!=', domicilio.id),
+            ])
+            for anterior in anteriores:
+                if not anterior._visar_chat_tiene_pedidos():
+                    anterior.active = False
+        return {'saved': True, 'reason': None,
+                'partner_created': partner_created,
+                'address_created': address_created}
+
     @api.model
     def _agent_booking_needs_name(self, phone):
         """¿Este telefono es de alguien a quien todavia no conocemos por nombre?
@@ -2987,6 +3091,9 @@ class VisarAgentTools(models.AbstractModel):
         domicilio = order._visar_apply_delivery_address(
             payload.get('delivery_address'), partner_name=partner.name)
         self._agent_guardar_medidas(domicilio, payload)
+        # Ya reservo: ni la ficha ni la direccion son "del chat, sin reserva".
+        (partner | domicilio).sudo().filtered('visar_chat_sin_reserva').write(
+            {'visar_chat_sin_reserva': False})
         # Sin esto el portal puede mostrar la orden sin boton de pago.
         order.require_payment = True
 

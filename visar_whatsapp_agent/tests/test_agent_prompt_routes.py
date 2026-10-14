@@ -126,7 +126,7 @@ class TestAgentPromptRoutes(TransactionCase):
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
-                           'wa_templates', 'correcciones', 'address_cp',
+                           'wa_templates', 'correcciones', 'address_cp', 'save_address',
                            'brand'})
         self.assertIsInstance(payload['route_prompts'], dict)
         self.assertEqual(set(payload['route_prompts']), {'info', 'schedule'})
@@ -319,7 +319,7 @@ class TestAgentRouteMeta(TransactionCase):
         payload = self.env['visar.agent.tools'].agent_runtime_config()
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
-                           'wa_templates', 'correcciones', 'address_cp',
+                           'wa_templates', 'correcciones', 'address_cp', 'save_address',
                            'brand'})
         self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
         for cuerpo in payload['route_prompts'].values():

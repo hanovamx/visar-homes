@@ -11,6 +11,8 @@ propia regla, la respuesta correcta es bajar la regla al modelo, no duplicarla
 aqui: es el riesgo de "dos front-ends" del diseno 33 §11, que ya se cobro una
 vez (I-11, el web cobrando 2,400 donde la cotizacion decia 1,900).
 """
+from unittest.mock import patch
+
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -106,6 +108,22 @@ class TestAgentBookingStep(TransactionCase):
         Partner.create({'name': 'Cliente Nuevo', 'phone': nuevo})
         self.assertFalse(self.Tools._agent_booking_needs_name(nuevo),
                          "una vez dado de alta, deja de preguntarse")
+
+    def test_el_nombre_se_pregunta_antes_que_la_direccion(self):
+        """Con nombre y direccion el agente ya puede guardar la ficha, sin
+        esperar a la liga de pago (14-oct-2026)."""
+        Flow = self.env['appointment.type']
+        nuevo = '5219998887755'
+        booking = {'mode': 'wizard', 'selections': {}, 'needs_name': True}
+        with patch.object(type(Flow), '_visar_wizard_next_step',
+                          return_value='address'):
+            self.assertEqual(Flow._visar_wizard_next_pending_step(booking), 'nombre')
+            state = self.Tools.agent_booking_step({
+                'booking': booking, 'step': 'nombre',
+                'answer': {'nombre': 'Maria Lopez'}, 'phone': nuevo})
+        self.assertIsNone(state['error'])
+        self.assertEqual(state['step'], 'address')
+        self.assertEqual(state['selections'].get('nombre'), 'Maria Lopez')
 
     def test_sin_telefono_no_se_pregunta_el_nombre(self):
         """Sin clave no se puede afirmar que sea alguien nuevo, y el paso seria

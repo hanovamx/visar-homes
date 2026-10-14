@@ -642,8 +642,15 @@ class TestWizardFlow(TransactionCase):
         self.assertTrue(self.AptType._visar_wizard_needs_name(booking))
         self.assertEqual(
             self.AptType._visar_wizard_step_after(booking, 'address'),
-            VISAR_STEP_NAME,
-            "y va justo despues de la direccion")
+            VISAR_STEP_NAME)
+        # En el chat va ANTES de la direccion (14-oct-2026).
+        sin_direccion = dict(booking, delivery_address={}, zone_id=False, items=[])
+        if self.AptType._visar_wizard_next_step(sin_direccion) == 'address':
+            self.assertEqual(
+                self.AptType._visar_wizard_next_pending_step(sin_direccion),
+                VISAR_STEP_NAME)
+        secuencia = self.AptType._visar_wizard_step_sequence(booking)
+        self.assertLess(secuencia.index(VISAR_STEP_NAME), secuencia.index('address'))
 
     def test_el_nombre_ya_dado_no_se_vuelve_a_pedir(self):
         """La cadena no puede rebotar al paso que se acaba de contestar."""

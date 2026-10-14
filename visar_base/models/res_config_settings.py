@@ -27,6 +27,30 @@ from .visar_zone_cp import (
 # Ajustes → Visar, para que el siguiente cambio de marca no pida un despliegue.
 # Lo leen el agente de WhatsApp (su saludo, su despedida y su prompt, donde va
 # como `{{marca}}`) y los avisos que Odoo manda por WhatsApp.
+# Guardar la dirección del cliente en cuanto la confirma por WhatsApp, y no al
+# generar la liga de pago (14-oct-2026). Lo que se guarda así y nunca llega a
+# reservar se archiva solo pasado el plazo.
+CHAT_ADDRESS_ENABLED_PARAM = 'visar.chat_address.enabled'
+CHAT_ADDRESS_DAYS_PARAM = 'visar.chat_address.days'
+CHAT_ADDRESS_DAYS_DEFAULT = 60
+
+
+def visar_chat_address_enabled(env):
+    raw = env['ir.config_parameter'].sudo().get_param(
+        CHAT_ADDRESS_ENABLED_PARAM, '0')
+    return str(raw).strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+
+
+def visar_chat_address_days(env):
+    raw = env['ir.config_parameter'].sudo().get_param(
+        CHAT_ADDRESS_DAYS_PARAM, CHAT_ADDRESS_DAYS_DEFAULT)
+    try:
+        dias = int(float(raw))
+    except (TypeError, ValueError):
+        return CHAT_ADDRESS_DAYS_DEFAULT
+    return dias if dias > 0 else CHAT_ADDRESS_DAYS_DEFAULT
+
+
 BRAND_NAME_PARAM = 'visar.brand_name'
 BRAND_NAME_DEFAULT = "Visar Go"
 BRAND_PLACEHOLDER = '{{marca}}'
@@ -186,6 +210,30 @@ class ResConfigSettings(models.TransientModel):
              "postal. Más alto = menos sugerencias y menos equivocadas.")
     # El área de búsqueda NO está aquí a propósito: se deriva sola de los
     # códigos postales con cobertura (`visar.zone.cp._visar_address_cp_bbox`).
+
+    visar_chat_address_enabled = fields.Boolean(
+        string="Guardar la dirección en cuanto el cliente la confirma",
+        config_parameter=CHAT_ADDRESS_ENABLED_PARAM,
+        help="El agente de WhatsApp guarda la dirección en la ficha del cliente "
+             "cuando este la confirma, sin esperar a la liga de pago. A quien "
+             "escribe por primera vez le pregunta antes su nombre y le crea la "
+             "ficha en ese momento. Apagado, la dirección se guarda al generar "
+             "la liga de pago, como siempre.")
+    visar_chat_address_days = fields.Integer(
+        string="Días que se conserva sin reserva",
+        config_parameter=CHAT_ADDRESS_DAYS_PARAM,
+        default=CHAT_ADDRESS_DAYS_DEFAULT,
+        help="Los clientes y las direcciones que se crearon desde el chat y no "
+             "llegaron a reservar nada se archivan pasados estos días.")
+
+    @api.constrains('visar_chat_address_days')
+    def _check_visar_chat_address_days(self):
+        for record in self:
+            if record.visar_chat_address_days is not None \
+                    and record.visar_chat_address_days < 1:
+                raise ValidationError(
+                    "Los días que se conserva una dirección sin reserva tienen "
+                    "que ser al menos 1.")
 
     @api.constrains('visar_address_cp_min_relevance')
     def _check_visar_address_cp(self):

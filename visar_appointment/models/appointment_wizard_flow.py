@@ -760,9 +760,9 @@ class AppointmentType(models.Model):
         ofreciendo aunque el cliente ya haya dicho que no). Arrancar siempre desde
         el principio devolvería al cliente al paso que acaba de contestar.
 
-        El nombre va **aquí y no antes** a propósito: es el único dato que se pide
-        por gusto del sistema y no del cliente, así que se cobra cuando ya hay
-        algo que agendar, no en la puerta.
+        El nombre sigue en esta cadena por quien la recorre desde la dirección,
+        pero el cuestionario del chat lo pregunta ANTES de la dirección
+        (`_visar_wizard_next_pending_step`).
         """
         chain = [VISAR_STEP_NAME, VISAR_STEP_EXTRAS, VISAR_STEP_POLIZA,
                  VISAR_STEP_SCHEDULE]
@@ -811,6 +811,11 @@ class AppointmentType(models.Model):
         step = self._visar_wizard_next_step(booking)
         if step != VISAR_STEP_ADDRESS:
             return step
+        # El nombre va ANTES de la dirección (14-oct-2026): con los dos, el
+        # agente guarda la dirección en la ficha del cliente en ese momento y no
+        # al final, y quien deja la reserva a medias no tiene que repetirla.
+        if self._visar_wizard_needs_name(booking):
+            return VISAR_STEP_NAME
         # La dirección es el paso que resuelve zona e items: sin ellos resueltos,
         # sigue pendiente por mucho que haya un texto guardado.
         if not (booking.get('delivery_address') and booking.get('zone_id')
@@ -818,8 +823,6 @@ class AppointmentType(models.Model):
             return VISAR_STEP_ADDRESS
 
         selections = booking.get('selections') or {}
-        if self._visar_wizard_needs_name(booking):
-            return VISAR_STEP_NAME
         if ('extras_ids' not in selections
                 and self._visar_wizard_extras_offers(booking)):
             return VISAR_STEP_EXTRAS
@@ -861,9 +864,9 @@ class AppointmentType(models.Model):
                            ('direct', 'dimensiones')):
             if mtype in measure_types:
                 steps.append(key)
-        steps.append(VISAR_STEP_ADDRESS)
         if self._visar_wizard_needs_name(booking):
             steps.append(VISAR_STEP_NAME)
+        steps.append(VISAR_STEP_ADDRESS)
         # Extras y póliza solo existen tras resolver zona/items y si hay qué ofrecer.
         if booking.get('zone_id') and booking.get('items'):
             if self._visar_wizard_extras_offers(booking):
