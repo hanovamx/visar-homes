@@ -422,7 +422,10 @@ class TestWizardFlow(TransactionCase):
 
         self.assertIn('Puedes decirme varios', pista('services'))
         self.assertIn('lo que quieres evitar', pista('plagas'))
-        self.assertIn('no hay costo adicional', pista('cobertura'))
+        self.assertIn('tanto interior como exterior', pista('cobertura'))
+        # Sin datos del tabulador escritos a mano (14-oct-2026).
+        self.assertNotIn('50', pista('cobertura'))
+        self.assertNotIn('costo', pista('cobertura'))
         self.assertIn('no los del terreno', pista('interior'))
 
         # En correctivo el cliente reporta lo que TIENE, y puede ser más de una.

@@ -2240,12 +2240,12 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'single', 'answer_key': 'cobertura',
                 'title': _('¿Dónde fumigamos?'),
-                # El tramo exterior de 0-50 m2 va incluido en el servicio, asi
-                # que para la mayoria de los patios "ambos" no cuesta mas. Sin
-                # decirlo, el cliente elige interior por miedo al precio.
+                # Se recomienda "ambos" sin dar razones de precio. Decía que
+                # de 1 a 50 m² el exterior no costaba más: era un dato del
+                # tabulador escrito a mano, y Visar pidió que todo lo que sea
+                # precio salga de Odoo (14-oct-2026).
                 'hint': _('Te recomendamos fumigar tanto interior como '
-                          'exterior: no hay costo adicional si tu patio o '
-                          'jardín mide entre 1 y 50 m².'),
+                          'exterior.'),
                 # `keywords` es el vocabulario del CLIENTE, que casi nunca es
                 # el de la etiqueta. Vive aqui y no en el runtime por lo de
                 # siempre: es copy de negocio y lo edita un consultor.
