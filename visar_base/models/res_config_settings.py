@@ -51,6 +51,24 @@ def visar_chat_address_days(env):
     return dias if dias > 0 else CHAT_ADDRESS_DAYS_DEFAULT
 
 
+# Cuántos segundos espera el agente de WhatsApp tras el último mensaje del
+# cliente antes de contestar, para leer juntos los que llegan partidos
+# (14-oct-2026). 0 = contesta cada mensaje en cuanto llega, como antes.
+REPLY_WAIT_PARAM = 'visar.agent.reply_wait_seconds'
+REPLY_WAIT_DEFAULT = 0
+REPLY_WAIT_MAX = 60
+
+
+def visar_reply_wait_seconds(env):
+    raw = env['ir.config_parameter'].sudo().get_param(
+        REPLY_WAIT_PARAM, REPLY_WAIT_DEFAULT)
+    try:
+        segundos = int(float(raw))
+    except (TypeError, ValueError):
+        return REPLY_WAIT_DEFAULT
+    return min(max(segundos, 0), REPLY_WAIT_MAX)
+
+
 BRAND_NAME_PARAM = 'visar.brand_name'
 BRAND_NAME_DEFAULT = "Visar Go"
 BRAND_PLACEHOLDER = '{{marca}}'
@@ -225,6 +243,24 @@ class ResConfigSettings(models.TransientModel):
         default=CHAT_ADDRESS_DAYS_DEFAULT,
         help="Los clientes y las direcciones que se crearon desde el chat y no "
              "llegaron a reservar nada se archivan pasados estos días.")
+
+    visar_reply_wait_seconds = fields.Integer(
+        string="Segundos de espera antes de responder",
+        config_parameter=REPLY_WAIT_PARAM,
+        default=REPLY_WAIT_DEFAULT,
+        help="Tras el último mensaje del cliente, el agente de WhatsApp espera "
+             "estos segundos antes de contestar. Si en ese rato llegan más "
+             "mensajes, los lee todos juntos y contesta una sola vez. "
+             "0 = contesta cada mensaje en cuanto llega.")
+
+    @api.constrains('visar_reply_wait_seconds')
+    def _check_visar_reply_wait_seconds(self):
+        for record in self:
+            segundos = record.visar_reply_wait_seconds
+            if segundos is not None and not (0 <= segundos <= REPLY_WAIT_MAX):
+                raise ValidationError(
+                    "La espera antes de responder tiene que estar entre 0 y "
+                    "%d segundos." % REPLY_WAIT_MAX)
 
     @api.constrains('visar_chat_address_days')
     def _check_visar_chat_address_days(self):

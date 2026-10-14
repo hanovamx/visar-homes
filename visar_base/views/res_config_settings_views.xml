@@ -91,6 +91,19 @@
                             agendado y en el sitio web es inmediato.
                         </div>
                     </block>
+                    <block title="Agente de WhatsApp: espera antes de responder" name="visar_reply_wait">
+                        <setting string="Segundos de espera"
+                                 help="Tras el último mensaje del cliente el agente espera estos segundos antes de contestar. Si en ese rato llegan más mensajes, los lee juntos y contesta una sola vez.">
+                            <field name="visar_reply_wait_seconds"/>
+                            <span class="text-muted">segundos (0 a 60; 0 = sin espera)</span>
+                        </setting>
+                        <div class="text-muted mt-2 ms-1">
+                            Cada respuesta del agente tarda estos segundos de más. Si el
+                            cliente sigue escribiendo, la espera vuelve a empezar, hasta
+                            un tope de cuatro veces este valor. Tocar un botón no
+                            espera. El cambio tarda hasta 15 minutos en aplicarse.
+                        </div>
+                    </block>
                     <block title="Dirección del cliente por WhatsApp" name="visar_chat_address">
                         <setting string="Guardar la dirección en cuanto el cliente la confirma"
                                  help="El agente la guarda en la ficha del cliente cuando este la confirma, sin esperar a la liga de pago. A quien escribe por primera vez le pregunta antes su nombre y le crea la ficha.">

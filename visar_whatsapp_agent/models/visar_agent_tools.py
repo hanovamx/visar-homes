@@ -24,6 +24,7 @@ from markupsafe import Markup, escape
 from odoo import api, fields, models
 from odoo.addons.visar_base.models.res_config_settings import (
     visar_chat_address_enabled,
+    visar_reply_wait_seconds,
     BRAND_PLACEHOLDER,
     visar_brand_name,
 )
@@ -348,6 +349,10 @@ class VisarAgentTools(models.AbstractModel):
             # en True el runtime pregunta el nombre antes de la direccion a
             # quien no es cliente y llama a `agent_save_address`. Ausente = no.
             'save_address': visar_chat_address_enabled(self.env),
+            # Segundos que el runtime espera tras el ultimo mensaje del cliente
+            # antes de contestar, para leer juntos los que llegan partidos.
+            # 0 o ausente = contesta en cuanto llega.
+            'reply_wait_seconds': visar_reply_wait_seconds(self.env),
             # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
             # ausente es "mensaje libre", lo de siempre. Ver
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y

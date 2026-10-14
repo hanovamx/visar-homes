@@ -127,6 +127,7 @@ class TestAgentPromptRoutes(TransactionCase):
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
                            'wa_templates', 'correcciones', 'address_cp', 'save_address',
+                           'reply_wait_seconds',
                            'brand'})
         self.assertIsInstance(payload['route_prompts'], dict)
         self.assertEqual(set(payload['route_prompts']), {'info', 'schedule'})
@@ -320,6 +321,7 @@ class TestAgentRouteMeta(TransactionCase):
         self.assertEqual(
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
                            'wa_templates', 'correcciones', 'address_cp', 'save_address',
+                           'reply_wait_seconds',
                            'brand'})
         self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
         for cuerpo in payload['route_prompts'].values():

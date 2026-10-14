@@ -181,3 +181,27 @@ class TestAgentSaveAddress(TransactionCase):
         self.Partner._visar_cron_archivar_chat_sin_reserva()
         self.assertTrue(cliente.active)
         self.assertFalse(domicilio.active)
+
+
+@tagged('post_install', '-at_install')
+class TestAgentReplyWait(TransactionCase):
+    """La espera antes de responder viaja al runtime, acotada (14-oct-2026)."""
+
+    def test_el_runtime_recibe_los_segundos_acotados(self):
+        Param = self.env['ir.config_parameter'].sudo()
+        Tools = self.env['visar.agent.tools']
+        Param.search([('key', '=', 'visar.agent.reply_wait_seconds')]).unlink()
+        self.assertEqual(Tools.agent_runtime_config()['reply_wait_seconds'], 0)
+        for guardado, esperado in (('8', 8), ('500', 60), ('-3', 0), ('x', 0)):
+            Param.set_param('visar.agent.reply_wait_seconds', guardado)
+            self.assertEqual(
+                Tools.agent_runtime_config()['reply_wait_seconds'], esperado)
+
+    def test_ajustes_rechaza_un_valor_fuera_de_rango(self):
+        from odoo.exceptions import ValidationError
+        Ajustes = self.env['res.config.settings']
+        Ajustes.create({'visar_reply_wait_seconds': 8}).execute()
+        self.assertEqual(
+            self.env['visar.agent.tools'].agent_runtime_config()['reply_wait_seconds'], 8)
+        with self.assertRaises(ValidationError):
+            Ajustes.create({'visar_reply_wait_seconds': 61})
