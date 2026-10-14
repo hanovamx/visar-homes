@@ -2456,7 +2456,8 @@ class AppointmentType(models.Model):
             return {
                 'step': step_key, 'kind': 'free_text', 'answer_key': 'nombre',
                 'title': _('¿A nombre de quién agendo el servicio?'),
-                'placeholder': _('Ej: María López'),
+                # Sin `placeholder`: llevaba un nombre de ejemplo y Visar pidió
+                # quitar los ejemplos del agendado por chat (14-oct-2026).
                 'options': [],
             }
 
