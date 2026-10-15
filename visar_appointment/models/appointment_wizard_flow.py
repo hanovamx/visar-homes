@@ -2455,7 +2455,9 @@ class AppointmentType(models.Model):
             # tiene que guiarlos uno por uno.
             return {
                 'step': step_key, 'kind': 'free_text', 'answer_key': 'nombre',
-                'title': _('¿A nombre de quién agendo el servicio?'),
+                # Directo (15-oct-2026): "¿A nombre de quién…?" se leía como
+                # pedir la dirección y llegaban calles por nombre.
+                'title': _('¿Me compartes tu nombre?'),
                 # Sin `placeholder`: llevaba un nombre de ejemplo y Visar pidió
                 # quitar los ejemplos del agendado por chat (14-oct-2026).
                 'options': [],
