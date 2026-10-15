@@ -181,11 +181,12 @@ class TestAgentFacts(TransactionCase):
         self.assertEqual((casa['street'], casa['ext_num'], casa['int_num']),
                          ('Calle 1', '10', '4 B'))
 
-    def test_con_demasiadas_direcciones_no_se_enumeran(self):
+    def test_con_demasiadas_direcciones_se_pregunta_la_colonia(self):
         """En producción hay un cliente con 31 y otro con 13.
 
-        Leerle trece colonias a alguien que preguntó un precio es peor que no
-        decirle ninguna — pero el aviso de que NO suponga sigue haciendo falta.
+        Leerle trece colonias es peor que no decirle ninguna, así que no se le
+        leen: se le pregunta la colonia y el modelo la busca en la lista, que sí
+        la tiene (15-oct-2026; antes no, y se le pedía el código postal igual).
         """
         for i in range(6):
             self.env['res.partner'].create({
@@ -194,8 +195,11 @@ class TestAgentFacts(TransactionCase):
                 'street': 'Calle %d' % i, 'street2': 'Colonia %d' % i})
         bloque = self._facts()['block']
         self.assertIn('demasiadas', bloque)
-        self.assertNotIn('Colonia 0', bloque)
+        self.assertIn('Colonia 0', bloque, "el modelo tiene con qué buscar")
+        self.assertIn('NO le leas esa lista', bloque)
+        self.assertIn('EN QUE COLONIA', bloque)
         self.assertIn('NUEVA', bloque, "y la salida sigue ahí")
+        self.assertNotIn('Calle 0', bloque, "la calle no viaja")
 
     def test_dos_direcciones_en_la_misma_colonia_se_desempatan(self):
         """Si no, el agente ofrece dos veces «Las Torres» y no se puede contestar."""

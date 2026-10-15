@@ -110,11 +110,26 @@ UN_DOMICILIO = (
 )
 # Con muchas direcciones no se enumeran, pero el aviso sigue haciendo falta: lo
 # que no puede pasar es que el agente suponga.
+# Con mas de MAX_DOMICILIOS_NOMBRADOS (Visar, 15-oct-2026): no se le leen, se le
+# pregunta la COLONIA y el modelo la busca en la lista. Antes no se le daba la
+# lista y se pedia el codigo postal igual, justo a los clientes con mas casas.
+# Van sin repetir: dos casas en la misma colonia comparten codigo postal, y para
+# cotizar basta.
 MUCHOS_DOMICILIOS = (
     "- Este cliente tiene %(cuantas)d direcciones con nosotros, demasiadas para "
-    "listarselas.\n"
-    "- Preguntale a cual de ellas es, o si es una direccion NUEVA. No supongas "
-    "ninguna, y pide el codigo postal y los metros igual."
+    "leerselas. Sus colonias, con su codigo postal: %(lista)s.\n"
+    "- NO le leas esa lista. ANTES de pedirle ninguna direccion ni codigo "
+    "postal, preguntale EN QUE COLONIA es el servicio, y ofrece SIEMPRE la "
+    "salida de que sea una direccion NUEVA.\n"
+    "- Si la colonia que te dice es una de esas (aunque la escriba abreviada o "
+    "con faltas), YA CONTESTO: no le vuelvas a preguntar si es esa o una nueva. "
+    "Ya tienes su codigo postal: usalo tal cual en `resolve_zone` y "
+    "`quote_service`, y sigue. NO le pidas la direccion, ni la calle, ni el "
+    "codigo postal: ya los tenemos.\n"
+    "- Si no esta en la lista, o dice que es nueva, pidele donde es como a "
+    "cualquier cliente.\n"
+    "- Los metros se piden igual, salvo los que esa direccion tenga guardados, "
+    "que se confirman."
 )
 
 
@@ -187,8 +202,21 @@ class VisarAgentFacts(models.AbstractModel):
                 return ''
             return UN_DOMICILIO % {'lista': "%s (CP %s)" % (nombre, cps[nombre])}
         nombres = [n for n, _f in domicilios if n]
-        if len(domicilios) > MAX_DOMICILIOS_NOMBRADOS or not nombres:
-            return MUCHOS_DOMICILIOS % {'cuantas': len(domicilios)}
+        if not nombres:
+            return ''
+        if len(domicilios) > MAX_DOMICILIOS_NOMBRADOS:
+            # La colonia sin el desempate de la calle ("Contry (Rio Nazas)"):
+            # se le pregunta la colonia, y la calle no se le dice.
+            colonias = {}
+            for n in nombres:
+                cps_de = colonias.setdefault(n.split(' (')[0], [])
+                if cps.get(n) and cps[n] not in cps_de:
+                    cps_de.append(cps[n])
+            return MUCHOS_DOMICILIOS % {
+                'cuantas': len(domicilios),
+                'lista': ", ".join(
+                    "%s (CP %s)" % (c, "/".join(v)) if v else c
+                    for c, v in colonias.items())}
         return VARIOS_DOMICILIOS % {'lista': ", ".join(
             "%s (CP %s)" % (n, cps[n]) if cps.get(n) else n for n in nombres)}
 
