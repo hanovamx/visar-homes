@@ -9,6 +9,7 @@ from . import visar_agent_tools
 from . import visar_agent_facts
 from . import visar_agent_saludo
 from . import visar_agent_plaga
+from . import visar_poliza_aviso
 from . import wa_booking_outbox
 from . import calendar_booking
 from . import visar_slot_hold

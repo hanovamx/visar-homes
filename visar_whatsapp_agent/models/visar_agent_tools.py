@@ -1108,6 +1108,10 @@ class VisarAgentTools(models.AbstractModel):
                 'reschedule_reason': bloqueo,
                 'reschedule_granted': bool(
                     evento and evento.visar_reschedule_granted_at),
+                # Visita de suscripcion pre-agendada: se mueve por escalera
+                # (mismo dia, ±3, ±7) para que la serie no derive.
+                'escalera': bool(evento and tarea.visar_subscription_order_id
+                                 and tarea.visar_visit_preagendada),
                 '_sort': date or fields.Datetime.end_of(now, 'year'),
             })
         return entries
@@ -2069,7 +2073,13 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def agent_reschedule_days(self, payload):
-        """Dias con hueco para mover una cita. `payload` = {phone, event_id}."""
+        """Dias con hueco para mover una cita. `payload` = {phone, event_id, ventana?}.
+
+        `ventana` (dias): solo los dias a esa distancia de la fecha ACTUAL de la
+        cita, a cada lado. Es la escalera de las visitas de suscripcion (±3 y
+        luego ±7, decision del 1-oct-2026): el calendario de visitas no deriva
+        porque el que no puede la mueve lo minimo.
+        """
         event, error = self._agent_reschedule_event(payload)
         if error:
             return {'days': [], 'min_hours': 0, 'blocked': error,
@@ -2079,11 +2089,22 @@ class VisarAgentTools(models.AbstractModel):
             return {'days': [], 'min_hours': 0, 'blocked': motivo,
                     'message': "Esa cita no se puede mover."}
 
-        apt_type, months, _tz = self._agent_reschedule_tree(event)
+        apt_type, months, tz_info = self._agent_reschedule_tree(event)
         if not apt_type:
             return {'days': [], 'min_hours': 0, 'blocked': None,
                     'message': "No hay horarios disponibles por ahora."}
 
+        try:
+            ventana = int(payload.get('ventana') or 0)
+        except (TypeError, ValueError):
+            ventana = 0
+        if ventana > 0:
+            # Se filtra el ARBOL antes de ordenar y recortar: recortar primero
+            # dejaria fuera dias de la ventana que no entraron en los 10.
+            ancla = pytz.utc.localize(event.start).astimezone(tz_info).date()
+            months = self._agent_months_window(
+                months, ancla - relativedelta(days=ventana),
+                ancla + relativedelta(days=ventana))
         days = self._agent_rank_days(months)
         return {
             'days': days,
@@ -2093,6 +2114,24 @@ class VisarAgentTools(models.AbstractModel):
             'message': ("%d dia(s) con disponibilidad." % len(days) if days
                         else "No hay horarios disponibles por ahora."),
         }
+
+    @api.model
+    def _agent_months_window(self, months, desde, hasta):
+        """El arbol nativo con los dias fuera de [desde, hasta] sin horarios."""
+        recortado = []
+        for month in months or []:
+            semanas = []
+            for week in month.get('weeks', []):
+                dias = []
+                for day in week:
+                    if isinstance(day, dict) and day.get('slots'):
+                        fecha = fields.Date.to_date(day.get('day'))
+                        if not fecha or not (desde <= fecha <= hasta):
+                            day = dict(day, slots=[])
+                    dias.append(day)
+                semanas.append(dias)
+            recortado.append(dict(month, weeks=semanas))
+        return recortado
 
     @api.model
     def agent_reschedule_slots(self, payload):

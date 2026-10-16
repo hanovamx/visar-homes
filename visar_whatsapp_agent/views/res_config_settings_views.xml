@@ -10,6 +10,34 @@
         <field name="inherit_id" ref="visar_base.res_config_settings_view_form_visar"/>
         <field name="arch" type="xml">
             <xpath expr="//block[@name='visar_address_cp']" position="after">
+                <block title="Visitas de suscripción por WhatsApp" name="visar_poliza_aviso">
+                    <setting string="Avisar por WhatsApp las visitas de suscripción"
+                             help="Antes de cada visita que el sistema pre-agendó, el cliente recibe la fecha con dos botones: «Sí, confirmo» y «Quiero cambiarla». Si quiere cambiarla, el agente le ofrece otros horarios ese mismo día, luego hasta 3 días antes o después, y luego hasta 7. Si no contesta, la visita se queda como está.">
+                        <field name="visar_poliza_aviso_enabled"/>
+                    </setting>
+                    <setting string="Días antes de la visita"
+                             help="El primero es el aviso; los demás, recordatorios si no contestó. Separados por coma."
+                             invisible="not visar_poliza_aviso_enabled">
+                        <field name="visar_poliza_aviso_dias" placeholder="14,7,2"/>
+                    </setting>
+                    <setting string="Horario de envío"
+                             help="Hora local. Fuera de este horario no se manda nada; lo pendiente sale en cuanto vuelve a abrir."
+                             invisible="not visar_poliza_aviso_enabled">
+                        <div class="d-flex gap-2 align-items-center">
+                            <span>de las</span>
+                            <field name="visar_poliza_aviso_hora_desde" class="oe_inline"/>
+                            <span>a las</span>
+                            <field name="visar_poliza_aviso_hora_hasta" class="oe_inline"/>
+                        </div>
+                    </setting>
+                    <div class="text-muted mt-2 ms-1"
+                         invisible="not visar_poliza_aviso_enabled">
+                        La plantilla de Meta se elige en Agente WhatsApp →
+                        Plantillas de avisos («Visita de suscripción — confirmar o
+                        cambiarla»). Sin plantilla, el aviso solo llega a quien
+                        escribió en las últimas 24 horas.
+                    </div>
+                </block>
                 <block title="Saludo del agente de WhatsApp" name="visar_agent_saludo">
                     <setting string="Saludar según el cliente"
                              help="Apagado, todos reciben el saludo de siempre. Encendido, quien ya había escrito o ya es cliente recibe el suyo, y quien tiene una suscripción con visita agendada, la fecha de esa visita. Los botones son los mismos para todos.">

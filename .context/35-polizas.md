@@ -550,10 +550,37 @@ Al arreglarlo salieron dos fallos **preexistentes** en esa lista, los dos correg
 
 * **No le escribe a ningún cliente.** Oficina confirma por teléfono desde la pantalla. El
   aviso automático por WhatsApp con los dos botones («Sí, confirmo» / «Quiero cambiarla»)
-  y el escalado de horarios son la **Fase B**.
+  y el escalado de horarios son la **Fase B** (hecha el 16-oct-2026, ver abajo).
 * **No toca el rezago de 181 visitas sin fecha** (son datos de prueba; decisión del
   usuario). Solo de aquí en adelante.
 * Correctivas y garantías siguen siendo de oficina.
+
+---
+
+## El aviso al cliente (paso 2, Fase B — 16-oct-2026, `visar_whatsapp_agent` 19.0.1.43.0)
+
+Lo que la Fase A dejó a oficina (confirmar por teléfono) ahora lo puede hacer
+WhatsApp. **Nace apagado**: Ajustes → Visar → *Visitas de suscripción por
+WhatsApp* (interruptor, días «14,7,2», horario de envío).
+
+| qué | dónde |
+|---|---|
+| cron horario que decide a quién avisar | `project.task._visar_cron_poliza_avisos` (`models/visar_poliza_aviso.py`) |
+| buzón | `visar.wa.poliza.message` (mixin de siempre) → `/internal/booking-event`, clave `poliza_confirmar` |
+| plantilla | `visar_poliza_confirmar_visita` (id 20, aprobada), dos botones; `quick_reply` de `ESPECIFICACION` pasó de booleano a **conteo** |
+| «Sí, confirmo» | RPC `agent_poliza_confirm` → `visar_visit_preagenda_confirmada` |
+| «Quiero cambiarla» | RPC `agent_poliza_change` (solo apunta) + reagendado con **escalera**: mismo día → ±3 → ±7 → asesor (`agent_reschedule_days` acepta `ventana`) |
+| campos en la visita | `visar_visit_aviso_at` (entregado), `_aviso_hito`, `_aviso_ultimo_at`, `visar_visit_respuesta` |
+
+* **Un aviso por hito.** El hito se marca al encolar; con avisos a 14/7/2 toca el
+  más chico que ya llegó, y nunca dos de la misma visita en menos de 36 h.
+* **Avisada = la puede mover.** `_visar_poliza_blocked` se relaja (override en
+  `visar_whatsapp_agent`) solo para las pre-agendas con `visar_visit_aviso_at`,
+  que se escribe al ENTREGAR el aviso, no al encolarlo.
+* Los botones llevan la cita en el payload (`__pol_si__:<event_id>`), así que el
+  tap funciona aunque la conversación haya caducado (3 h).
+* Silencio = la visita se queda como está; después del último hito no se insiste.
+* Sin teléfono válido: actividad «Visita de suscripción: avisar por teléfono».
 
 ---
 

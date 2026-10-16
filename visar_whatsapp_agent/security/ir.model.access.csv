@@ -35,3 +35,5 @@ access_agent_correccion_readonly,agent.correccion.readonly,model_visar_agent_cor
 access_agent_correccion_manager,agent.correccion.manager,model_visar_agent_correccion,base.group_system,1,1,1,1
 access_agent_contacto_readonly,agent.contacto.readonly,model_visar_agent_contacto,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_contacto_manager,agent.contacto.manager,model_visar_agent_contacto,base.group_system,1,1,0,1
+access_wa_poliza_message_user,visar.wa.poliza.message user,model_visar_wa_poliza_message,base.group_user,1,0,0,0
+access_wa_poliza_message_manager,visar.wa.poliza.message manager,model_visar_wa_poliza_message,base.group_system,1,1,1,1

@@ -143,6 +143,19 @@ class TestPlantillasDeAvisos(TransactionCase):
         self._fila('reschedule_offer').template_id = con_boton
         self.assertEqual(self._fila('reschedule_offer').template_id, con_boton)
 
+    def test_la_visita_de_suscripcion_exige_sus_dos_botones(self):
+        """«Sí, confirmo» y «Quiero cambiarla»: uno solo dejaría sin salida."""
+        cuerpo = "Hola {{1}}, su visita es el {{2}}. ¿Le queda bien?"
+        uno = self._plantilla('prueba_poliza_un_boton', cuerpo,
+                              botones=[('quick_reply', 'Sí, confirmo')])
+        with self.assertRaises(ValidationError):
+            self._fila('poliza_confirmar').template_id = uno
+        dos = self._plantilla('prueba_poliza_dos_botones', cuerpo,
+                              botones=[('quick_reply', 'Sí, confirmo'),
+                                       ('quick_reply', 'Quiero cambiarla')])
+        self._fila('poliza_confirmar').template_id = dos
+        self.assertEqual(self._fila('poliza_confirmar').template_id, dos)
+
     def test_un_boton_en_un_aviso_que_no_lo_manda_se_rechaza(self):
         """El runtime no manda parámetros de botón para `enroute`: Meta rechazaría."""
         tpl = self._plantilla('prueba_en_camino_con_boton',

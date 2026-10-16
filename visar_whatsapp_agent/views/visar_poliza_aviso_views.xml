@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="visar_wa_poliza_message_view_list" model="ir.ui.view">
+        <field name="name">visar.wa.poliza.message.list</field>
+        <field name="model">visar.wa.poliza.message</field>
+        <field name="arch" type="xml">
+            <list string="Avisos de visitas de suscripción" create="false">
+                <field name="create_date"/>
+                <field name="partner_id"/>
+                <field name="task_id"/>
+                <field name="hito"/>
+                <field name="phone"/>
+                <field name="state" decoration-success="state == 'sent'"
+                       decoration-danger="state in ('failed', 'expired')"
+                       decoration-muted="state == 'cancelled'"/>
+                <field name="attempts"/>
+                <field name="sent_at"/>
+                <field name="mode_used"/>
+                <field name="last_error"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_wa_poliza_message_view_form" model="ir.ui.view">
+        <field name="name">visar.wa.poliza.message.form</field>
+        <field name="model">visar.wa.poliza.message</field>
+        <field name="arch" type="xml">
+            <form string="Aviso de visita de suscripción" create="false">
+                <header>
+                    <button name="action_visar_retry" type="object" string="Reintentar"
+                            class="btn-primary"
+                            invisible="state not in ('failed', 'expired')"/>
+                    <button name="action_visar_cancel" type="object" string="Cancelar"
+                            invisible="state != 'pending'"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="partner_id"/>
+                            <field name="task_id"/>
+                            <field name="event_id"/>
+                            <field name="hito"/>
+                            <field name="phone"/>
+                        </group>
+                        <group>
+                            <field name="expire_at"/>
+                            <field name="sent_at"/>
+                            <field name="attempts"/>
+                            <field name="mode_used"/>
+                            <field name="last_error"/>
+                        </group>
+                    </group>
+                    <group string="Texto">
+                        <field name="fallback_text" nolabel="1"/>
+                        <field name="params_json"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_wa_poliza_message_action" model="ir.actions.act_window">
+        <field name="name">Avisos de visitas de suscripción (WhatsApp)</field>
+        <field name="res_model">visar.wa.poliza.message</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Sin avisos todavía</p>
+            <p>Aquí quedan los avisos que se le mandan al cliente antes de cada
+               visita de suscripción pre-agendada, para que la confirme o la
+               cambie. Se encienden en Ajustes → Visar.</p>
+        </field>
+    </record>
+    <menuitem id="menu_wa_poliza_outbox"
+              name="Avisos de visitas de suscripción"
+              parent="visar_whatsapp_agent.menu_agent_root"
+              action="visar_wa_poliza_message_action"
+              sequence="21"/>
+
+    <!-- La lista de oficina: qué se le avisó y qué contestó. -->
+    <record id="view_task_list_visar_poliza_agenda_aviso" model="ir.ui.view">
+        <field name="name">project.task.list.visar.poliza.agenda.aviso</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="visar_subscription.view_task_list_visar_poliza_agenda"/>
+        <field name="arch" type="xml">
+            <field name="visar_visit_preagenda_estado" position="after">
+                <field name="visar_visit_aviso_at" optional="show"/>
+                <field name="visar_visit_respuesta" optional="show"/>
+            </field>
+        </field>
+    </record>
+</odoo>

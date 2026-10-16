@@ -39,8 +39,8 @@ _logger = logging.getLogger(__name__)
 
 
 # El contrato que el código YA cumple hoy, clave por clave: cuántas variables de
-# cuerpo manda, qué cabecera rellena y si manda el payload de un botón de
-# respuesta rápida. Si cambia lo que manda un aviso, cambia aquí también — y la
+# cuerpo manda, qué cabecera rellena y CUÁNTOS botones de respuesta rápida manda
+# (con su payload; 0 = ninguno). Si cambia lo que manda un aviso, cambia aquí también — y la
 # prueba de este modelo lo recuerda.
 #
 # `lead_followup` no está a propósito: lo redacta el modelo y va SIEMPRE libre
@@ -48,49 +48,49 @@ _logger = logging.getLogger(__name__)
 ESPECIFICACION = {
     'enroute': {
         'label': "Técnico en camino",
-        'variables': 2, 'header': 'none', 'quick_reply': False,
+        'variables': 2, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} técnico · {{2}} minutos estimados de llegada",
     },
     'arrived': {
         'label': "Técnico llegó",
-        'variables': 2, 'header': 'none', 'quick_reply': False,
+        'variables': 2, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} técnico · {{2}} minutos de espera",
     },
     'reschedule': {
         'label': "Reagendar — aviso de contacto",
-        'variables': 1, 'header': 'none', 'quick_reply': False,
+        'variables': 1, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} técnico. Aviso pasivo: se usa cuando no hay cita que "
                 "ofrecer mover.",
     },
     'reschedule_offer': {
         'label': "Reagendar — el cliente elige horario",
-        'variables': 2, 'header': 'none', 'quick_reply': True,
+        'variables': 2, 'header': 'none', 'quick_reply': 1,
         'nota': "{{1}} técnico · {{2}} horas de antelación · un botón de "
                 "respuesta rápida (el runtime manda su payload).",
     },
     'report': {
         'label': "Reporte de servicio firmado",
-        'variables': 1, 'header': 'document', 'quick_reply': False,
+        'variables': 1, 'header': 'document', 'quick_reply': 0,
         'nota': "Cabecera: el PDF del reporte · {{1}} texto que lo acompaña",
     },
     'booking_confirmed': {
         'label': "Cita confirmada (agendado por WhatsApp)",
-        'variables': 2, 'header': 'none', 'quick_reply': False,
+        'variables': 2, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} nombre del cliente · {{2}} fecha y hora",
     },
     'hold_expired': {
         'label': "Apartado vencido",
-        'variables': 1, 'header': 'none', 'quick_reply': False,
+        'variables': 1, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} fecha y hora que se soltó",
     },
     'hold_expired_link': {
         'label': "Apartado vencido (con liga de pago enviada)",
-        'variables': 1, 'header': 'none', 'quick_reply': False,
+        'variables': 1, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} fecha y hora que se soltó",
     },
     'quote_ready': {
         'label': "Cotización lista — el cliente elige fecha",
-        'variables': 2, 'header': 'none', 'quick_reply': True,
+        'variables': 2, 'header': 'none', 'quick_reply': 1,
         'nota': "{{1}} servicio cotizado · {{2}} monto ya con el descuento de la "
                 "valoración · un botón de respuesta rápida \"Elegir fecha\" (el "
                 "runtime manda su payload). Sale cuando oficina pulsa \"Agendar "
@@ -98,9 +98,17 @@ ESPECIFICACION = {
     },
     'upsell_payment': {
         'label': "Liga de pago del servicio adicional (venta en campo)",
-        'variables': 2, 'header': 'none', 'quick_reply': False,
+        'variables': 2, 'header': 'none', 'quick_reply': 0,
         'nota': "{{1}} monto a pagar · {{2}} liga de pago. Sale del número de "
                 "Visar cuando el técnico genera el cobro de lo vendido en la visita.",
+    },
+    'poliza_confirmar': {
+        'label': "Visita de suscripción — confirmar o cambiarla",
+        'variables': 2, 'header': 'none', 'quick_reply': 2,
+        'nota': "{{1}} nombre del cliente · {{2}} día y horario de la visita · "
+                "dos botones de respuesta rápida, en este orden: «Sí, confirmo» "
+                "y «Quiero cambiarla» (el runtime manda sus payloads). Sale antes "
+                "de cada visita de suscripción pre-agendada (Ajustes → Visar).",
     },
 }
 
@@ -173,13 +181,15 @@ class VisarWaTemplateRoute(models.Model):
                     aviso=etiqueta, necesita=spec['header']))
 
             botones = tpl.button_ids.sorted('sequence')
-            if spec['quick_reply']:
-                if len(botones) != 1 or botones.button_type != 'quick_reply':
+            esperados = int(spec['quick_reply'] or 0)
+            if esperados:
+                if len(botones) != esperados or any(
+                        b.button_type != 'quick_reply' for b in botones):
                     raise ValidationError(_(
-                        "El aviso «%(aviso)s» necesita exactamente un botón de "
-                        "respuesta rápida: es el que el cliente pulsa para elegir "
-                        "horario, y el runtime manda su payload en cada envío.",
-                        aviso=etiqueta))
+                        "El aviso «%(aviso)s» necesita exactamente %(n)s botón(es) "
+                        "de respuesta rápida: son los que el cliente pulsa, y el "
+                        "runtime manda su payload en cada envío. %(nota)s",
+                        aviso=etiqueta, n=esperados, nota=spec['nota']))
             elif botones:
                 raise ValidationError(_(
                     "«%(tpl)s» tiene botones, y el aviso «%(aviso)s» no manda "
