@@ -69,6 +69,7 @@ class TestAgentPlaga(TransactionCase):
         self.assertEqual(datos['plaga']['motivo'], 'correctivo')
         self.assertEqual([p['code'] for p in datos['plaga']['plagas']],
                          ['rastreros'])
+        self.assertTrue(datos['plaga']['cuando'].endswith('Z'))
         self.assertIn('CONVERSACION ANTERIOR', datos['block'])
         self.assertIn('registrar_plaga', datos['block'])
 

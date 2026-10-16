@@ -200,6 +200,10 @@ class VisarAgentPlaga(models.AbstractModel):
             'valoracion_nombre': dict(PLAGAS_VALORACION).get(
                 lead.visar_wa_plaga_valoracion) or '',
             'fecha': fields.Date.to_string(fecha) if fecha else '',
+            # Con la hora, en UTC: el runtime dice "hoy a las 18:48" o "ayer"
+            # en la hora de Monterrey. "La vez pasada" no decia cuando, y quien
+            # lo habia dicho diez minutos antes no sabia de que se le hablaba.
+            'cuando': (fecha.isoformat() + 'Z') if fecha else '',
         }
 
     @api.model
