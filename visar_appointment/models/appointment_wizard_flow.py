@@ -1281,6 +1281,9 @@ class AppointmentType(models.Model):
         else:
             lines = [group._visar_wizard_label()
                      for group in self._visar_wizard_selected_groups(selections)]
+            linea_plaga = self._visar_wizard_summary_plaga(selections)
+            if linea_plaga:
+                lines.append(linea_plaga)
             if items:
                 lines += [label
                           for label in self._visar_metros_labels(items) if label]
@@ -1322,6 +1325,37 @@ class AppointmentType(models.Model):
                     }
         return {'lines': lines, 'total': total, 'currency': currency,
                 'poliza': poliza}
+
+    @api.model
+    def _visar_wizard_summary_plaga(self, selections):
+        """La línea del resumen que dice para qué es la fumigación.
+
+        Pedido de Visar (16-oct-2026): en correctivo, las plagas que se van a
+        tratar; en preventivo basta con decirlo, porque la «protección general»
+        marca todo el catálogo y enumerarlo no le dice nada al cliente.
+        """
+        if not self._visar_wizard_fumigacion_selected(selections):
+            return ''
+        motivo = selections.get('motivo')
+        if motivo == 'preventivo':
+            return _('Servicio preventivo')
+        if motivo != 'correctivo':
+            return ''
+        codigos = selections.get('servicio_plaga') or []
+        if isinstance(codigos, str):
+            codigos = [c for c in codigos.split(',') if c]
+        # Con las archivadas: la reserva pudo empezarse antes de archivarla.
+        catalogo = self.env['visar.plaga'].sudo().with_context(
+            active_test=False).search([('code', 'in', codigos)])
+        nombres = [plaga.name for plaga in catalogo]
+        if not nombres:
+            return _('Servicio correctivo')
+        if len(nombres) == 1:
+            return _('Plaga a tratar: %(plagas)s') % {'plagas': nombres[0]}
+        ultima = nombres[-1]
+        conj = 'e' if ultima.lower().startswith(('i', 'hi')) else 'y'
+        return _('Plagas a tratar: %(plagas)s') % {
+            'plagas': '%s %s %s' % (', '.join(nombres[:-1]), conj, ultima)}
 
     @api.model
     def _visar_wizard_summary_extras(self, booking):

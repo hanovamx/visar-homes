@@ -343,6 +343,27 @@ class TestWizardFlow(TransactionCase):
         self.assertTrue(resumen['lines'], 'el resumen no puede salir vacio')
         self.assertNotIn('Visita de valoración técnica', resumen['lines'])
 
+    def test_el_resumen_dice_que_plagas_se_tratan_en_correctivo(self):
+        """Visar, 16-oct-2026: el resumen de antes de pagar dice qué plaga."""
+        booking = self._booking_fum(motivo='correctivo',
+                                    servicio_plaga=['rastreros', 'roedores'])
+        lineas = self.AptType._visar_wizard_summary(booking)['lines']
+        self.assertIn('Plagas a tratar: Rastreros y Roedores', lineas)
+
+        booking = self._booking_fum(motivo='correctivo',
+                                    servicio_plaga=['voladores'])
+        lineas = self.AptType._visar_wizard_summary(booking)['lines']
+        self.assertIn('Plaga a tratar: Voladores', lineas)
+
+    def test_el_resumen_solo_dice_preventivo_en_preventivo(self):
+        """En preventivo no se enumeran: «protección general» las marca todas."""
+        booking = self._booking_fum(
+            motivo='preventivo',
+            servicio_plaga=['rastreros', 'voladores', 'roedores'])
+        lineas = self.AptType._visar_wizard_summary(booking)['lines']
+        self.assertIn('Servicio preventivo', lineas)
+        self.assertFalse([l for l in lineas if 'tratar' in l])
+
     def test_extras_trae_su_propia_salida(self):
         """REGRESION (visto recorriendo la reserva escribiendo, 26-ago-2026).
 
