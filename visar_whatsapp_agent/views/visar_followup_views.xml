@@ -156,6 +156,31 @@
     </record>
 
     <!-- ============================================================== -->
+    <!-- La plaga que dijo por WhatsApp, vista desde el lead            -->
+    <!-- ============================================================== -->
+
+    <record id="crm_lead_view_form_visar_plaga" model="ir.ui.view">
+        <field name="name">crm.lead.form.visar.plaga</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.crm_lead_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Plaga (dicha por WhatsApp)"
+                       invisible="not visar_wa_motivo and not visar_wa_plaga_ids and not visar_wa_plaga_valoracion">
+                    <group>
+                        <field name="visar_wa_motivo"/>
+                        <field name="visar_wa_plaga_ids" widget="many2many_tags"/>
+                    </group>
+                    <group>
+                        <field name="visar_wa_plaga_valoracion"/>
+                        <field name="visar_wa_plaga_at"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
     <!-- Menus                                                          -->
     <!-- ============================================================== -->
 
