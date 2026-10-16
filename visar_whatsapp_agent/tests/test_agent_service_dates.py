@@ -46,3 +46,30 @@ class TestFechaLocalDelServicio(TestAgentReschedule):
             "la fecha UTC y la del cliente son días distintos, y manda la suya")
         self.assertIn(str(int(servicio['date_local'][8:10])),
                       servicio['date_label'])
+
+
+@tagged('post_install', '-at_install')
+class TestSinCitasRepetidas(TestAgentReschedule):
+    """16-oct-2026: la primera visita de una suscripcion salia dos veces.
+
+    La linea del pedido trae la cita, y la pre-agenda crea su tarea "(1/3)" sin
+    linea y con ESA misma cita. La lista las juntaba por id de tarea, no por cita.
+    """
+
+    def test_una_tarea_sin_linea_con_la_misma_cita_no_se_repite(self):
+        evento, _pedido = self._cita(dentro_de_horas=72)
+        proyecto = self.env['project.project'].search(
+            [('is_fsm', '=', True)], limit=1)
+        self.env['project.task'].create({
+            'name': 'Visita póliza 2026-10-16 — Servicio de prueba (1/3)',
+            'project_id': proyecto.id,
+            'partner_id': self.partner.id,
+            'planned_date_begin': evento.start,
+            'date_deadline': evento.stop,
+            'visar_visit_event_id': evento.id,
+        })
+        salida = self.Tools.agent_customer_services(
+            {'phone': self.WA, 'scope': 'upcoming'})
+        de_esa_cita = [s for s in salida['services']
+                       if s.get('event_id') == evento.id]
+        self.assertEqual(len(de_esa_cita), 1, salida['services'])

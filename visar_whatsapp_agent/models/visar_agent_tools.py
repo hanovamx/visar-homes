@@ -997,7 +997,7 @@ class VisarAgentTools(models.AbstractModel):
 
     @api.model
     def _agent_partner_task_entries(self, partner, scope, now, today_start, tz,
-                                    ya_listadas=()):
+                                    ya_listadas=(), citas_listadas=()):
         """Visitas del cliente que NO cuelgan de una linea de pedido.
 
         Existen y el cliente las vive igual: la **revision incluida** de un
@@ -1062,9 +1062,16 @@ class VisarAgentTools(models.AbstractModel):
                     base + [('stage_id', 'in', forzadas.ids)],
                     order=orden, limit=MAX_SERVICES * 2)
         entries = []
+        citas_listadas = {c for c in citas_listadas if c}
         for tarea in tareas:
             evento = tarea._visar_calendar_event() if hasattr(
                 tarea, '_visar_calendar_event') else Task.browse()
+            # La MISMA cita que ya salio por su linea de pedido. Pasa con la
+            # primera visita de una suscripcion: la pre-agenda crea su tarea
+            # "(1/3)" sin linea y le engancha la cita del pedido, y la lista la
+            # ensenaba dos veces (16-oct-2026).
+            if evento and evento.id in citas_listadas:
+                continue
             date = (evento.start if evento and evento.start
                     else tarea.planned_date_begin) or False
             # SIN FECHA no entra. Las visitas de póliza todavía por agendar son
@@ -1194,7 +1201,8 @@ class VisarAgentTools(models.AbstractModel):
 
         entries += self._agent_partner_task_entries(
             partner, scope, now, today_start, tz, ya_listadas=[
-                e['_task_id'] for e in entries if e.get('_task_id')])
+                e['_task_id'] for e in entries if e.get('_task_id')],
+            citas_listadas=[e['event_id'] for e in entries if e.get('event_id')])
         for entry in entries:
             entry.pop('_task_id', None)
 
