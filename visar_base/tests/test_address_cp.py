@@ -124,3 +124,66 @@ class TestAddressCp(TransactionCase):
                             'visar_centroid_lat': 27.5, 'visar_centroid_lng': -99.0})
         self.assertEqual(self.ZoneCp._visar_address_cp_bbox(),
                          '-100.650,24.850,-99.800,26.250')
+
+    # --- Colonias con sector (16-oct-2026) -----------------------------------
+    #
+    # "Genaro Garza Garcia 951, La Cima 1er Sector" bajó a relevancia 0.41 y se
+    # descartó: Mapbox escribe "La Cima Primer Sector". Sin el sector daba 1.00.
+
+    def _resolver_por_turnos(self, respuestas, **kwargs):
+        Mapbox = type(self.env['visar.mapbox.service'])
+        with patch.object(Mapbox, '_visar_mapbox_geocode_features',
+                          side_effect=list(respuestas)) as llamada:
+            valores = dict(street='Genaro Garza Garcia', ext_num='951',
+                           neighborhood='La Cima 1er Sector')
+            valores.update(kwargs)
+            resultado = self.ZoneCp._visar_address_to_cp(**valores)
+        return resultado, [c.args[0] for c in llamada.call_args_list]
+
+    def test_reintenta_con_el_ordinal_en_letra(self):
+        bueno = _feature(CP_CUBIERTO, relevance=0.9, text='Calle Genaro Garza Garcia',
+                         number='951')
+        otra_calle = _feature(CP_CUBIERTO, relevance=0.9,
+                              text='Privada Genaro Garza Poniente', number='951')
+        resultado, consultas = self._resolver_por_turnos(
+            [[_feature(CP_CUBIERTO, relevance=0.41)], [otra_calle, bueno]])
+        self.assertEqual(resultado['zip'], CP_CUBIERTO)
+        self.assertEqual(consultas, ['Genaro Garza Garcia 951, La Cima 1er Sector',
+                                     'Genaro Garza Garcia 951, La Cima Primer Sector'])
+
+    def test_sin_el_sector_solo_vale_la_misma_calle_y_numero(self):
+        otra_calle = _feature(CP_CUBIERTO, relevance=1.0, text='Calle de la Cima',
+                              number='951')
+        otro_numero = _feature(CP_CUBIERTO, relevance=1.0,
+                               text='Calle Genaro Garza García', number='12')
+        resultado, consultas = self._resolver_por_turnos(
+            [[], [], [otra_calle, otro_numero]])
+        self.assertEqual(resultado, {'status': 'not_found'})
+        self.assertEqual(consultas[-1], 'Genaro Garza Garcia 951, La Cima')
+
+        buena = _feature(CP_CUBIERTO, relevance=1.0,
+                         text='Calle Genaro Garza García', number='951')
+        resultado, _ = self._resolver_por_turnos([[], [], [otra_calle, buena]])
+        self.assertEqual(resultado['zip'], CP_CUBIERTO)
+        self.assertTrue(resultado['exact'])
+        self.assertEqual(resultado['neighborhood'], 'La Cima 1er Sector',
+                         "la colonia queda como la escribió")
+
+    def test_sin_sector_no_se_repite_la_busqueda(self):
+        resultado, consultas = self._resolver_por_turnos(
+            [[]], neighborhood='Mitras Centro')
+        self.assertEqual(resultado, {'status': 'not_found'})
+        self.assertEqual(len(consultas), 1)
+
+    def test_formas_de_escribir_el_sector(self):
+        from odoo.addons.visar_base.models.visar_zone_cp import (
+            _ordinal_en_letra, _sin_sector)
+        self.assertEqual(_ordinal_en_letra('Cumbres 2do. sector'), 'Cumbres Segundo sector')
+        self.assertEqual(_ordinal_en_letra('Contry La Silla 8o Sector'),
+                         'Contry La Silla Octavo Sector')
+        self.assertEqual(_ordinal_en_letra('2 de Abril'), '2 de Abril')
+        self.assertEqual(_sin_sector('Cumbres, 2do Sector'), 'Cumbres')
+        self.assertEqual(_sin_sector('Cumbres Sector 2'), 'Cumbres')
+        self.assertEqual(_sin_sector('Las Cumbres Tercer Sector Sección 3-4'),
+                         'Las Cumbres')
+        self.assertEqual(_sin_sector('Fuentes del Valle'), 'Fuentes del Valle')

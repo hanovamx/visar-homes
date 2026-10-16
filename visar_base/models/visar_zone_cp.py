@@ -35,6 +35,47 @@ _NUMBER_NOISE = re.compile(r'\b(?:no\.?|n[uú]m\.?|#)\s*(?=\d)', re.IGNORECASE)
 _COLONIA_NOISE = re.compile(r'^\s*(?:col\.|colonia|fracc\.?|fraccionamiento)\s+',
                             re.IGNORECASE)
 
+# Colonias con sector (16-oct-2026). Mapbox las escribe con el ordinal en letra
+# ("La Cima Primer Sector") y no empata "1er": "Genaro Garza Garcia 951, La
+# Cima 1er Sector" bajó a relevancia 0.41 y se descartó, cuando "..., La Cima"
+# daba 1.00 y el mismo CP. Si la búsqueda tal cual no encuentra nada se
+# reintenta con el ordinal en letra, y luego sin el sector.
+_ORDINALES = {
+    1: 'Primer', 2: 'Segundo', 3: 'Tercer', 4: 'Cuarto', 5: 'Quinto',
+    6: 'Sexto', 7: 'Séptimo', 8: 'Octavo', 9: 'Noveno', 10: 'Décimo',
+}
+_ORDINAL_NUMERO = re.compile(
+    r'\b(10|[1-9])\s*(?:er|ro|ra|do|da|to|ta|mo|ma|vo|va|no|na|o|a|°|º)\.?(?=\s|,|$)',
+    re.IGNORECASE)
+_ORDINAL = (r'(?:\d{1,2}\s*(?:er|ro|ra|do|da|to|ta|mo|ma|vo|va|no|na|o|a|°|º)?\.?'
+            r'|primer[oa]?|segund[oa]|tercer[oa]?|cuart[oa]|quint[oa]|sext[oa]'
+            r'|s[eé]ptim[oa]|octav[oa]|noven[oa]|d[eé]cim[oa])')
+_SECTOR_PALABRA = r'(?:sector|secci[oó]n|secc\.?|etapa)'
+_SECTOR = re.compile(
+    r'[\s,]+(?:%s\s+%s|%s\s+\S+)\b.*$' % (_ORDINAL, _SECTOR_PALABRA,
+                                         _SECTOR_PALABRA),
+    re.IGNORECASE)
+_CALLE_NOISE = re.compile(r'^\s*(?:calle|c\.|av\.?|avenida|blvd\.?|bulevar|'
+                          r'boulevard|privada|priv\.?)\s+', re.IGNORECASE)
+
+
+def _ordinal_en_letra(colonia):
+    """"La Cima 1er Sector" → "La Cima Primer Sector"."""
+    return _ORDINAL_NUMERO.sub(lambda m: _ORDINALES[int(m.group(1))], colonia)
+
+
+def _sin_sector(colonia):
+    """"La Cima 1er Sector" → "La Cima"; "Cumbres Sector 2" → "Cumbres"."""
+    return _SECTOR.sub('', colonia).strip(' ,')
+
+
+def _palabras(texto):
+    """Minúsculas, sin acentos, sin el tipo de vía: para comparar calles."""
+    import unicodedata
+    texto = unicodedata.normalize('NFD', _CALLE_NOISE.sub('', texto or '').lower())
+    texto = ''.join(ch for ch in texto if unicodedata.category(ch) != 'Mn')
+    return [p for p in re.findall(r'\w+', texto) if len(p) > 2]
+
 
 class VisarZoneCp(models.Model):
     """ Mapeo Código Postal → Zona Visar.
@@ -302,22 +343,57 @@ class VisarZoneCp(models.Model):
         if not (street and ext_num and neighborhood):
             return {'status': 'incomplete'}
 
-        partes = ['%s %s' % (street, ext_num), _COLONIA_NOISE.sub('', neighborhood)]
-        if (municipality or '').strip():
-            partes.append(municipality.strip())
-        query = ', '.join(partes)
+        colonia = _COLONIA_NOISE.sub('', neighborhood)
         bbox = self._visar_address_cp_bbox()
-        features = self.env['visar.mapbox.service']._visar_mapbox_geocode_features(
-            query, types='address', language='es', limit=5, bbox=bbox)
-
         minimo = self._visar_address_cp_min_relevance()
-        for feature in features:
+
+        # (colonia, ¿exige la misma calle y número?). Los reintentos solo valen
+        # con la calle y el número que escribió: con "Cumbres Segundo sector"
+        # Mapbox propuso "Privada Rocallosas Poniente 120" (0.61) para
+        # "Rocallosa 120", y sin el sector la búsqueda es aún más floja.
+        intentos = [(colonia, False), (_ordinal_en_letra(colonia), True),
+                    (_sin_sector(colonia), True)]
+        vistas = set()
+        query = ''
+        for colonia_intento, estricto in intentos:
+            if not colonia_intento or colonia_intento.lower() in vistas:
+                continue
+            vistas.add(colonia_intento.lower())
+            partes = ['%s %s' % (street, ext_num), colonia_intento]
+            if (municipality or '').strip():
+                partes.append(municipality.strip())
+            query = ', '.join(partes)
+            features = self.env['visar.mapbox.service']._visar_mapbox_geocode_features(
+                query, types='address', language='es', limit=5, bbox=bbox)
+            result = self._visar_address_cp_candidato(
+                features, minimo, street=street, ext_num=ext_num,
+                neighborhood=neighborhood, estricto=estricto, query=query)
+            if result:
+                return result
+        _logger.info("Dirección → CP: %r sin candidato en cobertura (%s intentos).",
+                     query, len(vistas))
+        return {'status': 'not_found'}
+
+    def _visar_address_cp_candidato(self, features, minimo, *, street, ext_num,
+                                    neighborhood, estricto, query):
+        """El primer candidato de Mapbox utilizable, como resultado, o None.
+
+        `estricto`: además debe ser ESA calle con ESE número (Mapbox lo trae en
+        `address`), para las búsquedas sin el sector de la colonia.
+        """
+        for feature in features or []:
             try:
                 relevance = float(feature.get('relevance') or 0.0)
             except (TypeError, ValueError):
                 relevance = 0.0
             if relevance < minimo:
                 continue
+            if estricto:
+                if str(feature.get('address') or '').strip().lower() != ext_num.lower():
+                    continue
+                buscada, hallada = _palabras(street), set(_palabras(feature.get('text')))
+                if not buscada or any(p not in hallada for p in buscada):
+                    continue
             postcode = ''
             for entry in feature.get('context') or []:
                 if str((entry or {}).get('id') or '').startswith('postcode'):
@@ -341,6 +417,4 @@ class VisarZoneCp(models.Model):
                 query, result['zip'], feature.get('place_name'), relevance,
                 'encontrado' if result['exact'] else 'NO encontrado')
             return result
-        _logger.info("Dirección → CP: %r sin candidato en cobertura (%s resultados).",
-                     query, len(features))
-        return {'status': 'not_found'}
+        return None
