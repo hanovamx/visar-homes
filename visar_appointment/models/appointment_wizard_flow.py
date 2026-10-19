@@ -352,6 +352,18 @@ _VISAR_VOCABULARIO_BASE = {
     'poliza': _VISAR_POLIZA_KEYWORDS,
 }
 
+def visar_nombre_completo(nombre):
+    """¿Es un nombre COMPLETO? Nombre y al menos un apellido.
+
+    Visar, 19-oct-2026: el agente pide siempre el nombre completo, para no
+    tener dos fichas «Ana» que nadie distingue. Dos palabras con al menos dos
+    letras cada una: «Ana Ruiz» sí, «Ana» no, «Ana R.» no.
+    """
+    palabras = [p for p in (nombre or '').split()
+                if sum(ch.isalpha() for ch in p) >= 2]
+    return len(palabras) >= 2
+
+
 def _visar_vocab_norm(palabra):
     """Minusculas y sin acentos, como el `normalize.norm` del runtime.
 
@@ -1860,6 +1872,11 @@ class AppointmentType(models.Model):
         if len(nombre) < 3 or not any(ch.isalpha() for ch in nombre):
             return booking, self._visar_wizard_error(
                 'bad_name', _('¿Me confirmas tu nombre completo?'))
+        # Nombre Y apellido (19-oct-2026): dos clientes «Ana» son dos fichas
+        # que nadie distingue en el CRM ni en la hoja del técnico.
+        if not visar_nombre_completo(nombre):
+            return booking, self._visar_wizard_error(
+                'name_incomplete', _('¿Me compartes también tus apellidos?'))
         return self._visar_wizard_commit(
             booking, VISAR_STEP_NAME, {'nombre': nombre}), None
 
@@ -2491,7 +2508,7 @@ class AppointmentType(models.Model):
                 'step': step_key, 'kind': 'free_text', 'answer_key': 'nombre',
                 # Directo (15-oct-2026): "¿A nombre de quién…?" se leía como
                 # pedir la dirección y llegaban calles por nombre.
-                'title': _('¿Me compartes tu nombre?'),
+                'title': _('¿Me compartes tu nombre completo?'),
                 # Sin `placeholder`: llevaba un nombre de ejemplo y Visar pidió
                 # quitar los ejemplos del agendado por chat (14-oct-2026).
                 'options': [],

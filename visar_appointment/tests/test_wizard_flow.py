@@ -694,6 +694,17 @@ class TestWizardFlow(TransactionCase):
                 booking, VISAR_STEP_NAME, {'nombre': basura})
             self.assertEqual((error or {}).get('code'), 'bad_name', repr(basura))
 
+    def test_solo_el_nombre_pide_los_apellidos(self):
+        """Visar, 19-oct-2026: nombre completo, para distinguir a dos «Ana»."""
+        booking = dict(self._booking_fum(motivo='correctivo'), needs_name=True)
+        for corto in ('Ana', 'Ana R.', 'Diego  '):
+            _booking, error = self.AptType._visar_wizard_apply_answer(
+                booking, VISAR_STEP_NAME, {'nombre': corto})
+            self.assertEqual((error or {}).get('code'), 'name_incomplete', corto)
+        self.assertEqual(
+            self.AptType._visar_wizard_step_options(booking, VISAR_STEP_NAME)['title'],
+            '¿Me compartes tu nombre completo?')
+
     def test_cambiar_de_servicio_no_borra_el_nombre(self):
         """La poda tumba lo que depende de la respuesta; el nombre no depende de
         nada del cuestionario."""

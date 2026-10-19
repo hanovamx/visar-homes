@@ -52,7 +52,8 @@ class TestAgentSaveAddress(TransactionCase):
         self.assertFalse(self._cliente())
 
     def test_un_numero_nuevo_sin_nombre_no_estrena_ficha(self):
-        for nombre in (None, '', 'ok', '12345'):
+        # Sin apellido tampoco (19-oct-2026): «Maria» sola no estrena ficha.
+        for nombre in (None, '', 'ok', '12345', 'Maria'):
             resultado = self._guardar(name=nombre)
             self.assertEqual(resultado['reason'], 'name_required', nombre)
         self.assertFalse(self._cliente())

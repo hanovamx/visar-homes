@@ -31,6 +31,7 @@ from odoo.addons.visar_base.models.res_config_settings import (
 from odoo.addons.visar_appointment.models.visar_travel_feasibility import TIER_VACIO
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     VISAR_STEP_ADDRESS,
+    visar_nombre_completo,
 )
 from odoo.tools import format_datetime
 
@@ -2586,8 +2587,10 @@ class VisarAgentTools(models.AbstractModel):
         partner = matches
         if not partner:
             nombre = ' '.join((payload.get('name') or '').split())
-            # La misma vara que el paso del nombre del cuestionario.
-            if len(nombre) < 3 or not any(ch.isalpha() for ch in nombre):
+            # La misma vara que el paso del nombre del cuestionario: nombre Y
+            # apellido (19-oct-2026). La ficha que se estrena aqui es la que
+            # despues ya no se vuelve a preguntar (el numero deja de ser nuevo).
+            if not visar_nombre_completo(nombre):
                 return no('name_required')
             partner = Partner.create({
                 'name': nombre, 'phone': payload.get('phone'),
