@@ -38,6 +38,17 @@
                         escribió en las últimas 24 horas.
                     </div>
                 </block>
+                <block title="Conversaciones de WhatsApp" name="visar_conversaciones">
+                    <setting string="Guardar las conversaciones"
+                             help="Cada mensaje —del cliente, del agente y de quien contesta desde la app WhatsApp Business— se guarda en el contacto. Solo los administradores las ven (Agente WhatsApp → Conversaciones). Apagado, no se guarda nada nuevo.">
+                        <field name="visar_conversaciones_guardar"/>
+                    </setting>
+                    <setting string="Meses que se guardan"
+                             help="Lo más viejo se borra cada noche."
+                             invisible="not visar_conversaciones_guardar">
+                        <field name="visar_conversaciones_meses" class="oe_inline"/>
+                    </setting>
+                </block>
                 <block title="Escalar a una persona" name="visar_handoff">
                     <setting string="Escalar en silencio"
                              help="Al escalar, el cliente lee «Permíteme un momento» y el agente deja de contestarle. Una persona sigue la misma conversación desde la app WhatsApp Business. Apagado, el agente dice que lo contactará un asesor y sigue contestando.">

@@ -359,6 +359,10 @@ class VisarAgentTools(models.AbstractModel):
             # tiempos y textos. `silencioso` False = el agente escala como
             # siempre. Ver `visar_handoff.py`.
             'handoff': self._agent_handoff_config(),
+            # Guardar las conversaciones completas (Ajustes → Visar). Con
+            # `guardar` False el runtime no manda nada. Ver
+            # `visar_agent_mensaje.py`.
+            'conversaciones': self._agent_conversaciones_config(),
             # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
             # ausente es "mensaje libre", lo de siempre. Ver
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y
@@ -2278,6 +2282,11 @@ class VisarAgentTools(models.AbstractModel):
         if raw in self.HANDOFF_ALIASES:
             return self.HANDOFF_ALIASES[raw], None
         return 'other', raw or None
+
+    @api.model
+    def _agent_conversaciones_config(self):
+        from .visar_agent_mensaje import visar_guardar_conversaciones
+        return {'guardar': visar_guardar_conversaciones(self.env)}
 
     @api.model
     def _agent_handoff_config(self):

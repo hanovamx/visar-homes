@@ -194,24 +194,34 @@ class VisarAgentContacto(models.Model):
     visar_atencion_motivo = fields.Char(string="Motivo del escalamiento", readonly=True)
 
     @api.model
-    def _visar_atencion(self, phone, estado, motivo=None):
-        """Anota quien atiende a `phone`. Crea el contacto si no existe.
+    def _visar_buscar_o_crear(self, phone, crear=True):
+        """El contacto de `phone` (por sus 10 digitos), creandolo si hace falta.
 
-        `estado`: 'escalado', 'persona' o 'devuelto' (= vuelve el agente).
+        Sin sumar al contador de mensajes: eso es de `_visar_registrar`, que
+        corre cuando el mensaje ENTRA.
         """
         nat = self.env['res.partner']._visar_phone_nat10_value(phone) or ''
         if not nat:
             return self.browse()
         contacto = self.sudo().with_context(active_test=False).search(
             [('name', '=', nat)], limit=1)
+        if contacto or not crear:
+            return contacto
+        partner, ambiguo = self._visar_resolver_partner(nat)
+        return self.sudo().create({
+            'name': nat, 'phone': phone, 'mensajes': 0,
+            'partner_id': partner.id or False, 'partner_ambiguo': ambiguo,
+        })
+
+    @api.model
+    def _visar_atencion(self, phone, estado, motivo=None):
+        """Anota quien atiende a `phone`. Crea el contacto si no existe.
+
+        `estado`: 'escalado', 'persona' o 'devuelto' (= vuelve el agente).
+        """
+        contacto = self._visar_buscar_o_crear(phone, crear=estado != 'devuelto')
         if not contacto:
-            if estado == 'devuelto':
-                return self.browse()
-            partner, ambiguo = self._visar_resolver_partner(nat)
-            contacto = self.sudo().create({
-                'name': nat, 'phone': phone, 'mensajes': 0,
-                'partner_id': partner.id or False, 'partner_ambiguo': ambiguo,
-            })
+            return self.browse()
         if estado == 'devuelto':
             contacto.write({'visar_atencion': False, 'visar_atencion_desde': False})
             return contacto

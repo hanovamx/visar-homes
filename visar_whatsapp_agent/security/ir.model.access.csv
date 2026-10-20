@@ -37,3 +37,4 @@ access_agent_contacto_readonly,agent.contacto.readonly,model_visar_agent_contact
 access_agent_contacto_manager,agent.contacto.manager,model_visar_agent_contacto,base.group_system,1,1,0,1
 access_wa_poliza_message_user,visar.wa.poliza.message user,model_visar_wa_poliza_message,base.group_user,1,0,0,0
 access_wa_poliza_message_manager,visar.wa.poliza.message manager,model_visar_wa_poliza_message,base.group_system,1,1,1,1
+access_agent_mensaje_system,agent.mensaje.system,model_visar_agent_mensaje,base.group_system,1,1,1,1

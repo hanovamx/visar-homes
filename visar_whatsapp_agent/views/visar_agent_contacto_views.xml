@@ -138,6 +138,20 @@
                         <field name="interno" readonly="1"/>
                         <field name="active"/>
                     </group>
+                    <notebook groups="base.group_system">
+                        <page string="Conversación" name="conversacion">
+                            <field name="mensaje_ids" readonly="1" nolabel="1">
+                                <list decoration-info="quien == 'agente'"
+                                      decoration-success="quien == 'persona'">
+                                    <field name="fecha"/>
+                                    <field name="quien" widget="badge"
+                                           decoration-info="quien == 'agente'"
+                                           decoration-success="quien == 'persona'"/>
+                                    <field name="texto"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
                 </sheet>
             </form>
         </field>

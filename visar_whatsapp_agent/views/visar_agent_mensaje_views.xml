@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ==============================================================
+         visar.agent.mensaje - las conversaciones de WhatsApp, completas.
+         Solo administradores (decision del usuario, 20-oct-2026).
+         ============================================================== -->
+
+    <record id="visar_agent_mensaje_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.mensaje.list</field>
+        <field name="model">visar.agent.mensaje</field>
+        <field name="arch" type="xml">
+            <list string="Mensajes" create="false" edit="false"
+                  decoration-info="quien == 'agente'"
+                  decoration-success="quien == 'persona'">
+                <field name="fecha"/>
+                <field name="contacto_id" string="Teléfono"/>
+                <field name="partner_id" optional="show"/>
+                <field name="quien" widget="badge"
+                       decoration-info="quien == 'agente'"
+                       decoration-success="quien == 'persona'"/>
+                <field name="texto"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_mensaje_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.mensaje.search</field>
+        <field name="model">visar.agent.mensaje</field>
+        <field name="arch" type="xml">
+            <search string="Mensajes">
+                <field name="texto"/>
+                <field name="contacto_id" string="Teléfono"/>
+                <field name="partner_id"/>
+                <filter name="del_cliente" string="Del cliente"
+                        domain="[('quien', '=', 'cliente')]"/>
+                <filter name="del_agente" string="Del agente"
+                        domain="[('quien', '=', 'agente')]"/>
+                <filter name="de_persona" string="De Visar (app)"
+                        domain="[('quien', '=', 'persona')]"/>
+                <separator/>
+                <filter name="fecha" string="Fecha" date="fecha"/>
+                <separator/>
+                <filter name="por_contacto" string="Conversación"
+                        context="{'group_by': 'contacto_id'}"/>
+                <filter name="por_dia" string="Día"
+                        context="{'group_by': 'fecha:day'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_mensaje_action" model="ir.actions.act_window">
+        <field name="name">Conversaciones</field>
+        <field name="res_model">visar.agent.mensaje</field>
+        <field name="view_mode">list</field>
+        <field name="search_view_id" ref="visar_agent_mensaje_view_search"/>
+        <field name="context">{'search_default_por_contacto': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Todavía no hay mensajes guardados
+            </p>
+            <p>
+                Cada mensaje de WhatsApp —del cliente, del agente y de quien
+                contesta desde la app— llega aquí más o menos un minuto después.
+                Se guardan los meses que diga Ajustes → Visar.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_conversaciones"
+              name="Conversaciones"
+              parent="menu_agent_root"
+              action="visar_agent_mensaje_action"
+              groups="base.group_system"
+              sequence="6"/>
+
+</odoo>

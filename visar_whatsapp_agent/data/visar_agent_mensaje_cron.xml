@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!-- Borra los mensajes que pasaron del plazo de Ajustes → Visar
+             (12 meses por omisión). De madrugada: no hay prisa. -->
+        <record id="visar_agent_mensaje_cron" model="ir.cron">
+            <field name="name">Visar: borrar conversaciones de WhatsApp vencidas</field>
+            <field name="model_id" ref="model_visar_agent_mensaje"/>
+            <field name="state">code</field>
+            <field name="code">model._visar_cron_borrar_vencidos()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field name="nextcall"
+                   eval="(DateTime.now().replace(hour=9, minute=40, second=0) + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')"/>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>
