@@ -12,8 +12,14 @@
             <!-- Sin `create`: las filas las escribe el runtime cuando entra un
                  mensaje. Una fila a mano seria un contacto que nunca escribio. -->
             <list string="Contactos del agente" create="false"
-                  decoration-muted="interno">
+                  decoration-muted="interno"
+                  decoration-danger="visar_atencion == 'escalado'"
+                  decoration-info="visar_atencion == 'persona'">
                 <field name="ultimo_mensaje" string="Ultimo mensaje"/>
+                <field name="visar_atencion" widget="badge" optional="show"
+                       decoration-danger="visar_atencion == 'escalado'"
+                       decoration-info="visar_atencion == 'persona'"/>
+                <field name="visar_atencion_desde" optional="hide"/>
                 <field name="partner_id" string="Cliente"/>
                 <field name="name" string="Telefono"/>
                 <field name="mensajes" string="Mensajes" sum="Mensajes recibidos"/>
@@ -38,6 +44,9 @@
                      inflaria justo la columna que se mira para decidir. -->
                 <filter name="reales" string="Solo clientes reales"
                         domain="[('interno', '=', False)]"/>
+                <separator/>
+                <filter name="con_persona" string="Con una persona"
+                        domain="[('visar_atencion', '!=', False)]"/>
                 <separator/>
                 <filter name="sin_cliente" string="Sin cliente"
                         domain="[('partner_id', '=', False)]"/>
@@ -64,6 +73,14 @@
         <field name="model">visar.agent.contacto</field>
         <field name="arch" type="xml">
             <form string="Contacto del agente" create="false">
+                <header>
+                    <button name="action_visar_devolver_al_agente" type="object"
+                            string="Devolver al agente" class="btn-primary"
+                            invisible="not visar_atencion"
+                            confirm="El agente vuelve a contestarle a este cliente. ¿Ya terminaste con él?"/>
+                    <field name="visar_atencion" widget="statusbar"
+                           invisible="not visar_atencion"/>
+                </header>
                 <sheet>
                     <div class="oe_title">
                         <h1><field name="display_name" readonly="1"/></h1>
@@ -83,6 +100,19 @@
                         ensenar los datos de otra persona, y es la misma regla que
                         sigue el agente al contestar. Une los duplicados en
                         <em>Contactos</em> y este enlace se arregla solo.
+                    </div>
+                    <div class="alert alert-danger" role="alert"
+                         invisible="visar_atencion != 'escalado'">
+                        <strong>Este cliente está esperando a una persona</strong>
+                        desde <field name="visar_atencion_desde" readonly="1" class="oe_inline"/>
+                        (<field name="visar_atencion_motivo" readonly="1" class="oe_inline"/>).
+                        Contéstale desde la app WhatsApp Business. El agente no le
+                        escribe mientras tanto.
+                    </div>
+                    <div class="alert alert-info" role="alert"
+                         invisible="visar_atencion != 'persona'">
+                        <strong>Lo está atendiendo una persona</strong> desde la app
+                        WhatsApp Business. Al terminar, <em>Devolver al agente</em>.
                     </div>
                     <div class="alert alert-secondary" role="alert"
                          invisible="not interno">

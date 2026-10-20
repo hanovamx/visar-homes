@@ -16,6 +16,7 @@ grupo de solo lectura son el limite efectivo.
 """
 import logging
 import re
+from datetime import datetime
 
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -354,6 +355,10 @@ class VisarAgentTools(models.AbstractModel):
             # antes de contestar, para leer juntos los que llegan partidos.
             # 0 o ausente = contesta en cuanto llega.
             'reply_wait_seconds': visar_reply_wait_seconds(self.env),
+            # Escalamiento silencioso (Ajustes → Visar): interruptor, horario,
+            # tiempos y textos. `silencioso` False = el agente escala como
+            # siempre. Ver `visar_handoff.py`.
+            'handoff': self._agent_handoff_config(),
             # Qué plantilla aprobada usa cada aviso. Solo las aprobadas; una clave
             # ausente es "mensaje libre", lo de siempre. Ver
             # `visar_wa_template_route.py`: la plantilla la elige la CONFIG, y
@@ -2246,8 +2251,38 @@ class VisarAgentTools(models.AbstractModel):
         'phone_ambiguous': "El telefono coincide con varios clientes",
         'complaint': "Queja o inconformidad",
         'not_understood': "El agente no logro entender al cliente",
+        'reschedule_blocked': "No se pudo reagendar desde el agente",
+        'reschedule_no_appointment': "Quiere reagendar y no se encontro su cita",
+        'person_first': "Una persona escribio primero desde la app",
         'other': "Otro motivo",
     }
+
+    # Los motivos con que escala el runtime, a la lista de arriba. Hasta el
+    # 20-oct-2026 no coincidian y 11 de 14 escalamientos decian "Otro motivo".
+    # Un motivo que no esta en ninguna de las dos se guarda como "Otro motivo"
+    # pero su texto va en la nota: es lo unico que dice que paso.
+    HANDOFF_ALIASES = {
+        'asesor': 'customer_request',
+        'no_se_entiende': 'not_understood',
+        'otra_cosa': 'other',
+        'reschedule_sin_cita': 'reschedule_no_appointment',
+        'persona': 'person_first',
+    }
+
+    @api.model
+    def _agent_handoff_reason(self, raw):
+        """`(clave de HANDOFF_REASONS, texto crudo si no se reconocio)`."""
+        raw = (raw or '').strip() if isinstance(raw, str) else ''
+        if raw in self.HANDOFF_REASONS:
+            return raw, None
+        if raw in self.HANDOFF_ALIASES:
+            return self.HANDOFF_ALIASES[raw], None
+        return 'other', raw or None
+
+    @api.model
+    def _agent_handoff_config(self):
+        from .visar_handoff import visar_handoff_config
+        return visar_handoff_config(self.env)
 
     # Dias para vencer la actividad. Corto a proposito: un hand-off que se atiende
     # en una semana ya no sirve de nada.
@@ -2268,12 +2303,23 @@ class VisarAgentTools(models.AbstractModel):
         Devuelve {"lead_id", "created", "activity_scheduled", "skipped_reason"}.
         Best-effort, como agent_track_lead: no lanza por datos malos del runtime.
         """
-        payload = payload or {}
+        payload = dict(payload or {})
+        reason, crudo = self._agent_handoff_reason(payload.get('reason'))
+        payload['reason'] = reason
+        if crudo:
+            payload['reason_detail'] = crudo
 
         nat = self._agent_normalize_phone(payload.get('phone'))
         if len(nat) != 10:
             return {'lead_id': None, 'created': False,
                     'activity_scheduled': False, 'skipped_reason': 'invalid_phone'}
+
+        # Escalamiento silencioso: el contacto queda "esperando a una persona"
+        # (Agente WhatsApp → Contactos), con su boton para devolverlo.
+        if payload.get('silencioso'):
+            self.env['visar.agent.contacto']._visar_atencion(
+                payload.get('phone'), 'escalado',
+                motivo=self.HANDOFF_REASONS.get(reason))
 
         # El CP de un escalamiento es el dato mas valioso del reporte de
         # expansion, y hasta hoy se quedaba DENTRO de la nota del chatter, donde
@@ -2322,13 +2368,16 @@ class VisarAgentTools(models.AbstractModel):
             lead.message_post(body=self._agent_handoff_note(payload))
             assignee = self._agent_handoff_assignee(lead)
             if assignee:
+                motivo = self.HANDOFF_REASONS.get(
+                    payload.get('reason'), self.HANDOFF_REASONS['other'])
                 lead.activity_schedule(
                     'mail.mail_activity_data_call',
                     date_deadline=fields.Date.add(
                         fields.Date.context_today(lead),
                         days=self.HANDOFF_ACTIVITY_DAYS),
-                    summary="WhatsApp: %s" % self.HANDOFF_REASONS.get(
-                        payload.get('reason'), self.HANDOFF_REASONS['other']),
+                    summary=("WhatsApp, el cliente espera: %s" if payload.get(
+                        'silencioso') else "WhatsApp: %s") % motivo,
+                    note=self._agent_handoff_activity_note(payload),
                     user_id=assignee.id,
                 )
                 scheduled = True
@@ -2364,7 +2413,12 @@ class VisarAgentTools(models.AbstractModel):
             return users.filtered(
                 lambda user: user and not user.share and user != self.env.user)[:1]
 
-        return (usable(lead.user_id)
+        # La persona a cargo de Ajustes → Visar va primero (20-oct-2026): sin
+        # ella todo caia en `admin`, porque el equipo de WhatsApp no tiene
+        # miembros.
+        from .visar_handoff import visar_handoff_user
+        return (usable(visar_handoff_user(self.env))
+                or usable(lead.user_id)
                 or usable(lead.team_id.user_id)
                 or usable(lead.team_id.member_ids)
                 or self.env['res.users'].browse())
@@ -2381,6 +2435,9 @@ class VisarAgentTools(models.AbstractModel):
             payload.get('reason'), self.HANDOFF_REASONS['other'])
         lines = ["<p><b>El agente de WhatsApp escalo esta conversacion.</b></p>",
                  "<p><b>Motivo:</b> %s</p>" % escape(reason)]
+        detalle = (payload.get('reason_detail') or '').strip()
+        if detalle:
+            lines.append("<p><b>Motivo que dio el agente:</b> %s</p>" % escape(detalle))
         summary = (payload.get('summary') or '').strip()
         if summary:
             lines.append("<p><b>Lo que dijo el cliente:</b> %s</p>" % escape(summary))
@@ -2391,7 +2448,71 @@ class VisarAgentTools(models.AbstractModel):
                 for key, value in context.items() if value not in (None, '', False))
             if rows:
                 lines.append("<p><b>Lo que ya se sabe:</b></p><ul>%s</ul>" % rows)
+        conversacion = self._agent_handoff_transcript(payload.get('transcript'))
+        if conversacion:
+            lines.append("<p><b>La conversación:</b></p>%s" % conversacion)
         return Markup("".join(lines))
+
+    QUIEN_DIJO = {'cliente': "Cliente", 'agente': "Agente", 'persona': "Visar"}
+
+    @api.model
+    def _agent_handoff_transcript(self, transcript):
+        """La bitacora del runtime como HTML. Vacio si no llego (runtime viejo)."""
+        if not isinstance(transcript, list) or not transcript:
+            return ''
+        tz = pytz.timezone(self.env['ir.config_parameter'].sudo().get_param(
+            TZ_PARAM) or DEFAULT_TZ)
+        filas = []
+        for linea in transcript[-50:]:
+            if not isinstance(linea, dict):
+                continue
+            texto = str(linea.get('texto') or '').strip()
+            if not texto:
+                continue
+            quien = self.QUIEN_DIJO.get(linea.get('quien'), "?")
+            hora = ''
+            try:
+                hora = datetime.fromtimestamp(float(linea.get('hora')), tz).strftime(
+                    '%H:%M ')
+            except (TypeError, ValueError, OverflowError, OSError):
+                pass
+            filas.append("<li>%s<b>%s:</b> %s</li>" % (
+                escape(hora), escape(quien),
+                escape(texto).replace('\n', Markup('<br/>'))))
+        return "<ul>%s</ul>" % "".join(filas) if filas else ''
+
+    @api.model
+    def _agent_handoff_activity_note(self, payload):
+        """La actividad lleva lo esencial para contestar sin abrir el lead."""
+        partes = []
+        if payload.get('silencioso'):
+            partes.append(
+                "<p>El cliente está esperando. Contesta desde la app WhatsApp "
+                "Business; el agente no le escribe mientras tanto. Al terminar, "
+                "<b>Devolver al agente</b> en Agente WhatsApp → Contactos.</p>")
+        conversacion = self._agent_handoff_transcript(payload.get('transcript'))
+        if conversacion:
+            partes.append("<p><b>La conversación:</b></p>%s" % conversacion)
+        return Markup("".join(partes))
+
+    @api.model
+    def agent_handoff_state(self, payload):
+        """El runtime avisa quien atiende: 'persona' (contesto alguien desde la
+        app) o 'devuelto' (vuelve el agente, por tiempo). Best-effort.
+
+        `payload` = {"phone": "...", "estado": "persona"|"devuelto", "motivo": "..."}
+        """
+        payload = payload or {}
+        estado = payload.get('estado')
+        if estado not in ('persona', 'devuelto'):
+            return {'ok': False}
+        motivo = None
+        if estado == 'persona':
+            clave, _crudo = self._agent_handoff_reason(payload.get('motivo'))
+            motivo = self.HANDOFF_REASONS.get(clave)
+        contacto = self.env['visar.agent.contacto']._visar_atencion(
+            payload.get('phone'), estado, motivo=motivo)
+        return {'ok': bool(contacto)}
 
     # ------------------------------------------------------------------
     # Agendado por WhatsApp — apartado + preparacion de la reserva

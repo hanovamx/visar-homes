@@ -38,6 +38,62 @@
                         escribió en las últimas 24 horas.
                     </div>
                 </block>
+                <block title="Escalar a una persona" name="visar_handoff">
+                    <setting string="Escalar en silencio"
+                             help="Al escalar, el cliente lee «Permíteme un momento» y el agente deja de contestarle. Una persona sigue la misma conversación desde la app WhatsApp Business. Apagado, el agente dice que lo contactará un asesor y sigue contestando.">
+                        <field name="visar_handoff_silencioso"/>
+                    </setting>
+                    <setting string="Persona a cargo"
+                             help="Recibe la actividad de cada escalamiento con la conversación. Debe tener el teléfono con WhatsApp Business: es desde ahí donde se contesta.">
+                        <field name="visar_handoff_user_id" options="{'no_create': True}"/>
+                    </setting>
+                    <setting string="Horario de atención"
+                             help="Hora local. Fuera de horario, el cliente lee cuándo le contestan."
+                             invisible="not visar_handoff_silencioso">
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <field name="visar_handoff_dias" class="oe_inline"/>
+                            <span>de las</span>
+                            <field name="visar_handoff_hora_desde" class="oe_inline"/>
+                            <span>a las</span>
+                            <field name="visar_handoff_hora_hasta" class="oe_inline"/>
+                        </div>
+                    </setting>
+                    <setting string="Tiempos"
+                             help="Si nadie contesta, el agente manda un solo mensaje de espera. Sin mensajes de la persona, la conversación vuelve sola al agente."
+                             invisible="not visar_handoff_silencioso">
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <span>Aviso de espera a los</span>
+                            <field name="visar_handoff_espera_min" class="oe_inline"/>
+                            <span>minutos; devolver al agente a las</span>
+                            <field name="visar_handoff_devolver_h" class="oe_inline"/>
+                            <span>horas</span>
+                        </div>
+                    </setting>
+                    <setting string="Mensajes al cliente"
+                             help="{cuando} se cambia por «hoy a partir de las 9:00», «mañana…» o «el lunes…»."
+                             invisible="not visar_handoff_silencioso">
+                        <div class="d-flex flex-column gap-1 w-100">
+                            <label for="visar_handoff_texto_espera" class="text-muted small"/>
+                            <field name="visar_handoff_texto_espera"/>
+                            <label for="visar_handoff_texto_respaldo" class="text-muted small"/>
+                            <field name="visar_handoff_texto_respaldo"/>
+                            <label for="visar_handoff_texto_fuera" class="text-muted small"/>
+                            <field name="visar_handoff_texto_fuera"/>
+                        </div>
+                    </setting>
+                    <setting string="Si alguien escribe primero desde la app, el agente sigue contestando"
+                             help="Apagado (lo normal), el agente también se aparta cuando alguien escribe desde la app a un cliente que nadie escaló."
+                             invisible="not visar_handoff_silencioso">
+                        <field name="visar_handoff_persona_no_aparta"/>
+                    </setting>
+                    <div class="text-muted mt-2 ms-1"
+                         invisible="not visar_handoff_silencioso">
+                        Quién está esperando o con una persona: Agente WhatsApp →
+                        Contactos, filtro «Con una persona». Ahí está el botón
+                        <strong>Devolver al agente</strong>. Los cambios llegan
+                        al agente en unos 15 minutos.
+                    </div>
+                </block>
                 <block title="Saludo del agente de WhatsApp" name="visar_agent_saludo">
                     <setting string="Saludar según el cliente"
                              help="Apagado, todos reciben el saludo de siempre. Encendido, quien ya había escrito o ya es cliente recibe el suyo, y quien tiene una suscripción con visita agendada, la fecha de esa visita. Los botones son los mismos para todos.">

@@ -24,3 +24,4 @@ from . import test_agent_save_address
 from . import test_agent_saludo
 from . import test_agent_plaga
 from . import test_poliza_aviso
+from . import test_handoff_silencioso
