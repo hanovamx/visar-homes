@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Paso de productos adicionales de la cita web: textos y descripción por producto."""
+from unittest.mock import patch
+
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
+from odoo.tools import format_amount
 
 
 @tagged('post_install', '-at_install')
@@ -74,3 +77,65 @@ class TestExtrasDescripcion(TransactionCase):
         por_nombre = {o['label']: o for o in paso['options']}
         self.assertTrue(por_nombre['Adicional con texto']['description']
                         .startswith('Trampa de pegamento para cocina. '))
+
+    # --- Precio del servicio antes de la oferta (20-oct-2026) ---------------
+    # La cotizacion se sustituye: armar items que el motor sepa cotizar exige
+    # tiers, variantes y listas (ver test_solo_exterior); aqui se prueba la
+    # frase y QUE se cotiza, no el motor.
+
+    def _precio(self, cifra):
+        return format_amount(self.env, cifra, self.env.company.currency_id)
+
+    def _booking(self, **extra):
+        return dict({'zone_id': self.zona.id,
+                     'items': [{'product_tmpl_id': self.servicio.id}]}, **extra)
+
+    def _cotizando(self, total=500.0):
+        return patch.object(
+            type(self.env['appointment.type']), '_visar_quote_booking',
+            autospec=True, return_value={
+                'total': total, 'currency_id': self.env.company.currency_id.id})
+
+    def test_el_precio_es_el_del_servicio_sin_los_extras(self):
+        with self._cotizando() as cotiza:
+            intro = self.env['appointment.type']._visar_wizard_extras_intro(
+                self._booking(extras_accepted=[
+                    {'product_id': self.con_texto.product_variant_id.id, 'quantity': 1}]))
+        self.assertEqual(intro, 'Tu servicio queda en %s, IVA incluido.'
+                         % self._precio(500.0))
+        # Ni los extras ya aceptados ni un plan: el precio de contado del servicio.
+        kwargs = cotiza.call_args.kwargs
+        self.assertNotIn('extra_addons', kwargs)
+        self.assertNotIn('plan', kwargs)
+
+    def test_el_precio_nombra_el_servicio_elegido(self):
+        grupo = self.env['visar.service.group'].create(
+            {'name': 'Fumigación', 'code': 'grupo_extras_prueba'})
+        with self._cotizando():
+            intro = self.env['appointment.type']._visar_wizard_extras_intro(
+                self._booking(selections={'group_ids': [grupo.id]}))
+        self.assertEqual(intro, 'Tu servicio de fumigación queda en %s, IVA incluido.'
+                         % self._precio(500.0))
+
+    def test_el_paso_del_agente_empieza_por_el_precio(self):
+        with self._cotizando():
+            paso = self.env['appointment.type']._visar_wizard_step_options(
+                self._booking(), 'extras')
+        self.assertEqual(paso['title'], 'Tu servicio queda en %s, IVA incluido.'
+                         % self._precio(500.0))
+        self.assertEqual(paso['hint'], 'Te sugerimos agregar estos productos '
+                                       'para complementar el servicio.')
+
+    def test_sin_cifra_el_paso_queda_como_antes(self):
+        flujo = self.env['appointment.type']
+        self.assertEqual(flujo._visar_wizard_extras_intro({'items': []}), '')
+        with self._cotizando(total=0.0):
+            self.assertEqual(flujo._visar_wizard_extras_intro(self._booking()), '')
+        paso = flujo._visar_wizard_step_options(self._booking(), 'extras')
+        self.assertEqual(paso['title'], 'Productos adicionales recomendados')
+
+    def test_la_web_pinta_el_precio_antes_de_la_oferta(self):
+        arch = self.env.ref('visar_appointment.visar_wizard_extras').arch_db
+        self.assertIn('extras_intro', arch)
+        self.assertLess(arch.index('extras_intro'),
+                        arch.index('Te sugerimos agregar'))

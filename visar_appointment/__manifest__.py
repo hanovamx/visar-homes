@@ -21,7 +21,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.37.0',
+    'version': '19.0.2.38.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',

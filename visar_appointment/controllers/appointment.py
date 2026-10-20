@@ -989,6 +989,9 @@ class VisarAppointmentController(WebsiteAppointmentSale):
                 'extras_offers': offers,
                 'accepted_ids': [e['product_id'] for e in (booking.get('extras_accepted') or [])],
                 'visar_quote': quote or False,
+                # El precio del servicio va ANTES de la oferta (20-oct-2026); es
+                # la misma frase que dice el agente de WhatsApp en este paso.
+                'extras_intro': self._visar_flow()._visar_wizard_extras_intro(booking),
             })
             return request.render('visar_appointment.visar_wizard_extras', ctx)
 

@@ -1014,6 +1014,43 @@ class AppointmentType(models.Model):
             que_es += '.'
         return '%s %s' % (que_es, precio)
 
+    @api.model
+    def _visar_wizard_extras_intro(self, booking):
+        """El precio del servicio, dicho ANTES de ofrecer los add-ons.
+
+        Pedido de Visar (20-oct-2026): primero se informa cuánto cuesta el
+        servicio y después se ofrecen los productos adicionales. Hasta ahora
+        quien entraba por "Agendar" veía la estación antirroedores con su precio
+        sin haber visto todavía el del servicio, que salía hasta el resumen.
+
+        Es la cotización SIN los extras opcionales (los obligatorios por plaga sí
+        van: son parte del servicio) y de contado, porque la póliza se pregunta
+        después. Cadena vacía si no hay cifra: el paso se pinta como antes.
+        """
+        booking = booking or {}
+        zone = self.env['visar.zone'].sudo().browse(booking.get('zone_id')).exists()
+        items = booking.get('items') or []
+        if not zone or not items:
+            return ''
+        quote = self._visar_quote_booking(
+            items, zone, plagas=self._visar_wizard_plagas(booking))
+        if not quote or not quote.get('total'):
+            return ''
+        currency = (self.env['res.currency'].browse(quote.get('currency_id')).exists()
+                    or self.env.company.currency_id)
+        precio = format_amount(self.env, quote['total'], currency)
+        nombres = [
+            label[:1].lower() + label[1:]
+            for label in (g._visar_wizard_label() for g in self._visar_wizard_selected_groups(
+                booking.get('selections') or {}))
+            if label]
+        if nombres:
+            servicio = (nombres[0] if len(nombres) == 1
+                        else '%s y %s' % (', '.join(nombres[:-1]), nombres[-1]))
+            return _('Tu servicio de %(servicio)s queda en %(precio)s, IVA incluido.') % {
+                'servicio': servicio, 'precio': precio}
+        return _('Tu servicio queda en %(precio)s, IVA incluido.') % {'precio': precio}
+
     def _visar_wizard_extra_price_text(self, offer):
         """Cuánto cuesta el add-on, con desglose si va por paquete."""
         currency = self.env['res.currency'].browse(offer.get('currency_id'))
@@ -2520,7 +2557,10 @@ class AppointmentType(models.Model):
                 # Mismos textos que el paso de la cita web (pedido de Visar,
                 # 6-oct-2026). Sin `hint` el canal pone su respaldo ("Puedes
                 # decirme varias.").
-                'title': _('Productos adicionales recomendados'),
+                # Con cifra, la pregunta EMPIEZA por el precio del servicio
+                # (20-oct-2026); el `hint` de debajo sigue siendo la oferta.
+                'title': (self._visar_wizard_extras_intro(booking)
+                          or _('Productos adicionales recomendados')),
                 'hint': _('Te sugerimos agregar estos productos para '
                           'complementar el servicio.'),
                 # El `hint` no vuelve a ser "Si no quieres agregar nada, dime

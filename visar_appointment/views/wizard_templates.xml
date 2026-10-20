@@ -658,6 +658,9 @@
                     <div class="row justify-content-center g-4">
                         <div class="col-lg-7">
                             <h2>Productos adicionales recomendados</h2>
+                            <!-- Primero el precio del servicio, luego la oferta. -->
+                            <p t-if="extras_intro" class="fs-5 mb-1 visar_extras_intro"
+                               t-esc="extras_intro"/>
                             <p class="text-muted">
                                 Paso <t t-esc="wizard_step"/> de <t t-esc="wizard_total_steps"/>
                                 — Te sugerimos agregar estos productos para complementar el servicio.
