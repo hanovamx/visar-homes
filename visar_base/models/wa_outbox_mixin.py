@@ -286,9 +286,12 @@ class VisarWaOutboxMixin(models.AbstractModel):
             self._visar_register_failure(self._visar_http_detail(response))
             return False
         try:
-            mode = (response.json() or {}).get('mode') or ''
+            respuesta = response.json() or {}
         except ValueError:
-            mode = ''
+            respuesta = {}
+        if not isinstance(respuesta, dict):
+            respuesta = {}
+        mode = respuesta.get('mode') or ''
         self.write({
             'state': 'sent',
             'attempts': self.attempts + 1,
@@ -296,11 +299,20 @@ class VisarWaOutboxMixin(models.AbstractModel):
             'mode_used': mode,
             'last_error': False,
         })
+        self._visar_wa_after_send(respuesta)
         _logger.info("Aviso %s (%s,%s) enviado (%s)",
                      self.template_key, self._name, self.id, mode or '?')
         return True
 
     @api.model
+    def _visar_wa_after_send(self, respuesta):
+        """Gancho tras un envío aceptado, con el JSON que contestó el runtime.
+
+        Por defecto no hace nada. El recontacto lo usa para guardar el texto que
+        redactó el modelo: es el único aviso cuyo texto no escribe Odoo.
+        """
+        return None
+
     def _visar_http_detail(self, response):
         """Detalle legible de una respuesta HTTP fallida, acotado."""
         try:

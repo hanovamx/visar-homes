@@ -95,6 +95,15 @@ class VisarWaLeadMessage(models.Model):
             })
         return enviado
 
+    def _visar_wa_after_send(self, respuesta):
+        """Guarda en el lead el texto que redactó el modelo."""
+        resultado = super()._visar_wa_after_send(respuesta)
+        texto = (respuesta or {}).get('text')
+        if self.lead_id and isinstance(texto, str) and texto.strip():
+            self.lead_id.sudo().write(
+                {'visar_wa_followup_texto': texto.strip()[:2000]})
+        return resultado
+
     def _visar_warn_not_delivered(self, reason):
         """El recontacto no llegó: el lead vuelve a decir la verdad.
 
@@ -109,6 +118,7 @@ class VisarWaLeadMessage(models.Model):
             self.lead_id.sudo().write({
                 'visar_wa_followup_state': 'skipped',
                 'visar_wa_followup_sent_at': False,
+                'visar_wa_followup_texto': False,
                 'visar_wa_followup_skip_reason': "No se pudo entregar: %s" % reason,
             })
         return resultado

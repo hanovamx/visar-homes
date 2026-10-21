@@ -50,6 +50,22 @@
                             </div>
                         </group>
                     </group>
+                    <group string="Cuando el cliente contesta">
+                        <group>
+                            <label for="vigencia_horas"/>
+                            <div>
+                                <field name="vigencia_horas" class="oe_inline"/>
+                                <span class="ms-1">horas desde que se mandó</span>
+                            </div>
+                        </group>
+                        <group>
+                            <div class="text-muted">
+                                Dentro de este tiempo el agente recuerda por qué le
+                                escribió (servicio, dirección, plaga, en qué paso se
+                                quedó) y lo retoma en vez de saludarlo de nuevo.
+                            </div>
+                        </group>
+                    </group>
                     <div class="alert alert-warning" role="alert">
                         <b>La espera tiene que caber dentro del horario hábil.</b>
                         WhatsApp solo entrega mensajes libres dentro de las 24 h
@@ -145,6 +161,8 @@
                                invisible="visar_wa_followup_state != 'sent'"/>
                         <field name="visar_wa_followup_skip_reason" readonly="1"
                                invisible="visar_wa_followup_state != 'skipped'"/>
+                        <field name="visar_wa_followup_texto" readonly="1"
+                               invisible="not visar_wa_followup_texto"/>
                     </group>
                     <group>
                         <field name="visar_wa_followup_context" readonly="1"

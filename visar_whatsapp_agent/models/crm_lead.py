@@ -106,6 +106,11 @@ class CrmLead(models.Model):
     visar_wa_followup_sent_at = fields.Datetime(
         string="Recontactado el", readonly=True, copy=False)
 
+    # Lo que se le mandó, tal cual lo redactó el modelo. Hace falta para
+    # retomarlo si contesta horas después, cuando el runtime ya lo olvidó.
+    visar_wa_followup_texto = fields.Text(
+        string="Mensaje de recontacto", readonly=True, copy=False)
+
     visar_wa_followup_skip_reason = fields.Char(
         string="Motivo de descarte", readonly=True, copy=False)
 

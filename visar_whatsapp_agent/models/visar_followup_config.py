@@ -73,6 +73,18 @@ class VisarFollowupConfig(models.Model):
              "espera vence pasada esta hora, el recontacto se guarda para el "
              "día siguiente.")
 
+    # Cuánto tiempo, después de mandarlo, el recontacto sigue siendo "el tema"
+    # si el cliente contesta. La conversación del runtime caduca a las 3 h y el
+    # cliente suele contestar mucho después (21-oct-2026: 10 h): sin esto, el
+    # agente lo saludaba como a alguien nuevo.
+    vigencia_horas = fields.Integer(
+        string="Retomar si contesta dentro de (horas)", required=True,
+        default=48,
+        help="Si el cliente contesta el recontacto dentro de estas horas, el "
+             "agente retoma lo que quedó pendiente en vez de saludarlo de "
+             "nuevo. Pasado ese tiempo, o si el lead ya no está en Nuevo, "
+             "empieza una conversación normal.")
+
     # ------------------------------------------------------------------
     # Lectura
     # ------------------------------------------------------------------
@@ -90,6 +102,13 @@ class VisarFollowupConfig(models.Model):
     # ------------------------------------------------------------------
     # Validación
     # ------------------------------------------------------------------
+
+    @api.constrains('vigencia_horas')
+    def _check_vigencia(self):
+        for record in self:
+            if record.vigencia_horas < 1:
+                raise ValidationError(
+                    "El tiempo para retomar tiene que ser de al menos una hora.")
 
     @api.constrains('delay_minutes', 'window_start_hour', 'window_end_hour')
     def _check_ventanas(self):

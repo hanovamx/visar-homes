@@ -9,6 +9,7 @@ from . import visar_agent_tools
 from . import visar_agent_facts
 from . import visar_agent_saludo
 from . import visar_agent_plaga
+from . import visar_agent_recontacto
 from . import visar_poliza_aviso
 from . import visar_handoff
 from . import visar_agent_mensaje
