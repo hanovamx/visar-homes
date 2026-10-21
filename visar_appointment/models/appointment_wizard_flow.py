@@ -43,6 +43,15 @@ from odoo.tools import format_amount
 # El agente de WhatsApp ya sabe donde esta la plaga (21-oct-2026): en vez de
 # "¿Dónde fumigamos?" ofrece la otra zona. Textos de Ajustes → Visar (los campos
 # viven en visar_whatsapp_agent); vacios, estos.
+# El CP fuera de cobertura, dicho por WhatsApp (21-oct-2026): Visar pidio un
+# mensaje mas amable y preguntar por otra direccion. Solo el agente: la web
+# sigue con el suyo. Texto de Ajustes → Visar; vacio, este.
+SIN_COBERTURA_PARAM = 'visar.cobertura.sin_servicio'
+SIN_COBERTURA_DEFAULT = ("Lo siento, por el momento no damos servicio en el "
+                         "código postal {cp}.")
+OTRA_DIRECCION_PARAM = 'visar.cobertura.otra_direccion'
+OTRA_DIRECCION_DEFAULT = "¿Tienes alguna otra dirección?"
+
 COBERTURA_OFERTA_PARAM = 'visar.cobertura.oferta_%s'
 COBERTURA_OFERTA_DEFAULT = {
     'interior': "Entonces fumigamos el interior. ¿Quieres fumigar también el "
@@ -1472,6 +1481,29 @@ class AppointmentType(models.Model):
         return cp_record.zone_id, address, None
 
     @api.model
+    def _visar_wizard_cp_sin_cobertura(self, address):
+        """¿La direccion esta completa y su CP no tiene zona?"""
+        if not all((address or {}).get(k) for k in
+                   ('street', 'ext_num', 'neighborhood', 'zip')):
+            return False
+        cp_record = self.env['visar.zone.cp'].sudo()._get_cp_record(address['zip'])
+        return not cp_record or not cp_record.zone_id
+
+    @api.model
+    def _visar_wizard_texto_sin_cobertura(self, cp):
+        """Lo que lee por WhatsApp quien da un CP sin servicio."""
+        params = self.env['ir.config_parameter'].sudo()
+        texto = (params.get_param(SIN_COBERTURA_PARAM) or '').strip() \
+            or SIN_COBERTURA_DEFAULT
+        try:
+            texto = texto.format(cp=cp)
+        except (KeyError, IndexError, ValueError):
+            texto = SIN_COBERTURA_DEFAULT.format(cp=cp)
+        pregunta = (params.get_param(OTRA_DIRECCION_PARAM) or '').strip() \
+            or OTRA_DIRECCION_DEFAULT
+        return f"{texto}\n\n{pregunta}"
+
+    @api.model
     def _visar_registrar_cp_consultado(self, cp, motivo):
         """Anota el CP en el reporte de interés por código postal.
 
@@ -1812,6 +1844,10 @@ class AppointmentType(models.Model):
         # dirección viene incompleta, eso es lo que hay que decirle, no "falta
         # configurar el tipo de cita".
         zone, address, error = self._visar_wizard_resolve_address(answer)
+        if error and not zone and self._visar_wizard_cp_sin_cobertura(address):
+            return booking, self._visar_wizard_error(
+                'out_of_coverage', error, address=address, cp=address['zip'],
+                agente=self._visar_wizard_texto_sin_cobertura(address['zip']))
         if error:
             return booking, self._visar_wizard_error(
                 'bad_address', error, address=address)

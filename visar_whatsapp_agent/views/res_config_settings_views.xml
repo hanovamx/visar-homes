@@ -59,6 +59,13 @@
                             <field name="visar_cobertura_oferta_exterior"/>
                         </div>
                     </setting>
+                    <setting string="Código postal sin servicio"
+                             help="Lo que lee por WhatsApp quien da una dirección donde no damos servicio. {cp} se cambia por su código postal. Debajo van las instrucciones para escribir otra dirección; si contesta que no, el agente se despide amablemente. La web no cambia.">
+                        <div class="d-flex flex-column gap-1 w-100">
+                            <field name="visar_cobertura_sin_servicio"/>
+                            <field name="visar_cobertura_otra_direccion"/>
+                        </div>
+                    </setting>
                 </block>
                 <block title="Escalar a una persona" name="visar_handoff">
                     <setting string="Escalar en silencio"

@@ -288,7 +288,15 @@ class TestWizardFlow(TransactionCase):
                 'zip': '00000',
             })
         self.assertIsNotNone(error)
-        self.assertEqual(error['code'], 'bad_address')
+        # Su propio codigo desde el 21-oct-2026: el agente de WhatsApp lo dice
+        # con otro texto (`agente`) y pregunta por otra direccion. La web sigue
+        # con `message`.
+        self.assertEqual(error['code'], 'out_of_coverage')
+        self.assertEqual(error['cp'], '00000')
+        self.assertIn('No damos servicio en el código postal 00000', error['message'])
+        self.assertIn('por el momento no damos servicio en el código postal 00000',
+                      error['agente'])
+        self.assertIn('address', error)
 
     # ------------------------------------------------------------------
     # Opciones

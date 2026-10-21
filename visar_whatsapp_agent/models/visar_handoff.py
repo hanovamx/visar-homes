@@ -29,6 +29,10 @@ from odoo.exceptions import UserError, ValidationError
 from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
     COBERTURA_OFERTA_DEFAULT,
     COBERTURA_OFERTA_PARAM,
+    OTRA_DIRECCION_DEFAULT,
+    OTRA_DIRECCION_PARAM,
+    SIN_COBERTURA_DEFAULT,
+    SIN_COBERTURA_PARAM,
 )
 
 from .visar_agent_tools import DEFAULT_TZ, TZ_PARAM
@@ -166,6 +170,18 @@ class ResConfigSettings(models.TransientModel):
         config_parameter=COBERTURA_OFERTA_PARAM % 'exterior',
         default=COBERTURA_OFERTA_DEFAULT['exterior'],
         help="Lo mismo cuando dijo que está solo en el exterior (jardín, patio…).")
+    # Char y no Text: Ajustes no acepta Text con `config_parameter`.
+    visar_cobertura_sin_servicio = fields.Char(
+        string="Código postal sin servicio",
+        config_parameter=SIN_COBERTURA_PARAM, default=SIN_COBERTURA_DEFAULT,
+        help="Lo que lee por WhatsApp quien da una dirección con un código "
+             "postal donde no hay servicio. {cp} se cambia por su código "
+             "postal. La web no cambia.")
+    visar_cobertura_otra_direccion = fields.Char(
+        string="Pregunta por otra dirección",
+        config_parameter=OTRA_DIRECCION_PARAM, default=OTRA_DIRECCION_DEFAULT,
+        help="Va debajo del mensaje anterior, antes de las instrucciones para "
+             "escribir la dirección.")
     visar_handoff_persona_no_aparta = fields.Boolean(
         string="Si alguien escribe primero desde la app, el agente sigue contestando",
         config_parameter=NO_APARTA_PARAM,
@@ -186,7 +202,8 @@ class ResConfigSettings(models.TransientModel):
 
     @api.constrains('visar_handoff_hora_desde', 'visar_handoff_hora_hasta',
                     'visar_handoff_espera_min', 'visar_handoff_devolver_h',
-                    'visar_handoff_urgente_dias', 'visar_handoff_texto_fuera')
+                    'visar_handoff_urgente_dias', 'visar_handoff_texto_fuera',
+                    'visar_cobertura_sin_servicio')
     def _check_visar_handoff(self):
         for record in self:
             desde = record.visar_handoff_hora_desde
@@ -205,6 +222,12 @@ class ResConfigSettings(models.TransientModel):
             if record.visar_handoff_urgente_dias < 1:
                 raise ValidationError(_(
                     "Los días de más para un cliente urgente son al menos 1."))
+            try:
+                (record.visar_cobertura_sin_servicio or '').format(cp='x')
+            except (KeyError, IndexError, ValueError):
+                raise ValidationError(_(
+                    "En «Código postal sin servicio» la única llave permitida "
+                    "es {cp}."))
             texto = record.visar_handoff_texto_fuera or ''
             try:
                 texto.format(cuando='x')

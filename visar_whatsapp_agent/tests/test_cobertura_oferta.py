@@ -5,6 +5,7 @@ El paso de cobertura lleva `oferta`: la pregunta que hace el agente en vez de
 «¿Dónde fumigamos?» si ya sabe que la plaga está solo adentro o solo afuera.
 Los textos se editan en Ajustes → Visar.
 """
+from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -39,3 +40,19 @@ class TestCoberturaOferta(TransactionCase):
         self.assertEqual(oferta['interior']['pregunta'], "¿Sumamos el jardín?")
         self.assertEqual(oferta['exterior']['pregunta'],
                          COBERTURA_OFERTA_DEFAULT['exterior'])
+
+
+    # --- Codigo postal sin servicio (21-oct-2026) -------------------------
+
+    def test_el_texto_sin_cobertura_sale_de_ajustes(self):
+        Flujo = self.env['appointment.type']
+        self.assertIn("¿Tienes alguna otra dirección?",
+                      Flujo._visar_wizard_texto_sin_cobertura('42084'))
+        self.env['res.config.settings'].create({
+            'visar_cobertura_sin_servicio': "Aún no llegamos al {cp}.",
+        }).execute()
+        self.assertEqual(Flujo._visar_wizard_texto_sin_cobertura('42084'),
+                         "Aún no llegamos al 42084.\n\n¿Tienes alguna otra dirección?")
+        with self.assertRaises(ValidationError):
+            self.env['res.config.settings'].create({
+                'visar_cobertura_sin_servicio': "No llegamos a {codigo}."})
