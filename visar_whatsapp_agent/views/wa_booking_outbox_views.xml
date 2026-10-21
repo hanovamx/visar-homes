@@ -70,7 +70,7 @@
     </record>
     <menuitem id="menu_wa_booking_outbox"
               name="Avisos de agendado"
-              parent="visar_whatsapp_agent.menu_agent_root"
+              parent="visar_whatsapp_agent.menu_agent_actividad"
               action="visar_wa_booking_message_action"
               sequence="20"/>
 

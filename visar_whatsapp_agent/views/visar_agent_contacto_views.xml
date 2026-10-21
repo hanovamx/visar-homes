@@ -185,8 +185,8 @@
 
     <menuitem id="menu_agent_contactos"
               name="Contactos"
-              parent="menu_agent_root"
+              parent="menu_agent_clientes"
               action="visar_agent_contacto_action"
-              sequence="5"/>
+              sequence="10"/>
 
 </odoo>

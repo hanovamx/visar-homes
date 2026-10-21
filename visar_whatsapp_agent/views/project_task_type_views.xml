@@ -66,8 +66,8 @@
 
     <menuitem id="menu_agent_service_stages"
               name="Etapas de servicio"
-              parent="menu_agent_root"
+              parent="menu_agent_config"
               action="project_task_type_action_agente"
-              sequence="26"/>
+              sequence="40"/>
 
 </odoo>

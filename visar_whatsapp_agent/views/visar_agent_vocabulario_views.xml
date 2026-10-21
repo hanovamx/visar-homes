@@ -162,8 +162,8 @@
 
     <menuitem id="menu_agent_vocabulario"
               name="Vocabulario"
-              parent="menu_agent_root"
+              parent="menu_agent_comportamiento"
               action="visar_agent_vocabulario_action"
-              sequence="25"/>
+              sequence="30"/>
 
 </odoo>

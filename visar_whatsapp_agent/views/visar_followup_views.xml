@@ -240,15 +240,15 @@
     <!-- ============================================================== -->
 
     <menuitem id="menu_agent_followup_config"
-              name="Recontacto"
+              name="Recontactos"
               parent="menu_agent_config"
               action="visar_followup_config_action"
               sequence="30"/>
 
     <menuitem id="menu_agent_followup_outbox"
               name="Recontactos enviados"
-              parent="menu_agent_root"
+              parent="menu_agent_actividad"
               action="visar_wa_lead_message_action"
-              sequence="25"/>
+              sequence="40"/>
 
 </odoo>

@@ -54,6 +54,6 @@
               name="Plantillas de avisos"
               parent="menu_agent_config"
               action="visar_wa_template_route_action"
-              sequence="25"/>
+              sequence="50"/>
 
 </odoo>

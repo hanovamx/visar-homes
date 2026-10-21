@@ -73,9 +73,9 @@
     </record>
     <menuitem id="menu_wa_poliza_outbox"
               name="Avisos de visitas de suscripción"
-              parent="visar_whatsapp_agent.menu_agent_root"
+              parent="visar_whatsapp_agent.menu_agent_actividad"
               action="visar_wa_poliza_message_action"
-              sequence="21"/>
+              sequence="30"/>
 
     <!-- La lista de oficina: qué se le avisó y qué contestó. -->
     <record id="view_task_list_visar_poliza_agenda_aviso" model="ir.ui.view">

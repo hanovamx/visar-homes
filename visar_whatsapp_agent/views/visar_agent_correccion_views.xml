@@ -155,8 +155,8 @@
 
     <menuitem id="menu_agent_correcciones"
               name="Correcciones"
-              parent="menu_agent_root"
+              parent="menu_agent_comportamiento"
               action="visar_agent_correccion_action"
-              sequence="22"/>
+              sequence="20"/>
 
 </odoo>

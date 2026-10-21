@@ -69,9 +69,9 @@
 
     <menuitem id="menu_agent_conversaciones"
               name="Conversaciones"
-              parent="menu_agent_root"
+              parent="menu_agent_actividad"
               action="visar_agent_mensaje_action"
               groups="base.group_system"
-              sequence="6"/>
+              sequence="10"/>
 
 </odoo>

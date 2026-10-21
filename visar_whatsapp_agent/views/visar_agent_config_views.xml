@@ -385,41 +385,60 @@
               sequence="95"
               groups="base.group_system"/>
 
-    <!-- Rutas y prompt base suben un nivel: es lo que se usa, no configuracion
-         avanzada. Lo que queda en "Configuracion" son los ajustes de conexion. -->
+    <!-- Cuatro secciones (21-oct-2026, pedido del usuario). Los ids de los
+         menus de siempre no cambian: solo su padre, para que la actualizacion
+         los mueva en vez de duplicarlos. Cada archivo de vistas cuelga el suyo
+         de la seccion que le toca. -->
+
+    <menuitem id="menu_agent_clientes"
+              name="Clientes"
+              parent="menu_agent_root"
+              sequence="5"/>
+
+    <menuitem id="menu_agent_comportamiento"
+              name="Comportamiento del agente"
+              parent="menu_agent_root"
+              sequence="10"/>
+
+    <menuitem id="menu_agent_actividad"
+              name="Actividad y seguimiento"
+              parent="menu_agent_root"
+              sequence="20"/>
+
+    <menuitem id="menu_agent_config"
+              name="Configuración"
+              parent="menu_agent_root"
+              sequence="30"/>
 
     <menuitem id="menu_agent_routes"
               name="Rutas"
-              parent="menu_agent_root"
+              parent="menu_agent_comportamiento"
               action="visar_agent_route_action"
               sequence="10"/>
 
     <menuitem id="menu_agent_base_prompt"
               name="Prompt base"
-              parent="menu_agent_root"
+              parent="menu_agent_comportamiento"
               action="visar_agent_base_action"
-              sequence="20"/>
+              sequence="40"/>
 
     <!-- El reporte de codigos postales. Los modelos y las vistas viven en
          visar_appointment (pegados a las zonas y al cuestionario que los
-         alimentan); el menu vive aqui, que es por donde entra quien lo mira. -->
+         alimentan); el menu vive aqui, que es por donde entra quien lo mira.
+         Los dos van lado a lado: con "Interesados por CP" colgado debajo,
+         Odoo volvia "Codigos postales" un encabezado y su lista no se abria. -->
 
     <menuitem id="menu_agent_cp_interes"
-              name="Codigos postales"
-              parent="menu_agent_root"
+              name="Códigos postales"
+              parent="menu_agent_actividad"
               action="visar_appointment.visar_cp_interes_action"
-              sequence="27"/>
+              sequence="50"/>
 
     <menuitem id="menu_agent_cp_interesados"
               name="Interesados por CP"
-              parent="menu_agent_cp_interes"
+              parent="menu_agent_actividad"
               action="visar_appointment.visar_cp_interes_linea_action"
-              sequence="10"/>
-
-    <menuitem id="menu_agent_config"
-              name="Configuracion"
-              parent="menu_agent_root"
-              sequence="30"/>
+              sequence="60"/>
 
     <menuitem id="menu_agent_llm_config"
               name="LLM"
