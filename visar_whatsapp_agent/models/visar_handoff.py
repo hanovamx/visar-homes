@@ -26,6 +26,11 @@ from odoo.addons.visar_base.models.wa_outbox_mixin import (
 )
 from odoo.exceptions import UserError, ValidationError
 
+from odoo.addons.visar_appointment.models.appointment_wizard_flow import (
+    COBERTURA_OFERTA_DEFAULT,
+    COBERTURA_OFERTA_PARAM,
+)
+
 from .visar_agent_tools import DEFAULT_TZ, TZ_PARAM
 
 _logger = logging.getLogger(__name__)
@@ -148,6 +153,19 @@ class ResConfigSettings(models.TransientModel):
         help="Si el cliente lo quiere pronto y el primer día libre cae más de "
              "estos días después del primero que permite la anticipación "
              "mínima, se escala a una persona.")
+    # No son del escalamiento, pero viven en el mismo modelo de Ajustes del agente.
+    visar_cobertura_oferta_interior = fields.Char(
+        string="Si la plaga está solo adentro",
+        config_parameter=COBERTURA_OFERTA_PARAM % 'interior',
+        default=COBERTURA_OFERTA_DEFAULT['interior'],
+        help="Lo que pregunta el agente en vez de «¿Dónde fumigamos?» cuando el "
+             "cliente ya dijo que la plaga está solo en el interior (cocina, "
+             "baño…). Vacío, el texto de siempre.")
+    visar_cobertura_oferta_exterior = fields.Char(
+        string="Si la plaga está solo afuera",
+        config_parameter=COBERTURA_OFERTA_PARAM % 'exterior',
+        default=COBERTURA_OFERTA_DEFAULT['exterior'],
+        help="Lo mismo cuando dijo que está solo en el exterior (jardín, patio…).")
     visar_handoff_persona_no_aparta = fields.Boolean(
         string="Si alguien escribe primero desde la app, el agente sigue contestando",
         config_parameter=NO_APARTA_PARAM,

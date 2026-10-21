@@ -49,6 +49,17 @@
                         <field name="visar_conversaciones_meses" class="oe_inline"/>
                     </setting>
                 </block>
+                <block title="¿Dónde fumigamos?" name="visar_cobertura_oferta">
+                    <setting string="Cuando el cliente ya dijo dónde está la plaga"
+                             help="Si en WhatsApp ya dijo que la plaga está solo adentro (o solo afuera), el agente no pregunta «¿Dónde fumigamos?»: le ofrece la otra zona con este texto. Si dijo las dos, se toma «Ambos» sin preguntar.">
+                        <div class="d-flex flex-column gap-1 w-100">
+                            <label for="visar_cobertura_oferta_interior" class="text-muted small"/>
+                            <field name="visar_cobertura_oferta_interior"/>
+                            <label for="visar_cobertura_oferta_exterior" class="text-muted small"/>
+                            <field name="visar_cobertura_oferta_exterior"/>
+                        </div>
+                    </setting>
+                </block>
                 <block title="Escalar a una persona" name="visar_handoff">
                     <setting string="Escalar en silencio"
                              help="Al escalar, el cliente lee «Permíteme un momento» y el agente deja de contestarle. Una persona sigue la misma conversación desde la app WhatsApp Business. Apagado, el agente dice que lo contactará un asesor y sigue contestando.">

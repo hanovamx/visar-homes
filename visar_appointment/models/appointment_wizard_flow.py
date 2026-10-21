@@ -40,6 +40,18 @@ import unicodedata
 from odoo import _, api, models
 from odoo.tools import format_amount
 
+# El agente de WhatsApp ya sabe donde esta la plaga (21-oct-2026): en vez de
+# "¿Dónde fumigamos?" ofrece la otra zona. Textos de Ajustes → Visar (los campos
+# viven en visar_whatsapp_agent); vacios, estos.
+COBERTURA_OFERTA_PARAM = 'visar.cobertura.oferta_%s'
+COBERTURA_OFERTA_DEFAULT = {
+    'interior': "Entonces fumigamos el interior. ¿Quieres fumigar también el "
+                "exterior? Te lo recomendamos para que no vuelvan a entrar.",
+    'exterior': "Entonces fumigamos el exterior. ¿Quieres fumigar también el "
+                "interior? Te lo recomendamos para acabar con la plaga por "
+                "completo.",
+}
+
 # Grupos de claves de selección por área del wizard.
 _VISAR_INTERIOR_KEYS = ('interior_niveles', 'interior_estimado_m2', 'interior_proxy')
 _VISAR_EXTERIOR_KEYS = ('exterior_band_id', 'exterior_rodea')
@@ -2172,6 +2184,25 @@ class AppointmentType(models.Model):
         return {clave: self._visar_vocabulario(overlay, 'cobertura', clave)
                 for clave in _VISAR_LUGARES_QUE_MIDEN}
 
+    @api.model
+    def _visar_cobertura_oferta(self):
+        """{zona: {pregunta, solo, tambien}} para el paso de cobertura."""
+        params = self.env['ir.config_parameter'].sudo()
+        return {
+            'interior': {
+                'pregunta': (params.get_param(COBERTURA_OFERTA_PARAM % 'interior')
+                             or '').strip() or COBERTURA_OFERTA_DEFAULT['interior'],
+                'solo': _('Solo interior'),
+                'tambien': _('También el exterior'),
+            },
+            'exterior': {
+                'pregunta': (params.get_param(COBERTURA_OFERTA_PARAM % 'exterior')
+                             or '').strip() or COBERTURA_OFERTA_DEFAULT['exterior'],
+                'solo': _('Solo exterior'),
+                'tambien': _('También el interior'),
+            },
+        }
+
     def _visar_wizard_step_options(self, booking, step_key):
         """Opciones VÁLIDAS del paso dado, serializables."""
         booking = booking or {}
@@ -2351,6 +2382,10 @@ class AppointmentType(models.Model):
                                             ('exterior', _('Exterior')),
                                             ('ambos', _('Ambos')))
                 ],
+                # Solo para el agente de WhatsApp: cuando el cliente ya dijo
+                # donde esta la plaga, la pregunta es si suma la otra zona. La
+                # web la ignora.
+                'oferta': self._visar_cobertura_oferta(),
             }
 
         if step_key.startswith('group_'):
