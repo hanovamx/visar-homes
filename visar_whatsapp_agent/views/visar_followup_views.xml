@@ -156,6 +156,43 @@
     </record>
 
     <!-- ============================================================== -->
+    <!-- El escalamiento, visto desde el lead y contable en el CRM       -->
+    <!-- ============================================================== -->
+
+    <record id="crm_lead_view_form_visar_handoff" model="ir.ui.view">
+        <field name="name">crm.lead.form.visar.handoff</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.crm_lead_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Escalado a una persona" invisible="not visar_wa_handoff_at">
+                    <group>
+                        <field name="visar_wa_handoff_at"/>
+                        <field name="visar_wa_handoff_motivo"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="crm_lead_view_search_visar_handoff" model="ir.ui.view">
+        <field name="name">crm.lead.search.visar.handoff</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.view_crm_case_opportunities_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='filter_won_status_won']" position="before">
+                <filter string="Escalado: urgente sin horario" name="visar_handoff_urgente"
+                        domain="[('visar_wa_handoff_motivo', '=', 'urgente_sin_horario')]"/>
+                <separator/>
+            </xpath>
+            <xpath expr="//filter[@name='source']" position="after">
+                <filter string="Motivo del escalamiento" name="visar_handoff_motivo"
+                        context="{'group_by': 'visar_wa_handoff_motivo'}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- ============================================================== -->
     <!-- La plaga que dijo por WhatsApp, vista desde el lead            -->
     <!-- ============================================================== -->
 

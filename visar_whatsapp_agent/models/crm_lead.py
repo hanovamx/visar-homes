@@ -126,6 +126,15 @@ class CrmLead(models.Model):
              "recontacto se descarta si la escalada es posterior al último "
              "mensaje del cliente; si el cliente volvió a hablar con el agente "
              "después, sí se manda.")
+    # Para contar por motivo (21-oct-2026: cuantos urgentes se escalan por
+    # semana). Es el ULTIMO motivo: un lead escalado dos veces cuenta una.
+    visar_wa_handoff_motivo = fields.Selection(
+        selection='_visar_wa_handoff_motivos', string="Motivo del escalamiento",
+        readonly=True, copy=False, index=True)
+
+    @api.model
+    def _visar_wa_handoff_motivos(self):
+        return list(self.env['visar.agent.tools'].HANDOFF_REASONS.items())
 
     # ------------------------------------------------------------------
     # Programar

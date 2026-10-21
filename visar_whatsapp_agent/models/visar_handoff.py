@@ -42,6 +42,10 @@ ESPERA_PARAM = 'visar.handoff.espera_min'
 ESPERA_DEFAULT = 15
 DEVOLVER_PARAM = 'visar.handoff.devolver_h'
 DEVOLVER_DEFAULT = 12
+# Urgente sin horario cercano (21-oct-2026): se escala si lo primero libre cae
+# mas de estos dias despues del primer dia que permite la anticipacion minima.
+URGENTE_DIAS_PARAM = 'visar.handoff.urgente_dias'
+URGENTE_DIAS_DEFAULT = 1
 # Al reves a proposito: un booleano de Ajustes con default True no se puede
 # guardar apagado (apagarlo BORRA el parametro y vuelve el default). Lo que
 # decidio el usuario (20-oct) es el caso por omision: si la persona escribe
@@ -94,6 +98,7 @@ def visar_handoff_config(env):
         'tz': params.get_param(TZ_PARAM) or DEFAULT_TZ,
         'espera_min': _entero(params, ESPERA_PARAM, ESPERA_DEFAULT),
         'devolver_h': _entero(params, DEVOLVER_PARAM, DEVOLVER_DEFAULT),
+        'urgente_dias': _entero(params, URGENTE_DIAS_PARAM, URGENTE_DIAS_DEFAULT),
         'persona_primero': params.get_param(NO_APARTA_PARAM, 'False') != 'True',
         'texto_espera': (params.get_param(TEXTO_ESPERA_PARAM) or '').strip()
                         or TEXTO_ESPERA_DEFAULT,
@@ -137,6 +142,12 @@ class ResConfigSettings(models.TransientModel):
         config_parameter=DEVOLVER_PARAM, default=DEVOLVER_DEFAULT,
         help="Sin mensajes de la persona en este tiempo, el agente vuelve a "
              "contestar. Fuera de horario el reloj espera a que abra la oficina.")
+    visar_handoff_urgente_dias = fields.Integer(
+        string="Días de más para un cliente urgente",
+        config_parameter=URGENTE_DIAS_PARAM, default=URGENTE_DIAS_DEFAULT,
+        help="Si el cliente lo quiere pronto y el primer día libre cae más de "
+             "estos días después del primero que permite la anticipación "
+             "mínima, se escala a una persona.")
     visar_handoff_persona_no_aparta = fields.Boolean(
         string="Si alguien escribe primero desde la app, el agente sigue contestando",
         config_parameter=NO_APARTA_PARAM,
@@ -157,7 +168,7 @@ class ResConfigSettings(models.TransientModel):
 
     @api.constrains('visar_handoff_hora_desde', 'visar_handoff_hora_hasta',
                     'visar_handoff_espera_min', 'visar_handoff_devolver_h',
-                    'visar_handoff_texto_fuera')
+                    'visar_handoff_urgente_dias', 'visar_handoff_texto_fuera')
     def _check_visar_handoff(self):
         for record in self:
             desde = record.visar_handoff_hora_desde
@@ -172,6 +183,10 @@ class ResConfigSettings(models.TransientModel):
             if record.visar_handoff_devolver_h < 1:
                 raise ValidationError(_(
                     "Las horas para devolver al agente son al menos 1."))
+            # 0 no se puede guardar: Ajustes borra el parametro y vuelve el 1.
+            if record.visar_handoff_urgente_dias < 1:
+                raise ValidationError(_(
+                    "Los días de más para un cliente urgente son al menos 1."))
             texto = record.visar_handoff_texto_fuera or ''
             try:
                 texto.format(cuando='x')

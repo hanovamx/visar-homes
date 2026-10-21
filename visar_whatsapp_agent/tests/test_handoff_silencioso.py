@@ -50,6 +50,7 @@ class TestHandoffSilencioso(TransactionCase):
         self.assertEqual((config['espera_min'], config['devolver_h']), (15, 12))
         self.assertTrue(config['persona_primero'])
         self.assertEqual(config['texto_espera'], "Permíteme un momento.")
+        self.assertEqual(config['urgente_dias'], 1)
 
     def test_los_ajustes_llegan_al_runtime(self):
         settings = self.env['res.config.settings'].create({
@@ -214,3 +215,36 @@ class TestHandoffSilencioso(TransactionCase):
             ('res_model', '=', 'crm.lead'), ('res_id', '=', lead.id)], limit=1)
         self.assertEqual(activity.date_deadline, odoo_fields.Date.add(
             odoo_fields.Date.context_today(lead), days=1))
+
+    # --- urgente sin horario cercano (21-oct-2026) -----------------------
+
+    def test_urgente_se_guarda_en_ajustes(self):
+        self.env['res.config.settings'].create(
+            {'visar_handoff_urgente_dias': 3}).execute()
+        self.assertEqual(
+            self.Tools.agent_runtime_config()['handoff']['urgente_dias'], 3)
+        with self.assertRaises(ValidationError):
+            self.env['res.config.settings'].create(
+                {'visar_handoff_urgente_dias': 0})
+
+    def test_urgente_vence_hoy_aunque_no_sea_silencioso(self):
+        self.params.set_param(visar_handoff.USER_PARAM, str(self.laura.id))
+        lead = self._lead(self.Tools.agent_request_handoff({
+            'phone': self.WA, 'reason': 'urgente_sin_horario',
+            'summary': "Lo quiere pronto; lo primero libre es el viernes 24"}))
+        activity = self.env['mail.activity'].search([
+            ('res_model', '=', 'crm.lead'), ('res_id', '=', lead.id)], limit=1)
+        self.assertEqual(activity.date_deadline,
+                         odoo_fields.Date.context_today(lead))
+        self.assertIn("Urgente", activity.summary)
+        self.assertEqual(lead.visar_wa_handoff_motivo, 'urgente_sin_horario')
+        # Sin silencioso el contacto no queda esperando: el agente sigue.
+        self.assertFalse(self._contacto().visar_atencion)
+
+    def test_el_motivo_se_puede_contar(self):
+        lead = self._lead(self.Tools.agent_request_handoff({
+            'phone': self.WA, 'reason': 'asesor'}))
+        self.assertEqual(lead.visar_wa_handoff_motivo, 'customer_request')
+        grupos = self.env['crm.lead']._read_group(
+            [('id', '=', lead.id)], ['visar_wa_handoff_motivo'], ['__count'])
+        self.assertEqual(grupos, [('customer_request', 1)])

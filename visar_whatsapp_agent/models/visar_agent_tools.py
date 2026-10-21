@@ -2258,6 +2258,7 @@ class VisarAgentTools(models.AbstractModel):
         'reschedule_blocked': "No se pudo reagendar desde el agente",
         'reschedule_no_appointment': "Quiere reagendar y no se encontro su cita",
         'person_first': "Una persona escribio primero desde la app",
+        'urgente_sin_horario': "Urgente: lo quiere pronto y no hay horario cercano",
         'other': "Otro motivo",
     }
 
@@ -2296,8 +2297,10 @@ class VisarAgentTools(models.AbstractModel):
     # Dias para vencer la actividad. Corto a proposito: un hand-off que se atiende
     # en una semana ya no sirve de nada. En silencio vence hoy: el cliente espera
     # ya, y el reloj de actividades (arriba a la derecha) no cuenta las futuras.
+    # El urgente tambien, aunque llegue fuera de horario: es para meterlo antes.
     HANDOFF_ACTIVITY_DAYS = 1
     HANDOFF_ACTIVITY_DAYS_SILENCIOSO = 0
+    HANDOFF_VENCE_HOY = ('urgente_sin_horario',)
 
     @api.model
     def agent_request_handoff(self, payload):
@@ -2375,7 +2378,8 @@ class VisarAgentTools(models.AbstractModel):
         try:
             # Cuando: el recontacto de este silencio se descarta, el de los
             # siguientes no (`crm.lead._visar_wa_followup_blocked`).
-            lead.sudo().write({'visar_wa_handoff_at': fields.Datetime.now()})
+            lead.sudo().write({'visar_wa_handoff_at': fields.Datetime.now(),
+                               'visar_wa_handoff_motivo': payload['reason']})
             lead.message_post(body=self._agent_handoff_note(payload))
             assignee = self._agent_handoff_assignee(lead)
             if assignee:
@@ -2387,6 +2391,7 @@ class VisarAgentTools(models.AbstractModel):
                         fields.Date.context_today(lead),
                         days=self.HANDOFF_ACTIVITY_DAYS_SILENCIOSO
                         if payload.get('silencioso')
+                        or payload['reason'] in self.HANDOFF_VENCE_HOY
                         else self.HANDOFF_ACTIVITY_DAYS),
                     summary=("WhatsApp, el cliente espera: %s" if payload.get(
                         'silencioso') else "WhatsApp: %s") % motivo,

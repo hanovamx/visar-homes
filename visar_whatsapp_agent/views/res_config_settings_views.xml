@@ -92,6 +92,14 @@
                             <field name="visar_handoff_texto_fuera"/>
                         </div>
                     </setting>
+                    <setting string="Cliente urgente"
+                             help="Si el cliente lo quiere pronto y no hay horario cercano, se escala aunque no lo pida. En horario: «Permíteme un momento». Fuera de horario, o con el silencioso apagado, el agente le ofrece la primera fecha y la actividad queda para hoy.">
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <span>Escalar si lo primero libre cae más de</span>
+                            <field name="visar_handoff_urgente_dias" class="oe_inline"/>
+                            <span>día(s) después del primero posible</span>
+                        </div>
+                    </setting>
                     <setting string="Si alguien escribe primero desde la app, el agente sigue contestando"
                              help="Apagado (lo normal), el agente también se aparta cuando alguien escribe desde la app a un cliente que nadie escaló."
                              invisible="not visar_handoff_silencioso">
