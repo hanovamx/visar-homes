@@ -2294,8 +2294,10 @@ class VisarAgentTools(models.AbstractModel):
         return visar_handoff_config(self.env)
 
     # Dias para vencer la actividad. Corto a proposito: un hand-off que se atiende
-    # en una semana ya no sirve de nada.
+    # en una semana ya no sirve de nada. En silencio vence hoy: el cliente espera
+    # ya, y el reloj de actividades (arriba a la derecha) no cuenta las futuras.
     HANDOFF_ACTIVITY_DAYS = 1
+    HANDOFF_ACTIVITY_DAYS_SILENCIOSO = 0
 
     @api.model
     def agent_request_handoff(self, payload):
@@ -2383,7 +2385,9 @@ class VisarAgentTools(models.AbstractModel):
                     'mail.mail_activity_data_call',
                     date_deadline=fields.Date.add(
                         fields.Date.context_today(lead),
-                        days=self.HANDOFF_ACTIVITY_DAYS),
+                        days=self.HANDOFF_ACTIVITY_DAYS_SILENCIOSO
+                        if payload.get('silencioso')
+                        else self.HANDOFF_ACTIVITY_DAYS),
                     summary=("WhatsApp, el cliente espera: %s" if payload.get(
                         'silencioso') else "WhatsApp: %s") % motivo,
                     note=self._agent_handoff_activity_note(payload),

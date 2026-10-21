@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from odoo import fields as odoo_fields
 from odoo.exceptions import UserError, ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
@@ -122,6 +123,9 @@ class TestHandoffSilencioso(TransactionCase):
         self.assertIn("el cliente espera", activity.summary)
         self.assertIn("Quiero hablar con alguien", activity.note)
         self.assertIn("WhatsApp Business", activity.note)
+        # Vence hoy: el reloj de actividades no cuenta las futuras.
+        self.assertEqual(activity.date_deadline,
+                         odoo_fields.Date.context_today(lead))
         body = "".join(lead.message_ids.mapped('body'))
         self.assertIn("La conversación", body)
         self.assertIn("Permíteme un momento.", body)
@@ -201,3 +205,12 @@ class TestHandoffSilencioso(TransactionCase):
             with self.assertRaises(UserError):
                 contacto.action_visar_devolver_al_agente()
         self.assertEqual(contacto.visar_atencion, 'escalado')
+
+    def test_sin_silencioso_la_actividad_vence_manana(self):
+        self.params.set_param(visar_handoff.USER_PARAM, str(self.laura.id))
+        lead = self._lead(self.Tools.agent_request_handoff({
+            'phone': self.WA, 'reason': 'asesor'}))
+        activity = self.env['mail.activity'].search([
+            ('res_model', '=', 'crm.lead'), ('res_id', '=', lead.id)], limit=1)
+        self.assertEqual(activity.date_deadline, odoo_fields.Date.add(
+            odoo_fields.Date.context_today(lead), days=1))
