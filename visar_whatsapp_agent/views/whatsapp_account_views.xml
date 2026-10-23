@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- El número del agente se elige aquí (23-oct-2026): ver
+         models/visar_whatsapp_numero.py. -->
+    <record id="whatsapp_account_view_form_visar" model="ir.ui.view">
+        <field name="name">whatsapp.account.form.visar</field>
+        <field name="model">whatsapp.account</field>
+        <field name="inherit_id" ref="whatsapp.whatsapp_account_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='button_sync_whatsapp_account_templates']" position="after">
+                <br/>
+                <button name="action_visar_aplicar_en_agente" type="object"
+                        string="Aplicar en el agente" icon="fa-whatsapp"
+                        class="btn-link p-1" groups="base.group_system"
+                        confirm="El agente de WhatsApp empezará a usar el número y las llaves de esta cuenta. Guarda antes los cambios. ¿Continuar?"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

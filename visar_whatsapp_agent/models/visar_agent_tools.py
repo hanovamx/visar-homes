@@ -291,8 +291,9 @@ class VisarAgentTools(models.AbstractModel):
     def agent_runtime_config(self):
         """Config editable del runtime: prompt del sistema + knobs del LLM.
 
-        NO devuelve secretos: las credenciales del LLM y de WhatsApp siguen en el
-        `.env` del runtime. Las notas del negocio NO van aqui: ya viajan en
+        NO devuelve secretos: las credenciales del LLM siguen en el `.env` del
+        runtime, y las de WhatsApp tienen su propio metodo, solo para el usuario
+        del runtime (`agent_whatsapp_credentials`, 23-oct-2026). Las notas del negocio NO van aqui: ya viajan en
         `agent_catalog_snapshot` y se renderizan una sola vez.
 
         Contrato, para que el runtime pueda apoyarse en el:

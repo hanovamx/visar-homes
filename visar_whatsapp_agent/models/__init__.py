@@ -14,6 +14,7 @@ from . import visar_poliza_aviso
 from . import visar_handoff
 from . import visar_agent_mensaje
 from . import visar_bandeja
+from . import visar_whatsapp_numero
 from . import wa_booking_outbox
 from . import calendar_booking
 from . import visar_slot_hold
