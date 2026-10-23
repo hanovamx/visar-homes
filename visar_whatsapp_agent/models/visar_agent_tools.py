@@ -310,6 +310,10 @@ class VisarAgentTools(models.AbstractModel):
                           una ruta sin correcciones esta AUSENTE. El bloque va
                           DESPUES de la memoria de ruta y ANTES del contexto
                           del turno.
+          `conocimiento`  str | None. La base de conocimiento ya renderizada,
+                          o None si esta apagada en Ajustes o no tiene
+                          secciones. Va detras del prompt base, en el bloque
+                          0 (el que se cachea).
           `llm`           dict. Sin cambios ({} si no hay config).
           `brand`         str, nunca vacio. El nombre de la marca (Ajustes →
                           Visar). El runtime lo pone en su saludo, su despedida
@@ -376,6 +380,13 @@ class VisarAgentTools(models.AbstractModel):
             'correcciones': {
                 ruta: con_marca(bloque) for ruta, bloque in
                 self.env['visar.agent.correccion']._agent_payload().items()},
+            # Base de conocimiento (Ajustes → Visar, nace apagada): datos de
+            # consulta separados de las reglas. Ya renderizada; el runtime la
+            # pega detras del prompt base, en el bloque que se cachea. None =
+            # apagada o vacia, y el agente sigue como estaba. Ver
+            # `visar_agent_conocimiento.py`.
+            'conocimiento': con_marca(
+                self.env['visar.agent.conocimiento']._agent_payload()),
         }
 
     # ------------------------------------------------------------------

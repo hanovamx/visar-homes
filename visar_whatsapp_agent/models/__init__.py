@@ -23,3 +23,4 @@ from . import wa_lead_outbox
 from . import visar_wa_template_route
 from . import visar_agent_quote
 from . import res_partner
+from . import visar_agent_conocimiento

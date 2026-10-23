@@ -6,7 +6,8 @@ from odoo.tests.common import TransactionCase
 ARBOL = {
     'Clientes': ['Contactos'],
     'Comportamiento del agente': [
-        'Rutas', 'Correcciones', 'Vocabulario', 'Prompt base'],
+        'Rutas', 'Correcciones', 'Vocabulario', 'Prompt base',
+        'Base de conocimiento'],
     'Actividad y seguimiento': [
         'Conversaciones', 'Avisos de agendado',
         'Avisos de visitas de suscripción', 'Recontactos enviados',

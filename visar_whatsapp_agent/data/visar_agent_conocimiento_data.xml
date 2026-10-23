@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Contenido inicial de la base de conocimiento (23-oct-2026): la propuesta
+     que recibió Visar junto con el prompt corto, sin agregar datos. Las notas
+     con ⚠️ son contradicciones que el dueño todavía no decide; por eso la base
+     nace APAGADA. noupdate: lo que Visar edite aquí no lo pisa un -u. -->
+<odoo noupdate="1">
+
+    <record id="conocimiento_plagas" model="visar.agent.conocimiento">
+        <field name="sequence">10</field>
+        <field name="name">Cobertura de plagas</field>
+        <field name="body">- Cucarachas, alacranes, hormigas, arañas (rastreros): se atienden; precio con quote_service. El tipo de plaga no cambia el precio.
+- Moscas, mosquitos, zancudos (voladores): se atienden.
+- Ratas y ratones (roedores): se atienden. Las estaciones anti roedores son un extra opcional que se cotiza con la herramienta.
+- Protección general (los tres grupos): se atiende.
+- Termitas: valoración técnica. Antitermita focalizado, garantía de 2 años.
+- Chinches de cama: valoración técnica.
+- Plaga no identificada: valoración técnica.
+- Avispas y panales: ⚠️ por decidir. Una versión dice que no se cubren (valoración o asesor); otra, que se fumigan y se retira el panal si está a 6 metros de altura o menos.
+- Abejas: no se cubren; valoración técnica o asesor.
+- Murciélagos y palomas: no se cubren; valoración técnica o asesor.
+- Garrapatas y pulgas: ⚠️ por decidir. Una versión dice que no se cubren; otra, que sí se puede tratar el patio.
+- Víboras: ⚠️ por decidir si es servicio y cómo se cotiza. Granulado repelente en el jardín.
+- Tlacuaches y animales atrapados: ⚠️ por decidir si es servicio. Jaula de captura viva y liberación.
+- Gorgojo: se menciona en la cocina; falta confirmar si está cubierto.
+- Grillos y ciempiés: falta confirmar si están cubiertos.
+- Animal que no esté en esta lista: no digas que no se hace; ofrece valoración técnica o un asesor.</field>
+    </record>
+
+    <record id="conocimiento_areas_verdes" model="visar.agent.conocimiento">
+        <field name="sequence">20</field>
+        <field name="name">Áreas verdes</field>
+        <field name="body">- Corte de pasto: se cotiza con la herramienta. Requiere valoración técnica si pasa del tramo del catálogo.
+- Diseño e instalación de jardines, riego, trabajos en altura y podas especiales: siempre valoración técnica.
+- Combo: con fumigación interior Y exterior, el corte lleva el descuento de COMBOS del catálogo. Sin exterior no hay descuento.</field>
+    </record>
+
+    <record id="conocimiento_valoracion" model="visar.agent.conocimiento">
+        <field name="sequence">30</field>
+        <field name="name">Visita de valoración técnica</field>
+        <field name="body">- Costo fijo del catálogo (VISITA DE VALORACION TECNICA), igual en cualquier domicilio; se dice sin pedir datos.
+- Se abona al 100% al servicio si contrata.
+- Se agenda por este chat (start_booking).
+- Se presenta como una facilidad, no como un cobro extra.</field>
+    </record>
+
+    <record id="conocimiento_suscripciones" model="visar.agent.conocimiento">
+        <field name="sequence">40</field>
+        <field name="name">Suscripciones</field>
+        <field name="body">- Planes: mensual (servicio cada mes), semestral (servicio cada mes, pago semestral) y anual (servicio cada mes, pago anual). Se recomienda la mensual.
+- Incluye: visitas hasta erradicar la plaga y luego una al mes; visitas de garantía sin costo entre servicios; sin cláusula de permanencia, cancelación libre pasado lo que cubre el primer cobro; el primer cobro cubre los periodos que marca SUSCRIPCIONES.
+- Los pagos hechos no se reembolsan; los servicios pagados se prestan hasta consumirse.
+- Retención o cancelación especial: asesor.
+- Precio: quote_service con plan_id. total = precio por periodo; poliza.primer_cobro = lo que se paga hoy; poliza.ahorro_por_periodo = el ahorro.</field>
+    </record>
+
+    <record id="conocimiento_politicas_cita" model="visar.agent.conocimiento">
+        <field name="sequence">50</field>
+        <field name="name">Políticas de cita</field>
+        <field name="body">- Horario de referencia: lunes a viernes mañana y tarde, sábado mañana.
+- Se aparta una ventana de llegada: el técnico puede llegar hasta 1 hora después.
+- Una cita pagada no se cancela ni se reembolsa; se reprograma sin costo con mínimo 24 horas. ⚠️ Por decidir: otra regla dice que mover o cancelar una cita va con un asesor.
+- El técnico espera máximo 10 minutos.
+- El pago va antes del servicio, por la liga que manda el agendado.
+- Precios con IVA. Sin cupones, promociones, meses sin intereses ni transferencia.</field>
+    </record>
+
+    <record id="conocimiento_preparacion" model="visar.agent.conocimiento">
+        <field name="sequence">60</field>
+        <field name="name">Preparación antes de la visita</field>
+        <field name="body">Se dice si preguntan, o después de cotizar fumigación.
+- Vaciar alacenas si la plaga está en la cocina: sacar granos (arroz, harinas, frijol) y tirarlos en el bote de afuera; el técnico ayuda. Mover muebles no es necesario.
+- Dejar las áreas libres.
+- No permanecer en el mismo cuarto durante la aplicación. No mancha ni deja olor fuerte, pero puede irritar vías respiratorias u ojos.
+- Trapear mínimo 1 hora antes; no trapear inmediatamente después.</field>
+    </record>
+
+    <record id="conocimiento_faq" model="visar.agent.conocimiento">
+        <field name="sequence">70</field>
+        <field name="name">Preguntas frecuentes</field>
+        <field name="body">- ¿Hay que salir de la casa? No es necesario. ⚠️ Por decidir: «el producto es ligeramente tóxico», esperar unos minutos a que se asiente.
+- ¿Mancha? No. Se aplica en perímetros, directo a suelo y algo en pared.
+- ¿Para qué animales sirve? ⚠️ Por decidir: «todo tipo de insecto rastrero, roedores, volador y arácnido» choca con las exclusiones de la cobertura.
+- ¿Mascotas? ⚠️ Por decidir: «productos biodegradables y amigables con personas y mascotas». Meter a los perros durante el servicio y 1 hora después.
+- Pulgas o garrapatas en perros: ⚠️ por decidir; se puede tratar el patio y se recomienda pastilla para pulgas.
+- Llovió después de fumigar: afecta los exteriores; el interior queda bien.
+- ¿Garantía? ⚠️ Por decidir: lo único documentado es antitermita, 2 años en las áreas tratadas.
+- Víbora: no hay veneno; un granulado que las irrita y se van.
+- Tlacuaches: no se eliminan; jaula de captura viva y liberación.
+- Antitermita: el técnico revisa, se manda propuesta, perforaciones pequeñas, inyección y resane. Garantía de 2 años.
+- Muchas cucarachas muertas: buena señal, el producto funciona.
+- Avispas y panales: ⚠️ por decidir; se fumigan y se retira el panal si está a 6 metros de altura o menos.
+- ¿Cada cuánto fumigar? Depende de la plaga; lo común es cada mes o cada dos meses al principio. Llevar a suscripción.
+- Cobertura: atendemos varias zonas de Nuevo León y estamos trabajando para ampliar. No enlistar municipios; confirmar con resolve_zone. Fuera de cobertura: ofrecer dejar sus datos con un asesor para avisarle.</field>
+    </record>
+
+</odoo>

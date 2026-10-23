@@ -29,3 +29,4 @@ from . import test_conversaciones
 from . import test_cobertura_oferta
 from . import test_recontacto_vigente
 from . import test_menus
+from . import test_conocimiento

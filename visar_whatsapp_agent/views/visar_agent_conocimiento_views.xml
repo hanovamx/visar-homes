@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ==============================================================
+         visar.agent.conocimiento - lo que el agente consulta (datos),
+         separado del prompt base (conducta). Nace apagada.
+         ============================================================== -->
+    <record id="visar_agent_conocimiento_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.conocimiento.list</field>
+        <field name="model">visar.agent.conocimiento</field>
+        <field name="arch" type="xml">
+            <list string="Base de conocimiento">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="caracteres"/>
+                <!-- A la vista: lo que falta decidir es lo que frena encenderla. -->
+                <field name="pendientes" decoration-warning="pendientes &gt; 0"/>
+                <field name="active" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_agent_conocimiento_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.conocimiento.search</field>
+        <field name="model">visar.agent.conocimiento</field>
+        <field name="arch" type="xml">
+            <search string="Base de conocimiento">
+                <field name="name"/>
+                <field name="body"/>
+                <filter name="archivadas" string="Archivadas"
+                        domain="[('active', '=', False)]"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_agent_conocimiento_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.conocimiento.form</field>
+        <field name="model">visar.agent.conocimiento</field>
+        <field name="arch" type="xml">
+            <form string="Sección de la base de conocimiento">
+                <header>
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            invisible="not encendida"
+                            help="Refresca la config en el runtime, sin esperar los 15 minutos de la cache."/>
+                </header>
+                <sheet>
+                    <field name="encendida" invisible="1"/>
+                    <div class="alert alert-warning" role="alert" invisible="encendida">
+                        <strong>Apagada: el agente no recibe nada de aquí.</strong>
+                        Se enciende en Ajustes → Visar → «Base de conocimiento del
+                        agente». Conviene hacerlo cuando el prompt base ya no
+                        traiga su propia lista de preguntas frecuentes, para que
+                        no se dupliquen.
+                    </div>
+                    <div class="alert alert-info" role="alert" invisible="not encendida">
+                        <strong>Encendida.</strong> Lo que guardes aquí le llega al
+                        agente en máximo 15 minutos, o en cuanto pulses «Aplicar
+                        ahora».
+                    </div>
+                    <div class="alert alert-warning" role="alert" invisible="pendientes == 0">
+                        Esta sección tiene <field name="pendientes" nolabel="1"
+                        readonly="1" class="oe_inline"/> punto(s) marcados con ⚠️
+                        que el dueño todavía no decide. Resuélvelos antes de
+                        encender la base: el agente leería la nota tal cual.
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Políticas de cita"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="sequence"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                            <field name="caracteres" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Contenido">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            <strong>Datos, no reglas.</strong> Qué se atiende, qué
+                            incluye, qué hacer antes de la visita, respuestas a
+                            preguntas frecuentes. Cómo debe comportarse el agente
+                            va en el prompt base o en una corrección.
+                        </div>
+                        <field name="body" nolabel="1" colspan="2"
+                               placeholder="- El técnico espera máximo 10 minutos en el domicilio."/>
+                    </group>
+                    <group string="Lo que recibe el modelo">
+                        <div class="alert alert-secondary" role="alert" colspan="2">
+                            El bloque completo, con todas las secciones activas, tal
+                            y como se manda (si está encendida). Va
+                            <strong>después</strong> del prompt base, junto con el
+                            catálogo.
+                        </div>
+                        <field name="vista_previa" nolabel="1" colspan="2"
+                               readonly="1" widget="text"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_conocimiento_action" model="ir.actions.act_window">
+        <field name="name">Base de conocimiento</field>
+        <field name="res_model">visar.agent.conocimiento</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="visar_agent_conocimiento_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Todavía no hay ninguna sección
+            </p>
+            <p>
+                Lo que el agente consulta para contestar dudas: plagas que se
+                atienden, políticas de cita, preparación antes de la visita,
+                preguntas frecuentes. Se enciende en Ajustes → Visar.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_conocimiento"
+              name="Base de conocimiento"
+              parent="menu_agent_comportamiento"
+              action="visar_agent_conocimiento_action"
+              sequence="50"/>
+
+    <!-- El interruptor, en Ajustes → Visar junto al resto del agente. -->
+    <record id="res_config_settings_view_form_visar_conocimiento" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.visar.conocimiento</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="visar_whatsapp_agent.res_config_settings_view_form_visar_saludo"/>
+        <field name="arch" type="xml">
+            <xpath expr="//block[@name='visar_conversaciones']" position="after">
+                <block title="Base de conocimiento del agente" name="visar_conocimiento">
+                    <setting string="Mandarle la base de conocimiento al agente"
+                             help="Las secciones de Agente WhatsApp → Base de conocimiento van detrás del prompt base. Apagado, el agente no recibe nada de ahí. Conviene encenderla cuando el prompt base ya no traiga su propia lista de preguntas frecuentes.">
+                        <field name="visar_agente_conocimiento"/>
+                        <div class="mt-1">
+                            <button name="%(visar_agent_conocimiento_action)d" type="action"
+                                    string="Ver las secciones" class="btn-link p-0"
+                                    icon="oi-arrow-right"/>
+                        </div>
+                    </setting>
+                </block>
+            </xpath>
+        </field>
+    </record>
+</odoo>

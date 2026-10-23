@@ -128,7 +128,7 @@ class TestAgentPromptRoutes(TransactionCase):
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
                            'wa_templates', 'correcciones', 'address_cp', 'save_address',
                            'reply_wait_seconds',
-                           'brand', 'handoff', 'conversaciones'})
+                           'brand', 'handoff', 'conversaciones', 'conocimiento'})
         self.assertIsInstance(payload['route_prompts'], dict)
         self.assertEqual(set(payload['route_prompts']), {'info', 'schedule'})
         # El base no se ve afectado por que existan memorias.
@@ -322,7 +322,7 @@ class TestAgentRouteMeta(TransactionCase):
             set(payload), {'generated_at', 'prompt', 'route_prompts', 'llm',
                            'wa_templates', 'correcciones', 'address_cp', 'save_address',
                            'reply_wait_seconds',
-                           'brand', 'handoff', 'conversaciones'})
+                           'brand', 'handoff', 'conversaciones', 'conocimiento'})
         self.assertTrue(payload['route_prompts'], "y hay algo que revisar")
         for cuerpo in payload['route_prompts'].values():
             self.assertNotIn('resolve_zone  (lee)', cuerpo)
