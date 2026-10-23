@@ -28,8 +28,12 @@ minutos: el unico sintoma es que el agente se vuelve vago.
 """
 import logging
 
+import requests
+
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
+
+from .visar_agent_runtime import _VISAR_REFRESCOS, _VISAR_TIMEOUT
 
 _logger = logging.getLogger(__name__)
 
@@ -232,6 +236,30 @@ class VisarAgentPrompt(models.Model):
     # fila depende de que el cliente web traiga un campo que no se pinta, y
     # ademas deja el aviso en un color: quien no lo sepa leer no ve nada. Un
     # campo visible dice "Inalcanzable" y no hay que saber nada para entenderlo.
+    # --- Versiones del prompt base (23-oct-2026) ---------------------------
+    #
+    # Sigue habiendo UN solo prompt base activo (`_check_ruta_unica`): la
+    # leccion del 29-sep no cambia. Lo que vuelve es poder escribir el siguiente
+    # sin tocar el que esta en uso: «Duplicar» crea un borrador archivado, que
+    # el runtime no ve, y «Usar esta version» cambia uno por otro en un solo
+    # paso. El que deja de usarse se archiva, no se borra: volver es pulsar el
+    # mismo boton en el anterior.
+    usado_desde = fields.Datetime(
+        string="En uso desde", readonly=True, copy=False,
+        help="Cuando esta version empezo a usarse por ultima vez. Vacio = "
+             "borrador que nunca se ha usado.")
+    retirado_el = fields.Datetime(
+        string="Dejo de usarse", readonly=True, copy=False)
+    nota_version = fields.Text(
+        string="Que cambia en esta version", copy=False,
+        help="Para quien compare versiones dentro de un mes. No se le manda al "
+             "agente.")
+    version_estado = fields.Selection(
+        [('en_uso', "En uso"),
+         ('borrador', "Borrador"),
+         ('anterior', "Version anterior")],
+        string="Version", compute='_compute_version_estado')
+
     estado = fields.Selection(
         [('viva', "En uso"),
          ('inalcanzable', "Inalcanzable"),
@@ -298,6 +326,83 @@ class VisarAgentPrompt(models.Model):
             record.alcanzable = bool(meta.get('alcanzable', True))
             record.motivo_muerta = meta.get('motivo_muerta') or False
 
+    @api.depends('active', 'usado_desde')
+    def _compute_version_estado(self):
+        for record in self:
+            if record.active:
+                record.version_estado = 'en_uso'
+            elif record.usado_desde:
+                record.version_estado = 'anterior'
+            else:
+                record.version_estado = 'borrador'
+
+    # ------------------------------------------------------------------
+    # Versiones del prompt base
+    # ------------------------------------------------------------------
+
+    def _solo_base(self):
+        if any(record.ruta for record in self):
+            raise UserError(_(
+                "Las versiones son solo del prompt base. Las memorias de ruta se "
+                "editan en su ruta."))
+
+    def action_duplicar_version(self):
+        """Copia esta version como BORRADOR: archivada, el agente no la ve."""
+        self.ensure_one()
+        self._solo_base()
+        copia = self.with_context(active_test=False).copy({
+            'name': _("%s (borrador)", self.name),
+            'active': False,
+        })
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': self._name,
+            'res_id': copia.id,
+            'view_mode': 'form',
+            'views': [(self.env.ref(
+                'visar_whatsapp_agent.visar_agent_base_view_form').id, 'form')],
+            'target': 'current',
+            'context': {'active_test': False},
+        }
+
+    def action_usar_version(self):
+        """Esta version pasa a ser la que usa el agente; la de ahora se archiva.
+
+        En una sola transaccion: no hay un instante con dos activas (lo
+        prohibe `_check_ruta_unica`) ni con ninguna. El runtime se refresca
+        DESPUES del commit: si se le pidiera antes, leeria por RPC la version
+        vieja, porque su transaccion todavia no ve este cambio.
+        """
+        self.ensure_one()
+        self._solo_base()
+        if self.active:
+            raise UserError(_("Esta version ya es la que usa el agente."))
+        if not (self.body or '').strip():
+            raise UserError(_("Esta version esta vacia: el agente se quedaria sin prompt."))
+        ahora = fields.Datetime.now()
+        actual = self.with_context(active_test=True).search(
+            [('ruta', '=', False), ('id', '!=', self.id)])
+        actual.write({'active': False, 'retirado_el': ahora})
+        self.write({'active': True, 'usado_desde': ahora, 'retirado_el': False})
+        base = self._visar_runtime_url()
+        if base:
+            self.env.cr.postcommit.add(lambda: _refrescar_runtime(base))
+        _logger.info("visar.agent.prompt: el prompt base pasa de %s a %s",
+                     actual.ids, self.id)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'type': 'success',
+                'title': _("Version cambiada"),
+                'message': _(
+                    "El agente usa ahora «%(nueva)s». La anterior quedo guardada "
+                    "como version anterior: para volver, abrela y pulsa «Usar "
+                    "esta version».", nueva=self.name),
+                'next': {'type': 'ir.actions.client', 'tag': 'soft_reload'},
+            },
+        }
+
     @api.depends('ruta', 'sequence', 'active')
     def _compute_estado(self):
         """Las dos formas de no servir para nada, con nombres distintos.
@@ -349,9 +454,12 @@ class VisarAgentPrompt(models.Model):
         for record in self:
             if not record.active:
                 continue
-            otros = self.search_count([
+            # Solo ACTIVOS, aunque quien llame venga con `active_test` apagado
+            # (la lista de versiones lo apaga para ensenar las archivadas).
+            otros = self.with_context(active_test=True).search_count([
                 ('ruta', '=', record.ruta or False),
                 ('id', '!=', record.id),
+                ('active', '=', True),
             ])
             if not otros:
                 continue
@@ -367,6 +475,14 @@ class VisarAgentPrompt(models.Model):
                 "aplicarse sin avisar. Edita el que ya existe."))
 
     def unlink(self):
+        # Un borrador del base que nunca se uso si se puede borrar: no tiene
+        # nada que perder. Todo lo demas, se archiva (ver abajo).
+        if self and all(not r.ruta and not r.active and not r.usado_desde
+                        for r in self):
+            return super().unlink()
+        return self._unlink_prohibido()
+
+    def _unlink_prohibido(self):
         """No se borra: se archiva.
 
         Borrar una memoria de ruta no la 'apaga' —el runtime cae a la copia de
@@ -447,3 +563,16 @@ class VisarAgentPrompt(models.Model):
             if cuerpo and record.ruta not in memorias:  # gana el primero
                 memorias[record.ruta] = cuerpo
         return memorias
+
+
+def _refrescar_runtime(base):
+    """Le pide al runtime que relea la config. Despues del commit; nunca falla.
+
+    Si no contesta, no pasa nada grave: la cache caduca sola en 15 minutos.
+    """
+    for ruta, _que in _VISAR_REFRESCOS:
+        try:
+            requests.post(base + ruta, timeout=_VISAR_TIMEOUT).raise_for_status()
+        except requests.exceptions.RequestException:
+            _logger.warning("Cambio de version: el runtime no se refresco en %s; "
+                            "lo tomara al caducar su cache", base + ruta)

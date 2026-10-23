@@ -30,3 +30,4 @@ from . import test_cobertura_oferta
 from . import test_recontacto_vigente
 from . import test_menus
 from . import test_conocimiento
+from . import test_prompt_versiones

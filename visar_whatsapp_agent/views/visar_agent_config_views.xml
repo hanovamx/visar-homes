@@ -168,10 +168,20 @@
         <field name="name">visar.agent.prompt.base.list</field>
         <field name="model">visar.agent.prompt</field>
         <field name="arch" type="xml">
-            <list string="Prompt base" create="false" delete="false" decoration-muted="not es_vigente">
+            <!-- Versiones (23-oct-2026): todas a la vista, la que usa el agente
+                 arriba. Sin «Nuevo»: una version nace de «Duplicar», que la
+                 crea como borrador y no toca la que esta en uso. -->
+            <list string="Prompt base" create="false" delete="false"
+                  default_order="active desc, usado_desde desc, id desc"
+                  decoration-muted="not active" decoration-bf="active">
                 <field name="name"/>
+                <field name="version_estado" widget="badge"
+                       decoration-success="version_estado == 'en_uso'"
+                       decoration-info="version_estado == 'borrador'"/>
                 <field name="caracteres" string="Caracteres"/>
-                <field name="es_vigente" string="En uso" readonly="1"/>
+                <field name="usado_desde"/>
+                <field name="retirado_el" optional="show"/>
+                <field name="nota_version" optional="hide"/>
                 <field name="active" column_invisible="1"/>
             </list>
         </field>
@@ -183,13 +193,23 @@
         <field name="arch" type="xml">
             <form string="Prompt base" create="false" delete="false">
                 <header>
+                    <button name="action_usar_version" type="object"
+                            string="Usar esta versión" class="btn-primary"
+                            invisible="active"
+                            confirm="El agente dejará de usar la versión actual y usará esta. La actual queda guardada como versión anterior. ¿Continuar?"/>
+                    <button name="action_duplicar_version" type="object"
+                            string="Duplicar"
+                            help="Crea una copia como borrador para editarla sin tocar la que está en uso."/>
                     <!-- El runtime cachea esto 15 minutos. Sin este boton, el
                          camino para verlo aplicado era un `curl` desde una
                          consola, que es tanto como decir que el prompt no se
                          puede editar sin un desarrollador. -->
                     <button name="action_visar_aplicar_ahora" type="object"
-                            string="Aplicar ahora" class="btn-primary"
+                            string="Aplicar ahora"
+                            invisible="not active"
                             help="Refresca la config y el catalogo en el runtime, sin esperar los 15 minutos de la cache."/>
+                    <field name="version_estado" widget="statusbar"
+                           statusbar_visible="borrador,en_uso,anterior"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
@@ -197,18 +217,35 @@
                         <h1><field name="name" placeholder="Atencion a clientes"/></h1>
                     </div>
 
-                    <div class="alert alert-danger" role="alert" invisible="es_vigente">
-                        Este registro <strong>no lo usa el runtime</strong>: hay otro
-                        prompt base con menor secuencia. Editarlo no cambia nada.
-                        Archivalo o cambia la secuencia.
+                    <div class="alert alert-info" role="alert"
+                         invisible="version_estado != 'borrador'">
+                        <strong>Borrador: el agente no lo ve.</strong> Edítalo con
+                        calma; cuando esté listo, «Usar esta versión» lo pone en uso
+                        y guarda la actual como versión anterior.
+                    </div>
+                    <div class="alert alert-secondary" role="alert"
+                         invisible="version_estado != 'anterior'">
+                        <strong>Versión anterior: el agente no la usa.</strong> Para
+                        volver a ella, «Usar esta versión».
+                    </div>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="version_estado != 'en_uso'">
+                        <strong>Esta es la versión que usa el agente.</strong> Lo
+                        que cambies aquí le llega al guardar (o con «Aplicar
+                        ahora»). Para preparar cambios grandes sin afectarlo,
+                        «Duplicar» y edita el borrador.
                     </div>
 
                     <group>
                         <field name="ruta" invisible="1"/>
-                        <field name="sequence" readonly="1"/>
-                        <field name="active"/>
-                        <field name="es_vigente" readonly="1"/>
+                        <field name="active" invisible="1"/>
+                        <field name="usado_desde"/>
+                        <field name="retirado_el" invisible="not retirado_el"/>
                         <field name="caracteres" readonly="1"/>
+                    </group>
+                    <group string="Qué cambia en esta versión">
+                        <field name="nota_version" nolabel="1" colspan="2"
+                               placeholder="Base de conocimiento aparte; suscripción con la unidad de cada plan; ..."/>
                     </group>
 
                     <group string="Prompt del sistema">
@@ -238,7 +275,9 @@
         <field name="res_model">visar.agent.prompt</field>
         <field name="view_mode">list,form</field>
         <field name="domain">[('ruta', '=', False)]</field>
-        <field name="context">{'default_ruta': False}</field>
+        <!-- `active_test` False: las versiones archivadas (borradores y
+             anteriores) se ven en la lista, que es el punto de tenerlas. -->
+        <field name="context">{'default_ruta': False, 'active_test': False}</field>
     </record>
 
     <!-- ============================================================== -->
