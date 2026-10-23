@@ -31,7 +31,9 @@ Ver .context/31-whatsapp-crm-lead-mapping.md y 32-...-implementation.md.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.50.0',
+    'version': '19.0.1.51.0',
+    # Icono propio (22-oct-2026): globo con chispa en el verde de Visar.
+    'icon': '/visar_whatsapp_agent/static/description/icon.svg',
     'license': 'LGPL-3',
     # visar_appointment: motor de precios (_visar_quote_booking). visar_crm:
     # pipeline/etapas y campos de crm.lead que llena agent_track_lead.
