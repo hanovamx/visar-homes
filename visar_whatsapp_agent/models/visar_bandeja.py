@@ -38,6 +38,14 @@ Para trabajarla (23-oct-2026, segunda parte):
     (`static/src/bandeja/thread_actions.js`). Tomar aparta al agente ANTES de
     escribir, para que no conteste mientras la persona redacta.
   * La actividad del escalamiento trae el enlace al chat.
+
+**El contacto del chat (23-oct-2026, arreglo).** El módulo nativo no abre un chat
+sin contacto: si el número no tiene ficha, crea una con el número por nombre.
+Eso convertía a todo cliente nuevo en «conocido» antes de que el agente le
+pidiera el nombre: no se le preguntaba al agendar y la dirección y los leads
+quedaban a nombre de «+52…». Ahora ese contacto nace ARCHIVADO —el agente y el
+resto de Odoo no lo ven— y el chat se pasa a la ficha real en cuanto existe
+(`_visar_bandeja_chat`).
 """
 import logging
 import re
@@ -147,8 +155,7 @@ class VisarAgentTools(models.AbstractModel):
                 continue
             numero = _numero_whatsapp(m['phone'])
             if numero not in canales:
-                canales[numero] = cuenta._find_active_channel(
-                    numero, create_if_not_found=True)
+                canales[numero] = self._visar_bandeja_chat(cuenta, m['phone'])
                 contacto = Contacto._visar_buscar_o_crear(m['phone'])
                 if contacto and contacto.visar_canal_id != canales[numero]:
                     contacto.visar_canal_id = canales[numero]
@@ -181,7 +188,35 @@ class VisarAgentTools(models.AbstractModel):
         cuenta = self._visar_bandeja_cuenta()
         if not cuenta:
             return Canal
-        return cuenta._find_active_channel(numero, create_if_not_found=True)
+        return self._visar_bandeja_chat(cuenta, phone)
+
+    @api.model
+    def _visar_bandeja_chat(self, cuenta, phone):
+        """El chat de `phone`, con el contacto correcto.
+
+        Sin ficha del cliente, el contacto que crea el módulo nativo para abrir
+        el chat se archiva en el acto: es solo el número, y el agente tiene que
+        seguir tratándolo como nuevo (pedirle el nombre y crear su ficha). En
+        cuanto la ficha real existe, el chat pasa a ella.
+        """
+        Partner = self.env['res.partner'].sudo()
+        clave = Partner._visar_phone_nat10_value(phone)
+        reales = Partner.search([('visar_phone_nat10', '=', clave)]) if clave else Partner
+        canal = cuenta._find_active_channel(
+            _numero_whatsapp(phone), create_if_not_found=True)
+        socio = canal.whatsapp_partner_id.sudo()
+        if (socio and socio.active and socio not in reales
+                and socio.create_date and socio.create_date >= self.env.cr.now()):
+            socio.active = False
+            _logger.info("Bandeja: el contacto provisional de %s queda archivado",
+                         canal.whatsapp_number)
+        elif len(reales) == 1 and socio != reales and not socio.active:
+            canal.sudo().write({
+                'whatsapp_partner_id': reales.id,
+                'name': f"{reales.name} ({canal.whatsapp_number})",
+            })
+            canal.sudo()._add_members(partners=reales, post_joined_message=False)
+        return canal
 
     @api.model
     def _agent_handoff_donde_contestar(self, payload):

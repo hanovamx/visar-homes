@@ -235,3 +235,41 @@ class TestBandejaTrabajo(TestBandeja):
             {'phone': self.WA, 'silencioso': True})
         self.assertIn('app WhatsApp Business', nota)
         self.assertNotIn('active_id', nota)
+
+
+@tagged('post_install', '-at_install')
+class TestBandejaContacto(TestBandeja):
+    """El contacto que crea el módulo nativo para abrir el chat no puede volver
+    «conocido» a un cliente nuevo (arreglo del 23-oct-2026)."""
+
+    def test_numero_nuevo_sigue_siendo_nuevo(self):
+        self.assertTrue(self.Tools._agent_booking_needs_name(self.WA))
+        self.Tools.agent_log_messages(self._lote(('p1', 'cliente', 'Hola')))
+        canal = self._canal()
+        self.assertTrue(canal.whatsapp_partner_id)
+        self.assertFalse(canal.whatsapp_partner_id.active, "provisional, archivado")
+        self.assertTrue(self.Tools._agent_booking_needs_name(self.WA),
+                        "el agente le sigue pidiendo el nombre")
+
+    def test_el_chat_pasa_a_la_ficha_real(self):
+        self.Tools.agent_log_messages(self._lote(('p2', 'cliente', 'Hola')))
+        canal = self._canal()
+        real = self.env['res.partner'].sudo().create(
+            {'name': "Ana López Ruiz", 'phone': self.WA})
+        self.Tools.agent_log_messages(self._lote(('p3', 'cliente', 'Ya les di mi nombre')))
+        self.assertEqual(canal.whatsapp_partner_id, real)
+        self.assertIn("Ana López Ruiz", canal.name)
+        self.assertIn(real, canal.channel_member_ids.partner_id)
+
+    def test_cliente_que_ya_existe_usa_su_ficha(self):
+        real = self.env['res.partner'].sudo().create(
+            {'name': "Beto Garza Treviño", 'phone': self.WA})
+        self.Tools.agent_log_messages(self._lote(('p4', 'cliente', 'Hola')))
+        canal = self._canal()
+        self.assertEqual(canal.whatsapp_partner_id, real)
+        self.assertTrue(real.active)
+
+    def test_el_enlace_de_la_actividad_tampoco_crea_conocidos(self):
+        self.Tools._agent_handoff_activity_note({'phone': self.WA, 'silencioso': True})
+        self.assertTrue(self._canal())
+        self.assertTrue(self.Tools._agent_booking_needs_name(self.WA))
