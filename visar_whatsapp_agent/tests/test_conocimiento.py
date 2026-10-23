@@ -62,10 +62,20 @@ class TestBaseConocimiento(TransactionCase):
         self.Conocimiento.search([]).write({'active': False})
         self.assertIsNone(self._config()['conocimiento'])
 
-    def test_la_vista_previa_es_lo_que_se_manda(self):
+    def test_la_vista_completa_es_lo_que_se_manda(self):
+        """Todo junto va en su propia vista, no repetido en cada sección."""
         self._encender()
-        seccion = self.env.ref('visar_whatsapp_agent.conocimiento_valoracion')
+        vista = self.env['visar.agent.conocimiento.vista'].create({})
         marca = self._config()['brand']
-        self.assertEqual(seccion.vista_previa.replace('{{marca}}', marca),
+        self.assertEqual(vista.vista_previa.replace('{{marca}}', marca),
                          self._config()['conocimiento'])
-        self.assertTrue(seccion.encendida)
+        self.assertTrue(vista.encendida)
+        self.assertEqual(vista.secciones, 7)
+        self.assertTrue(vista.pendientes)
+        self.assertNotIn('vista_previa', self.Conocimiento._fields)
+
+    def test_la_vista_completa_tambien_se_ve_apagada(self):
+        """Apagada no se manda, pero se puede revisar antes de encenderla."""
+        vista = self.env['visar.agent.conocimiento.vista'].create({})
+        self.assertFalse(vista.encendida)
+        self.assertIn("## Cobertura de plagas", vista.vista_previa)

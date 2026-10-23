@@ -40,3 +40,5 @@ access_wa_poliza_message_manager,visar.wa.poliza.message manager,model_visar_wa_
 access_agent_mensaje_system,agent.mensaje.system,model_visar_agent_mensaje,base.group_system,1,1,1,1
 access_agent_conocimiento_readonly,agent.conocimiento.readonly,model_visar_agent_conocimiento,group_whatsapp_agent_readonly,1,0,0,0
 access_agent_conocimiento_manager,agent.conocimiento.manager,model_visar_agent_conocimiento,base.group_system,1,1,1,1
+access_agent_conocimiento_vista_readonly,agent.conocimiento.vista.readonly,model_visar_agent_conocimiento_vista,group_whatsapp_agent_readonly,1,1,1,0
+access_agent_conocimiento_vista_manager,agent.conocimiento.vista.manager,model_visar_agent_conocimiento_vista,base.group_system,1,1,1,1

@@ -4,11 +4,61 @@
          visar.agent.conocimiento - lo que el agente consulta (datos),
          separado del prompt base (conducta). Nace apagada.
          ============================================================== -->
+    <!-- Todas las secciones juntas, aparte de cada ficha (23-oct-2026). Va
+         primero porque el botón de la lista apunta a esta acción. -->
+    <record id="visar_agent_conocimiento_vista_view_form" model="ir.ui.view">
+        <field name="name">visar.agent.conocimiento.vista.form</field>
+        <field name="model">visar.agent.conocimiento.vista</field>
+        <field name="arch" type="xml">
+            <form string="Base de conocimiento completa">
+                <field name="encendida" invisible="1"/>
+                <div class="alert alert-warning" role="alert" invisible="encendida">
+                    <strong>Apagada: el agente no recibe esto.</strong> Así es como
+                    lo recibiría si se enciende en Ajustes → Visar → «Base de
+                    conocimiento del agente».
+                </div>
+                <div class="alert alert-info" role="alert" invisible="not encendida">
+                    <strong>Encendida:</strong> esto es exactamente lo que recibe el
+                    agente, después del prompt base y junto con el catálogo.
+                </div>
+                <group>
+                    <group>
+                        <field name="secciones"/>
+                        <field name="caracteres"/>
+                    </group>
+                    <group>
+                        <field name="pendientes" decoration-warning="pendientes &gt; 0"/>
+                    </group>
+                </group>
+                <field name="vista_previa" nolabel="1" readonly="1" widget="text"/>
+                <footer>
+                    <button name="action_visar_aplicar_ahora" type="object"
+                            string="Aplicar ahora" class="btn-primary"
+                            invisible="not encendida"
+                            help="Refresca la config en el runtime, sin esperar los 15 minutos de la cache."/>
+                    <button string="Cerrar" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="visar_agent_conocimiento_vista_action" model="ir.actions.act_window">
+        <field name="name">Base de conocimiento completa</field>
+        <field name="res_model">visar.agent.conocimiento.vista</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
     <record id="visar_agent_conocimiento_view_list" model="ir.ui.view">
         <field name="name">visar.agent.conocimiento.list</field>
         <field name="model">visar.agent.conocimiento</field>
         <field name="arch" type="xml">
             <list string="Base de conocimiento">
+                <header>
+                    <button name="%(visar_agent_conocimiento_vista_action)d" type="action"
+                            string="Ver todo junto" display="always"
+                            help="Todas las secciones activas en un solo bloque, tal y como las recibe el agente."/>
+                </header>
                 <field name="sequence" widget="handle"/>
                 <field name="name"/>
                 <field name="caracteres"/>
@@ -85,16 +135,6 @@
                         </div>
                         <field name="body" nolabel="1" colspan="2"
                                placeholder="- El técnico espera máximo 10 minutos en el domicilio."/>
-                    </group>
-                    <group string="Lo que recibe el modelo">
-                        <div class="alert alert-secondary" role="alert" colspan="2">
-                            El bloque completo, con todas las secciones activas, tal
-                            y como se manda (si está encendida). Va
-                            <strong>después</strong> del prompt base, junto con el
-                            catálogo.
-                        </div>
-                        <field name="vista_previa" nolabel="1" colspan="2"
-                               readonly="1" widget="text"/>
                     </group>
                 </sheet>
             </form>

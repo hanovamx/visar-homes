@@ -77,12 +77,8 @@ class VisarAgentConocimiento(models.Model):
         string="Por decidir", compute='_compute_caracteres',
         help="Cuántas veces aparece ⚠️: algo que el dueño todavía no decide. "
              "Conviene resolverlo antes de encender la base.")
-    vista_previa = fields.Text(
-        string="Lo que recibe el modelo", compute='_compute_vista_previa',
-        help="El bloque completo, con todas las secciones activas, tal y como "
-             "se manda.")
     encendida = fields.Boolean(
-        string="Se le manda al agente", compute='_compute_vista_previa')
+        string="Se le manda al agente", compute='_compute_encendida')
 
     @api.depends('body', 'name')
     def _compute_caracteres(self):
@@ -90,11 +86,9 @@ class VisarAgentConocimiento(models.Model):
             registro.caracteres = len(registro.body or '')
             registro.pendientes = (registro.body or '').count(PENDIENTE)
 
-    def _compute_vista_previa(self):
-        bloque = self._render_bloque() or ''
+    def _compute_encendida(self):
         encendida = visar_conocimiento_encendida(self.env)
         for registro in self:
-            registro.vista_previa = bloque
             registro.encendida = encendida
 
     # ------------------------------------------------------------------
@@ -133,6 +127,38 @@ class VisarAgentConocimiento(models.Model):
             _logger.exception(
                 "visar.agent.conocimiento: no se pudo armar la base de conocimiento")
             return None
+
+
+class VisarAgentConocimientoVista(models.TransientModel):
+    """Todas las secciones juntas, tal y como las recibe el modelo.
+
+    Va aparte y no en cada sección: el bloque entero repetido en la ficha de
+    cada una confundía (23-oct-2026, pedido del usuario). Se abre con «Ver todo
+    junto» desde la lista de secciones.
+    """
+    _name = 'visar.agent.conocimiento.vista'
+    _description = "Base de conocimiento completa, como la recibe el agente"
+    _inherit = ['visar.agent.runtime.mixin']
+
+    vista_previa = fields.Text(
+        string="Lo que recibe el modelo", compute='_compute_resumen')
+    encendida = fields.Boolean(
+        string="Se le manda al agente", compute='_compute_resumen')
+    secciones = fields.Integer(string="Secciones activas", compute='_compute_resumen')
+    caracteres = fields.Integer(string="Caracteres", compute='_compute_resumen')
+    pendientes = fields.Integer(string="Por decidir (⚠️)", compute='_compute_resumen')
+
+    def _compute_resumen(self):
+        Conocimiento = self.env['visar.agent.conocimiento']
+        activas = Conocimiento.with_context(active_test=True).search([])
+        bloque = Conocimiento._render_bloque() or ''
+        encendida = visar_conocimiento_encendida(self.env)
+        for vista in self:
+            vista.vista_previa = bloque
+            vista.encendida = encendida
+            vista.secciones = len(activas)
+            vista.caracteres = len(bloque)
+            vista.pendientes = sum(activas.mapped('pendientes'))
 
 
 class ResConfigSettings(models.TransientModel):
