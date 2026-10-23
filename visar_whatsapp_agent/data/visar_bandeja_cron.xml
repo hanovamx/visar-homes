@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Las conversaciones que pasan 24 h sin que el cliente escriba, a «Cerrada». -->
+    <record id="ir_cron_visar_bandeja_cerrar" model="ir.cron">
+        <field name="name">Agente WhatsApp: cerrar conversaciones de la bandeja</field>
+        <field name="model_id" ref="model_visar_agent_contacto"/>
+        <field name="state">code</field>
+        <field name="code">model._visar_bandeja_cerrar_vencidas()</field>
+        <field name="interval_number">15</field>
+        <field name="interval_type">minutes</field>
+        <field name="active">True</field>
+    </record>
+</odoo>

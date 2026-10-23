@@ -27,19 +27,33 @@ Hechos de la prueba del 22-oct en visar-test (ver la memoria «bandeja-odoo-prue
 
 Nace APAGADA (Ajustes → Visar → «Bandeja de WhatsApp en Odoo») y necesita
 «Guardar las conversaciones» encendido: es la misma cola.
+
+Para trabajarla (23-oct-2026, segunda parte):
+
+  * **Agente WhatsApp → Bandeja**: cada número con su estado y su color
+    —necesita una persona / la atiende una persona / la atiende el agente /
+    cerrada (más de 24 h sin escribir: ya no se le puede contestar libre)—,
+    con «Abrir chat», «Tomar» y «Devolver al agente».
+  * En el chat mismo, «Tomar la conversación» y «Devolver al agente»
+    (`static/src/bandeja/thread_actions.js`). Tomar aparta al agente ANTES de
+    escribir, para que no conteste mientras la persona redacta.
+  * La actividad del escalamiento trae el enlace al chat.
 """
 import logging
 import re
+from datetime import timedelta
 
 import requests
+from markupsafe import Markup
 
-from odoo import api, fields, models
+from odoo import _, api, fields, models
 from odoo.addons.visar_base.models.wa_outbox_mixin import (
     BASE_URL_PARAM,
     DEFAULT_BASE_URL,
     SEND_TIMEOUT,
     TOKEN_PARAM,
 )
+from odoo.exceptions import UserError
 from odoo.tools import html2plaintext, plaintext2html
 
 _logger = logging.getLogger(__name__)
@@ -52,6 +66,17 @@ UID_COPIA = 'visar:'
 # El uid con que el runtime anota lo que una persona escribió en Odoo: ya está en
 # el chat, no se copia otra vez.
 UID_DESDE_ODOO = 'odoo-wa:'
+
+# Meta solo deja escribir libre dentro de las 24 h del último mensaje del cliente.
+VENTANA_HORAS = 24
+
+ESTADOS = [
+    ('escalado', "Necesita una persona"),
+    ('persona', "La atiende una persona"),
+    ('agente', "La atiende el agente"),
+    ('cerrada', "Cerrada"),
+]
+ORDEN = {clave: n for n, (clave, _nombre) in enumerate(ESTADOS)}
 
 
 def visar_bandeja_encendida(env):
@@ -113,6 +138,7 @@ class VisarAgentTools(models.AbstractModel):
         ]).mapped('msg_uid'))
         autor_agente = self.env.user.partner_id
         autor_persona = self.env.company.partner_id
+        Contacto = self.env['visar.agent.contacto'].sudo()
         canales = {}
         copiados = 0
         for m in copiables:
@@ -123,6 +149,9 @@ class VisarAgentTools(models.AbstractModel):
             if numero not in canales:
                 canales[numero] = cuenta._find_active_channel(
                     numero, create_if_not_found=True)
+                contacto = Contacto._visar_buscar_o_crear(m['phone'])
+                if contacto and contacto.visar_canal_id != canales[numero]:
+                    contacto.visar_canal_id = canales[numero]
             canal = canales[numero]
             body = plaintext2html(str(m['texto']).strip())
             if m['quien'] == 'cliente':
@@ -142,8 +171,193 @@ class VisarAgentTools(models.AbstractModel):
         return copiados
 
 
+    @api.model
+    def _visar_bandeja_canal(self, phone):
+        """El chat de WhatsApp de `phone` (creándolo), o vacío sin bandeja."""
+        Canal = self.env['discuss.channel']
+        numero = _numero_whatsapp(phone)
+        if not numero or not visar_bandeja_encendida(self.env):
+            return Canal
+        cuenta = self._visar_bandeja_cuenta()
+        if not cuenta:
+            return Canal
+        return cuenta._find_active_channel(numero, create_if_not_found=True)
+
+    @api.model
+    def _agent_handoff_donde_contestar(self, payload):
+        """Con la bandeja, la actividad lleva al chat de Odoo."""
+        try:
+            with self.env.cr.savepoint():
+                canal = self._visar_bandeja_canal(payload.get('phone'))
+        except Exception:  # noqa: BLE001 - sin enlace, la actividad igual sale
+            _logger.exception("Bandeja: no se pudo enlazar el chat de %s",
+                              payload.get('phone'))
+            canal = None
+        if not canal:
+            return super()._agent_handoff_donde_contestar(payload)
+        return Markup(
+            '<p>El cliente está esperando. Contéstale desde '
+            '<a href="/odoo/action-mail.action_discuss?active_id={id}">'
+            'su chat de WhatsApp en Odoo</a> (o desde la app WhatsApp Business); '
+            'el agente no le escribe mientras tanto. Al terminar, <b>Devolver al '
+            'agente</b> desde el chat o en Agente WhatsApp → Bandeja.</p>'
+        ).format(id=canal.id)
+
+
+class VisarAgentContacto(models.Model):
+    _inherit = 'visar.agent.contacto'
+
+    visar_canal_id = fields.Many2one(
+        'discuss.channel', string="Chat de WhatsApp", readonly=True,
+        ondelete='set null')
+    visar_bandeja_estado = fields.Selection(
+        ESTADOS, string="Estado", compute='_compute_visar_bandeja_estado',
+        store=True, index=True)
+    # Para ordenar la bandeja: lo urgente arriba (un Selection ordena por texto).
+    visar_bandeja_orden = fields.Integer(
+        compute='_compute_visar_bandeja_estado', store=True)
+
+    @api.depends('visar_atencion', 'ultimo_mensaje')
+    def _compute_visar_bandeja_estado(self):
+        limite = fields.Datetime.now() - timedelta(hours=VENTANA_HORAS)
+        for contacto in self:
+            if contacto.visar_atencion:
+                estado = contacto.visar_atencion
+            elif contacto.ultimo_mensaje and contacto.ultimo_mensaje >= limite:
+                estado = 'agente'
+            else:
+                estado = 'cerrada'
+            contacto.visar_bandeja_estado = estado
+            contacto.visar_bandeja_orden = ORDEN[estado]
+
+    @api.model
+    def _visar_bandeja_cerrar_vencidas(self):
+        """Cron: las que pasaron 24 h sin que el cliente escriba, a «Cerrada»."""
+        limite = fields.Datetime.now() - timedelta(hours=VENTANA_HORAS)
+        vencidas = self.sudo().search([
+            ('visar_bandeja_estado', '=', 'agente'),
+            '|', ('ultimo_mensaje', '<', limite), ('ultimo_mensaje', '=', False)])
+        if vencidas:
+            # Nada en lo que depende cambió (solo pasó el tiempo): se recalcula a mano.
+            vencidas._compute_visar_bandeja_estado()
+            vencidas.flush_recordset(['visar_bandeja_estado', 'visar_bandeja_orden'])
+
+    def _visar_runtime(self, ruta, payload):
+        """POST al runtime con el token. Devuelve la respuesta 200 o lanza."""
+        params = self.env['ir.config_parameter'].sudo()
+        base = (params.get_param(BASE_URL_PARAM) or DEFAULT_BASE_URL).rstrip('/')
+        token = (params.get_param(TOKEN_PARAM) or '').strip()
+        if not token:
+            raise UserError(_(
+                "No está configurada la conexión con el agente (token vacío en "
+                "Ajustes técnicos). Pídele a soporte que la revise."))
+        try:
+            respuesta = requests.post(f"{base}{ruta}", json=payload,
+                                      headers={'X-Visar-Token': token},
+                                      timeout=SEND_TIMEOUT)
+        except requests.RequestException as exc:
+            raise UserError(_(
+                "No se pudo hablar con el agente: %s. Inténtalo en un momento.",
+                exc)) from exc
+        if respuesta.status_code != 200:
+            detalle = ''
+            try:
+                detalle = respuesta.json().get('detail') or ''
+            except ValueError:
+                pass
+            raise UserError(detalle or _(
+                "El agente no aceptó el cambio (HTTP %s). Inténtalo en un "
+                "momento.", respuesta.status_code))
+        return respuesta
+
+    def action_visar_tomar(self):
+        """«Tomar»: el agente deja de contestarle, antes de que la persona escriba."""
+        for contacto in self:
+            contacto._visar_runtime('/internal/handoff-take',
+                                    {'phone': contacto.phone or contacto.name})
+            vals = {'visar_atencion': 'persona',
+                    'visar_atencion_motivo': contacto.visar_atencion_motivo or _(
+                        "La tomó %s desde Odoo", self.env.user.name)}
+            if not contacto.visar_atencion:
+                vals['visar_atencion_desde'] = fields.Datetime.now()
+            contacto.sudo().write(vals)
+            if contacto.visar_canal_id:
+                contacto.visar_canal_id._visar_nota(_(
+                    "%s tomó la conversación: el agente ya no contesta.",
+                    self.env.user.name))
+        return True
+
+    def action_visar_devolver_al_agente(self):
+        canales = self.filtered('visar_atencion').visar_canal_id
+        res = super().action_visar_devolver_al_agente()
+        for canal in canales:
+            canal._visar_nota(_("%s devolvió la conversación al agente.",
+                                self.env.user.name))
+        return res
+
+    def action_visar_abrir_chat(self):
+        self.ensure_one()
+        canal = self.visar_canal_id
+        if not canal:
+            raise UserError(_("Este número todavía no tiene chat en Odoo."))
+        canal._visar_unirme()
+        return canal._visar_accion_abrir()
+
+
 class DiscussChannel(models.Model):
     _inherit = 'discuss.channel'
+
+    def _visar_nota(self, texto):
+        """Una línea interna en el chat: no se le manda al cliente."""
+        self.sudo().message_post(body=texto, message_type='notification',
+                                 subtype_xmlid='mail.mt_note')
+
+    def _visar_unirme(self):
+        """Quien abre o toma el chat entra como miembro, para verlo y escribir."""
+        socio = self.env.user.partner_id
+        if socio not in self.sudo().channel_member_ids.partner_id:
+            self.sudo()._add_members(users=self.env.user, post_joined_message=False)
+
+    def _visar_accion_abrir(self):
+        return {'type': 'ir.actions.client', 'tag': 'mail.action_discuss',
+                'context': {'active_id': self.id}}
+
+    def _visar_contacto(self):
+        self.ensure_one()
+        if self.channel_type != 'whatsapp' or not self.whatsapp_number:
+            raise UserError(_("Esto solo aplica a chats de WhatsApp."))
+        contacto = self.env['visar.agent.contacto'].sudo()._visar_buscar_o_crear(
+            self.whatsapp_number)
+        if not contacto:
+            raise UserError(_("No se encontró el contacto de este número."))
+        if contacto.visar_canal_id != self:
+            contacto.visar_canal_id = self
+        return contacto
+
+    @staticmethod
+    def _visar_aviso(mensaje, tipo='success'):
+        return {'type': 'ir.actions.client', 'tag': 'display_notification',
+                'params': {'type': tipo, 'message': mensaje, 'sticky': False}}
+
+    def action_visar_tomar(self):
+        """Botón del chat «Tomar la conversación»."""
+        contacto = self._visar_contacto()
+        if contacto.visar_atencion == 'persona':
+            return self._visar_aviso(_("Ya la atiende una persona; el agente "
+                                       "no contesta."), 'info')
+        self._visar_unirme()
+        contacto.action_visar_tomar()
+        return self._visar_aviso(_("Tomaste la conversación: el agente ya no "
+                                   "contesta."))
+
+    def action_visar_devolver(self):
+        """Botón del chat «Devolver al agente»."""
+        contacto = self._visar_contacto()
+        if not contacto.visar_atencion:
+            return self._visar_aviso(_("Ya la atiende el agente."), 'info')
+        contacto.action_visar_devolver_al_agente()
+        return self._visar_aviso(_("El agente vuelve a contestar en esta "
+                                   "conversación."))
 
     def _notify_thread(self, message, msg_vals=False, **kwargs):
         # La copia de algo que el runtime YA mandó: su `whatsapp.message` nace

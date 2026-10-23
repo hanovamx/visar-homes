@@ -2516,14 +2516,19 @@ class VisarAgentTools(models.AbstractModel):
         """La actividad lleva lo esencial para contestar sin abrir el lead."""
         partes = []
         if payload.get('silencioso'):
-            partes.append(
-                "<p>El cliente está esperando. Contesta desde la app WhatsApp "
-                "Business; el agente no le escribe mientras tanto. Al terminar, "
-                "<b>Devolver al agente</b> en Agente WhatsApp → Contactos.</p>")
+            partes.append(self._agent_handoff_donde_contestar(payload))
         conversacion = self._agent_handoff_transcript(payload.get('transcript'))
         if conversacion:
             partes.append("<p><b>La conversación:</b></p>%s" % conversacion)
         return Markup("".join(partes))
+
+    @api.model
+    def _agent_handoff_donde_contestar(self, payload):
+        """El primer parrafo de la actividad del silencioso: donde se contesta.
+        La bandeja de WhatsApp en Odoo lo cambia por el enlace a su chat."""
+        return ("<p>El cliente está esperando. Contesta desde la app WhatsApp "
+                "Business; el agente no le escribe mientras tanto. Al terminar, "
+                "<b>Devolver al agente</b> en Agente WhatsApp → Contactos.</p>")
 
     @api.model
     def agent_handoff_state(self, payload):

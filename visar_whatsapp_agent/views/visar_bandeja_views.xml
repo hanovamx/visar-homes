@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Bandeja de WhatsApp (23-oct-2026): ver models/visar_bandeja.py. -->
+    <record id="visar_bandeja_view_list" model="ir.ui.view">
+        <field name="name">visar.agent.contacto.bandeja.list</field>
+        <field name="model">visar.agent.contacto</field>
+        <field name="priority">50</field>
+        <field name="arch" type="xml">
+            <list string="Bandeja de WhatsApp" create="false" delete="false"
+                  default_order="visar_bandeja_orden, ultimo_mensaje desc"
+                  decoration-danger="visar_bandeja_estado == 'escalado'"
+                  decoration-info="visar_bandeja_estado == 'persona'"
+                  decoration-muted="visar_bandeja_estado == 'cerrada'">
+                <field name="visar_bandeja_orden" column_invisible="1"/>
+                <field name="visar_canal_id" column_invisible="1"/>
+                <field name="visar_atencion" column_invisible="1"/>
+                <field name="visar_bandeja_estado" widget="badge"
+                       decoration-danger="visar_bandeja_estado == 'escalado'"
+                       decoration-info="visar_bandeja_estado == 'persona'"
+                       decoration-success="visar_bandeja_estado == 'agente'"
+                       decoration-muted="visar_bandeja_estado == 'cerrada'"/>
+                <field name="partner_id" string="Cliente"/>
+                <field name="name" string="Teléfono"/>
+                <field name="ultimo_mensaje" string="Último mensaje del cliente"/>
+                <field name="visar_atencion_motivo" string="Motivo" optional="show"/>
+                <field name="visar_atencion_desde" string="Con una persona desde" optional="show"/>
+                <button name="action_visar_abrir_chat" type="object" string="Abrir chat"
+                        icon="fa-comments" invisible="not visar_canal_id"/>
+                <button name="action_visar_tomar" type="object" string="Tomar"
+                        icon="fa-hand-paper-o"
+                        invisible="visar_bandeja_estado in ('persona', 'cerrada')"/>
+                <button name="action_visar_devolver_al_agente" type="object"
+                        string="Devolver al agente" icon="fa-reply"
+                        invisible="not visar_atencion"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="visar_bandeja_view_search" model="ir.ui.view">
+        <field name="name">visar.agent.contacto.bandeja.search</field>
+        <field name="model">visar.agent.contacto</field>
+        <field name="priority">50</field>
+        <field name="arch" type="xml">
+            <search string="Bandeja de WhatsApp">
+                <field name="partner_id" string="Cliente"/>
+                <field name="name" string="Teléfono"/>
+                <filter name="abiertas" string="Abiertas"
+                        domain="[('visar_bandeja_estado', '!=', 'cerrada')]"/>
+                <separator/>
+                <filter name="escalado" string="Necesitan una persona"
+                        domain="[('visar_bandeja_estado', '=', 'escalado')]"/>
+                <filter name="persona" string="Las atiende una persona"
+                        domain="[('visar_bandeja_estado', '=', 'persona')]"/>
+                <filter name="agente" string="Las atiende el agente"
+                        domain="[('visar_bandeja_estado', '=', 'agente')]"/>
+                <filter name="cerrada" string="Cerradas"
+                        domain="[('visar_bandeja_estado', '=', 'cerrada')]"/>
+                <group>
+                    <filter name="por_estado" string="Estado"
+                            context="{'group_by': 'visar_bandeja_estado'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="visar_bandeja_action" model="ir.actions.act_window">
+        <field name="name">Bandeja de WhatsApp</field>
+        <field name="res_model">visar.agent.contacto</field>
+        <field name="view_mode">list</field>
+        <field name="view_id" ref="visar_bandeja_view_list"/>
+        <field name="search_view_id" ref="visar_bandeja_view_search"/>
+        <field name="context">{'search_default_abiertas': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Ninguna conversación abierta</p>
+            <p>Aquí aparece cada número que le escribió al agente en las últimas
+               24 horas, con quién lo atiende. Rojo: necesita una persona.</p>
+        </field>
+    </record>
+
+    <menuitem id="menu_agent_bandeja"
+              name="Bandeja"
+              parent="menu_agent_clientes"
+              action="visar_bandeja_action"
+              sequence="5"/>
+</odoo>

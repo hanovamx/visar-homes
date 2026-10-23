@@ -4,7 +4,7 @@ from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
 ARBOL = {
-    'Clientes': ['Contactos'],
+    'Clientes': ['Bandeja', 'Contactos'],
     'Comportamiento del agente': [
         'Rutas', 'Correcciones', 'Vocabulario', 'Prompt base',
         'Base de conocimiento'],

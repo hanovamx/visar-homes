@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from odoo.exceptions import UserError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -133,3 +134,104 @@ class TestBandeja(TransactionCase):
         with patch.object(vb.requests, 'post') as post:
             self.env.cr.postcommit.run()
         post.assert_not_called()
+
+
+@tagged('post_install', '-at_install')
+class TestBandejaTrabajo(TestBandeja):
+    """La bandeja para trabajar (23-oct-2026): estados, Tomar/Devolver y el
+    enlace en la actividad. Hereda el montaje de `TestBandeja`."""
+
+    def _contacto(self):
+        return self.env['visar.agent.contacto'].sudo()._visar_buscar_o_crear(self.WA)
+
+    def _respuesta(self, codigo=200, cuerpo=None):
+        from unittest.mock import MagicMock
+        r = MagicMock(status_code=codigo)
+        r.json.return_value = cuerpo or {}
+        return r
+
+    def test_estados_y_colores(self):
+        from datetime import timedelta
+        from odoo import fields
+        contacto = self._contacto()
+        contacto.ultimo_mensaje = fields.Datetime.now()
+        self.assertEqual(contacto.visar_bandeja_estado, 'agente')
+        contacto.visar_atencion = 'escalado'
+        self.assertEqual(contacto.visar_bandeja_estado, 'escalado')
+        self.assertEqual(contacto.visar_bandeja_orden, 0, "lo urgente arriba")
+        contacto.visar_atencion = 'persona'
+        self.assertEqual(contacto.visar_bandeja_estado, 'persona')
+        contacto.write({'visar_atencion': False,
+                        'ultimo_mensaje': fields.Datetime.now() - timedelta(hours=25)})
+        self.assertEqual(contacto.visar_bandeja_estado, 'cerrada')
+
+    def test_el_cron_cierra_las_que_vencieron(self):
+        from datetime import timedelta
+        from odoo import fields
+        contacto = self._contacto()
+        contacto.ultimo_mensaje = fields.Datetime.now() - timedelta(hours=23)
+        self.assertEqual(contacto.visar_bandeja_estado, 'agente')
+        # Pasa el tiempo sin que nadie escriba: el campo no cambia, el cron sí.
+        self.env.flush_all()
+        self.env.cr.execute(
+            "UPDATE visar_agent_contacto SET ultimo_mensaje = %s WHERE id = %s",
+            (fields.Datetime.now() - timedelta(hours=30), contacto.id))
+        contacto.invalidate_recordset(['ultimo_mensaje'])
+        contacto._visar_bandeja_cerrar_vencidas()
+        contacto.invalidate_recordset()
+        self.assertEqual(contacto.visar_bandeja_estado, 'cerrada')
+
+    def test_la_copia_liga_el_chat_al_contacto(self):
+        self.Tools.agent_log_messages(self._lote(('t1', 'cliente', 'Hola')))
+        self.assertEqual(self._contacto().visar_canal_id, self._canal())
+
+    def test_tomar_desde_el_chat(self):
+        self.Tools.agent_log_messages(self._lote(('t2', 'cliente', 'Hola')))
+        canal = self._canal()
+        with patch.object(vb.requests, 'post', return_value=self._respuesta()) as post:
+            accion = canal.action_visar_tomar()
+        self.assertTrue(post.call_args.args[0].endswith('/internal/handoff-take'))
+        self.assertEqual(accion['tag'], 'display_notification')
+        contacto = self._contacto()
+        self.assertEqual(contacto.visar_atencion, 'persona')
+        self.assertEqual(contacto.visar_bandeja_estado, 'persona')
+        self.assertIn(self.env.user.partner_id, canal.channel_member_ids.partner_id)
+        nota = canal.message_ids.filtered(lambda m: 'tomó la conversación' in (m.body or ''))
+        self.assertTrue(nota)
+        self.assertFalse(nota.wa_message_ids, "la nota no se le manda al cliente")
+
+    def test_tomar_con_el_silencioso_apagado_explica(self):
+        self.Tools.agent_log_messages(self._lote(('t3', 'cliente', 'Hola')))
+        r = self._respuesta(409, {'detail': "Para tomar una conversación hay que encender"})
+        with patch.object(vb.requests, 'post', return_value=r), \
+                self.assertRaisesRegex(UserError, "Para tomar"):
+            self._canal().action_visar_tomar()
+        self.assertFalse(self._contacto().visar_atencion)
+
+    def test_devolver_desde_el_chat(self):
+        self.Tools.agent_log_messages(self._lote(('t4', 'cliente', 'Hola')))
+        canal = self._canal()
+        self._contacto().write({'visar_atencion': 'persona'})
+        with patch('requests.post', return_value=self._respuesta()):
+            canal.action_visar_devolver()
+        self.assertFalse(self._contacto().visar_atencion)
+        self.assertTrue(canal.message_ids.filtered(
+            lambda m: 'devolvió la conversación' in (m.body or '')))
+
+    def test_abrir_chat_me_hace_miembro(self):
+        self.Tools.agent_log_messages(self._lote(('t5', 'cliente', 'Hola')))
+        accion = self._contacto().action_visar_abrir_chat()
+        self.assertEqual(accion['tag'], 'mail.action_discuss')
+        self.assertEqual(accion['context']['active_id'], self._canal().id)
+
+    def test_la_actividad_enlaza_el_chat(self):
+        nota = self.Tools._agent_handoff_activity_note(
+            {'phone': self.WA, 'silencioso': True})
+        canal = self._canal()
+        self.assertTrue(canal, "el chat se crea al escalar")
+        self.assertIn(f'active_id={canal.id}', nota)
+        self.params.set_param(vb.BANDEJA_PARAM, 'False')
+        nota = self.Tools._agent_handoff_activity_note(
+            {'phone': self.WA, 'silencioso': True})
+        self.assertIn('app WhatsApp Business', nota)
+        self.assertNotIn('active_id', nota)
