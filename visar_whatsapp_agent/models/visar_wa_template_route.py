@@ -110,6 +110,14 @@ ESPECIFICACION = {
                 "y «Quiero cambiarla» (el runtime manda sus payloads). Sale antes "
                 "de cada visita de suscripción pre-agendada (Ajustes → Visar).",
     },
+    'recordatorio_servicio': {
+        'label': "Recordatorio de servicio (clientes sin suscripción)",
+        'variables': 2, 'header': 'none', 'quick_reply': 1,
+        'nota': "{{1}} nombre del cliente · {{2}} servicio · un botón de "
+                "respuesta rápida «Sí, agendar» (el runtime manda su payload). "
+                "Sale unos días antes de la próxima visita estimada de quien "
+                "pidió que le avisáramos cada 3 o 6 meses (Ajustes → Visar).",
+    },
 }
 
 # Se puede asignar una plantilla que Meta todavía revisa: así se deja lista y

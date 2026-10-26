@@ -11,4 +11,22 @@
             </xpath>
         </field>
     </record>
+    <record id="view_partner_form_visar_recordatorio" model="ir.ui.view">
+        <field name="name">res.partner.form.visar.recordatorio</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='sales_purchases']" position="inside">
+                <group string="Recordatorio de servicio" name="visar_recordatorio">
+                    <field name="visar_recordatorio_meses" placeholder="No"/>
+                    <field name="visar_recordatorio_fecha"
+                           invisible="not visar_recordatorio_meses"/>
+                    <field name="visar_recordatorio_servicio"
+                           invisible="not visar_recordatorio_meses"/>
+                    <field name="visar_recordatorio_enviado_at"
+                           invisible="not visar_recordatorio_enviado_at"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
 </odoo>

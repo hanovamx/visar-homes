@@ -37,6 +37,9 @@
         <record id="wa_template_route_poliza_confirmar" model="visar.wa.template.route">
             <field name="key">poliza_confirmar</field><field name="sequence">110</field>
         </record>
+        <record id="wa_template_route_recordatorio_servicio" model="visar.wa.template.route">
+            <field name="key">recordatorio_servicio</field><field name="sequence">120</field>
+        </record>
 
         <!-- El webhook de Meta de este numero llega al runtime, no a Odoo: sin
              esto el estado de una plantilla solo cambia cuando alguien pulsa

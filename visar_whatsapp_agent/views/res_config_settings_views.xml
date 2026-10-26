@@ -38,6 +38,28 @@
                         escribió en las últimas 24 horas.
                     </div>
                 </block>
+                <block title="Recordatorio de servicio" name="visar_recordatorio">
+                    <setting string="Recordar a clientes sin suscripción"
+                             help="A quien pidió que le avisemos cada 3 o 6 meses (en su contacto, pestaña Ventas y compras), unos días antes de la próxima visita estimada se le crea una oportunidad con una actividad «Llamar» y se le manda un WhatsApp: «ya casi toca tu siguiente servicio, ¿te lo agendamos?». Si contesta, el agente lo agenda. Se manda en el horario de atención de los escalamientos.">
+                        <field name="visar_recordatorio_enabled"/>
+                    </setting>
+                    <setting string="Días antes de la fecha estimada"
+                             invisible="not visar_recordatorio_enabled">
+                        <field name="visar_recordatorio_dias_antes" class="oe_inline"/>
+                    </setting>
+                    <setting string="Quién recibe la actividad"
+                             help="Vacío: la persona a cargo de los escalamientos."
+                             invisible="not visar_recordatorio_enabled">
+                        <field name="visar_recordatorio_user_id"/>
+                    </setting>
+                    <div class="text-muted mt-2 ms-1"
+                         invisible="not visar_recordatorio_enabled">
+                        La plantilla de Meta se elige en Agente WhatsApp →
+                        Plantillas de avisos («Recordatorio de servicio»). Sin
+                        plantilla, el WhatsApp solo llega a quien escribió en las
+                        últimas 24 horas; la actividad se crea igual.
+                    </div>
+                </block>
                 <block title="Conversaciones de WhatsApp" name="visar_conversaciones">
                     <setting string="Guardar las conversaciones"
                              help="Cada mensaje —del cliente, del agente y de quien contesta desde la app WhatsApp Business— se guarda en el contacto. Solo los administradores las ven (Agente WhatsApp → Conversaciones). Apagado, no se guarda nada nuevo.">
