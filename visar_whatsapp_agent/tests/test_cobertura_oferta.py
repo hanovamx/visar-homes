@@ -56,3 +56,16 @@ class TestCoberturaOferta(TransactionCase):
         with self.assertRaises(ValidationError):
             self.env['res.config.settings'].create({
                 'visar_cobertura_sin_servicio': "No llegamos a {codigo}."})
+
+    def test_resolve_zone_trae_el_aviso_y_no_manda_al_asesor(self):
+        """26-oct-2026: el CP sin servicio en la conversacion libre usa el mismo
+        aviso que el cuestionario, y el modelo ya no lo pasa con un asesor."""
+        self.env['res.config.settings'].create({
+            'visar_cobertura_sin_servicio': "Aún no llegamos al {cp}.",
+        }).execute()
+        res = self.env['visar.agent.tools'].agent_resolve_zone('42084')
+        self.assertFalse(res['served'])
+        self.assertEqual(res['agente'],
+                         "Aún no llegamos al 42084.\n\n¿Tienes alguna otra dirección?")
+        self.assertIn("NO lo pases con un asesor", res['message'])
+        self.assertNotIn("canalices", res['message'])

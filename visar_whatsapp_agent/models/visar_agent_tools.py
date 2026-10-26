@@ -412,22 +412,19 @@ class VisarAgentTools(models.AbstractModel):
             return {
                 'cp': normalized, 'served': False, 'zone_code': None,
                 'zone_name': None, 'municipality': record.municipality or None,
-                # El mensaje se redacta para el MODELO y le dice las dos cosas
-                # que se le olvidaron el 8-sep-2026: DECIRSELO y PARAR.
-                #
-                # Aquel dia el cliente escribio un CP de CDMX, el agente siguio
-                # preguntandole metros, plagas y cobertura durante 80 segundos,
-                # y al final lo mando con un asesor sin explicar por que. Desde
-                # el otro lado eso es inexplicable: contesto una pregunta sobre
-                # bichos y lo pasaron a un humano.
+                # Lo que lee el cliente, el mismo texto que en el cuestionario
+                # (Ajustes -> Visar, «Código postal sin servicio»). Lo manda
+                # el runtime, no el modelo: un CP sin servicio ya NO se pasa
+                # con un asesor (decision del usuario, 21 y 26-oct-2026). El
+                # 25-oct el modelo, con las instrucciones de antes, lo escalo
+                # y el cliente solo leyo «Permíteme un momento».
+                'agente': self.env['appointment.type']
+                ._visar_wizard_texto_sin_cobertura(normalized),
                 'message': (
-                    "El CP %s NO esta dentro de la cobertura de Visar. "
-                    "DISELO AL CLIENTE con esas palabras y con su CP, en el "
-                    "mismo mensaje en que lo canalices: sin eso, el traspaso a "
-                    "un asesor no tiene explicacion para el. Y no le sigas "
-                    "preguntando nada mas -ni metros, ni plagas, ni si quiere "
-                    "el exterior-: sin cobertura no hay precio que darle, y "
-                    "cada pregunta de mas es tiempo suyo tirado." % normalized
+                    "El CP %s NO esta dentro de la cobertura de Visar. El "
+                    "sistema le manda al cliente el aviso de Visar: NO lo "
+                    "escribas tu, NO lo pases con un asesor y no le sigas "
+                    "preguntando nada -ni metros, ni plagas-." % normalized
                 ),
             }
         return {

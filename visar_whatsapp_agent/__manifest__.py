@@ -31,7 +31,7 @@ Ver .context/31-whatsapp-crm-lead-mapping.md y 32-...-implementation.md.
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.1.57.1',
+    'version': '19.0.1.58.0',
     # Icono propio (22-oct-2026): globo con chispa en el verde de Visar.
     'icon': '/visar_whatsapp_agent/static/description/icon.svg',
     'license': 'LGPL-3',
