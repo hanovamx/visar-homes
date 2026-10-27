@@ -3,6 +3,7 @@ import logging
 from dateutil.relativedelta import relativedelta
 
 from odoo import _, api, fields, models
+from odoo.addons.project.models.project_task import CLOSED_STATES
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
@@ -462,6 +463,24 @@ class SaleOrder(models.Model):
         return self.order_line.filtered(
             lambda l: l.product_id.product_tmpl_id.visar_generates_visit
             and l.product_id.product_tmpl_id.visar_fsm_project_id)
+
+    @api.depends('visar_visit_ids.state')
+    def _compute_tasks_ids(self):
+        """Las visitas de una póliza también son sus tareas (27-oct-2026).
+
+        El nativo cuenta las tareas por `sale_line_id`, que las visitas no tienen:
+        el botón decía «1 Proyectos / 0 Tareas» y abría 12. Se suman, con las
+        cerradas, para que el número y el avance coincidan con lo que abre.
+        """
+        super()._compute_tasks_ids()
+        for order in self.filtered('is_subscription'):
+            visitas = order.visar_visit_ids - order.tasks_ids
+            if not visitas:
+                continue
+            order.tasks_ids += visitas
+            order.tasks_count += len(visitas)
+            order.closed_task_count += len(
+                visitas.filtered(lambda t: t.state in CLOSED_STATES))
 
     def action_view_project_ids(self):
         """El botón "Proyectos" de una póliza: las tareas filtradas por la PÓLIZA.

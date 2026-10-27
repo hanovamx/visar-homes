@@ -547,6 +547,12 @@ class TestPoliza(TransactionCase):
         self.assertTrue(visitas, "con el filtro de la póliza se ven sus visitas")
         self.assertFalse(visitas.filtered('sale_order_id'),
                          "por eso el filtro nativo no enseñaba nada")
+        # El botón cuenta esas mismas visitas como sus tareas.
+        order.invalidate_recordset(['tasks_ids', 'tasks_count', 'closed_task_count'])
+        self.assertEqual(order.tasks_count, len(order.visar_visit_ids))
+        visitas[:1].state = '1_done'
+        order.invalidate_recordset(['tasks_ids', 'tasks_count', 'closed_task_count'])
+        self.assertEqual(order.closed_task_count, 1)
         vista = self.env.ref('project.view_task_search_form')
         self.assertIn('visar_subscription_order_id',
                       self.env['project.task'].get_view(vista.id, 'search')['arch'])
