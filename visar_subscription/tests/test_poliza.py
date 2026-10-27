@@ -557,6 +557,35 @@ class TestPoliza(TransactionCase):
         self.assertIn('visar_subscription_order_id',
                       self.env['project.task'].get_view(vista.id, 'search')['arch'])
 
+    def test_21d_poliza_historica_arranca_el_dia_de_su_orden(self):
+        """Capturada hoy con fecha de orden del 10-jun: el inicio, el primer
+        periodo y la próxima factura salen del 10-jun, no de hoy (27-oct-2026)."""
+        from datetime import datetime
+        self.env.user.tz = 'America/Monterrey'
+        junio = date(2026, 6, 10)
+        order = self.env['sale.order'].create({
+            'partner_id': self.partner.id, 'plan_id': self.plan_anual.id,
+            'pricelist_id': self._lista_sin_reglas().id,
+            'date_order': datetime(2026, 6, 10, 18, 0),
+            'order_line': [(0, 0, {'product_id': self.service.product_variant_id.id,
+                                   'product_uom_qty': 1})]})
+        order._visar_sync_anticipo_lines()
+        order.require_payment = False
+        order.action_confirm()
+        self.assertEqual(order.date_order.date(), junio)
+        self.assertEqual(order.start_date, junio)
+        self.assertEqual(order.next_invoice_date, junio)
+        inv = order._create_invoices()
+        linea = inv.invoice_line_ids.filtered('deferred_start_date')[:1]
+        self.assertEqual(linea.deferred_start_date, junio)
+        inv.invoice_date = junio
+        inv.action_post()
+        self.assertEqual(order.next_invoice_date, date(2027, 6, 10))
+
+    def test_21e_poliza_de_hoy_arranca_hoy(self):
+        order = self._make_poliza([self.service], start=None, plan=self.plan_anual)
+        self.assertEqual(order.start_date, fields.Date.context_today(order))
+
     def test_22_combo_poliza_es_una_sola_visita(self):
         """Una póliza combo genera UNA visita por periodo, no una por servicio."""
         combined, service2 = self._combo_poliza_setup()

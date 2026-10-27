@@ -281,6 +281,30 @@ class SaleOrder(models.Model):
                 if end:
                     order.end_date = end
 
+    def _confirm_subscription(self):
+        """Una póliza histórica arranca el día de su orden, no el de su captura.
+
+        `sale_subscription` pone `start_date` (y con ella el primer periodo y la
+        próxima factura) en «hoy» al confirmar. S00002 se capturó el 26-oct con
+        factura del 10-jun: arrancó el 26-oct y su próxima factura quedó el
+        26-oct-2027 (27-oct-2026). Si la fecha de la orden es de un día anterior
+        a la captura (`visar_base`, pedidos históricos) y nadie puso otro inicio,
+        el inicio es ese día. Un inicio puesto a mano se respeta.
+        """
+        for sub in self:
+            if not sub._visar_es_historico():
+                continue
+            creado = sub._visar_dia_local(sub.create_date)
+            if sub.start_date and sub.start_date < creado:
+                continue
+            dia = sub._visar_dia_local(sub.date_order)
+            vals = {'start_date': dia}
+            if not sub.invoice_ids and (not sub.next_invoice_date
+                                        or sub.next_invoice_date >= creado):
+                vals['next_invoice_date'] = dia
+            sub.write(vals)
+        return super()._confirm_subscription()
+
     def action_confirm(self):
         for order in self.filtered(lambda o: o.is_subscription):
             order._visar_apply_combo_discount()
