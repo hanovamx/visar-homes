@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!-- El filtro "Póliza" del botón "Proyectos" de una póliza
+         (`sale.order.action_view_project_ids`): sin el campo en la búsqueda,
+         `search_default_visar_subscription_order_id` no hace nada. -->
+    <record id="view_task_search_form_visar_sub" model="ir.ui.view">
+        <field name="name">project.task.search.visar.subscription</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="project.view_task_search_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="visar_subscription_order_id" string="Póliza"/>
+            </xpath>
+        </field>
+    </record>
     <record id="view_task_form2_visar_sub" model="ir.ui.view">
         <field name="name">project.task.form.visar.subscription</field>
         <field name="model">project.task</field>

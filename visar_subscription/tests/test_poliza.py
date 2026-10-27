@@ -525,6 +525,32 @@ class TestPoliza(TransactionCase):
         self.assertEqual(order.project_ids, combined)
         self.assertEqual(order.project_count, 1)
 
+    def test_21c_el_boton_proyectos_filtra_por_la_poliza(self):
+        """Con el filtro "Orden de venta" no salía ninguna visita: no tienen
+        `sale_line_id`. El botón filtra por la póliza (27-oct-2026)."""
+        self.service.write({'visar_is_service': True,
+                            'service_tracking': 'task_global_project',
+                            'project_id': self.project.id})
+        order = self._make_poliza([self.service])
+        inv = order._create_invoices()
+        inv.action_post()
+        self._pay(inv)
+        order.invalidate_recordset(['project_ids', 'project_count'])
+        self.assertEqual(order.project_count, 1)
+        action = order.action_view_project_ids()
+        contexto = action['context']
+        self.assertNotIn('search_default_sale_order_id', contexto)
+        self.assertEqual(contexto['search_default_visar_subscription_order_id'], order.id)
+        visitas = self.env['project.task'].search(
+            [('project_id', '=', contexto['active_id']),
+             ('visar_subscription_order_id', '=', order.id)])
+        self.assertTrue(visitas, "con el filtro de la póliza se ven sus visitas")
+        self.assertFalse(visitas.filtered('sale_order_id'),
+                         "por eso el filtro nativo no enseñaba nada")
+        vista = self.env.ref('project.view_task_search_form')
+        self.assertIn('visar_subscription_order_id',
+                      self.env['project.task'].get_view(vista.id, 'search')['arch'])
+
     def test_22_combo_poliza_es_una_sola_visita(self):
         """Una póliza combo genera UNA visita por periodo, no una por servicio."""
         combined, service2 = self._combo_poliza_setup()

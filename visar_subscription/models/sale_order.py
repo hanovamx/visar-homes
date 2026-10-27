@@ -463,6 +463,25 @@ class SaleOrder(models.Model):
             lambda l: l.product_id.product_tmpl_id.visar_generates_visit
             and l.product_id.product_tmpl_id.visar_fsm_project_id)
 
+    def action_view_project_ids(self):
+        """El botón "Proyectos" de una póliza: las tareas filtradas por la PÓLIZA.
+
+        Con un solo proyecto, el nativo abre sus tareas con el filtro "Orden de
+        venta" (`sale_order_id`), que sale de `sale_line_id`. Las visitas de una
+        póliza no lo tienen (una línea genera N visitas y ese campo solo apunta a
+        una tarea), así que el filtro no enseñaba ninguna (27-oct-2026, S00002).
+        Se cambia por el filtro "Póliza" (`visar_subscription_order_id`).
+        """
+        action = super().action_view_project_ids()
+        contexto = action.get('context') if isinstance(action, dict) else None
+        if self.is_subscription and isinstance(contexto, dict) \
+                and contexto.get('search_default_sale_order_id'):
+            contexto = dict(contexto)
+            contexto.pop('search_default_sale_order_id')
+            contexto['search_default_visar_subscription_order_id'] = self.id
+            action['context'] = contexto
+        return action
+
     def _visar_work_projects(self):
         """En una póliza el trabajo son sus VISITAS, que no cuelgan de `task_id`.
 
