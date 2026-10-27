@@ -26,4 +26,26 @@
         </field>
     </record>
 
+    <!-- Pedidos históricos (27-oct-2026): la fecha de la orden se ve sin hora, y
+         la de cotización ya no pide modo desarrollador, para poder capturar un
+         pedido del pasado con su fecha antes de confirmarlo (al confirmar se
+         respeta: ver `models/fecha_historica.py`). -->
+    <record id="view_order_form_visar_fecha" model="ir.ui.view">
+        <field name="name">sale.order.form.visar.fecha</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="(//group[@name='order_details']/div[label[@for='date_order']])[1]" position="attributes">
+                <attribute name="groups"></attribute>
+            </xpath>
+            <xpath expr="//group[@name='order_details']/field[@name='date_order'][1]" position="attributes">
+                <attribute name="groups"></attribute>
+                <attribute name="widget">date</attribute>
+            </xpath>
+            <xpath expr="//group[@name='order_details']/field[@name='date_order'][2]" position="attributes">
+                <attribute name="widget">date</attribute>
+            </xpath>
+        </field>
+    </record>
+
 </odoo>

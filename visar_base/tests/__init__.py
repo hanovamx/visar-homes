@@ -4,3 +4,4 @@ from . import test_partner_fact
 from . import test_crm_hooks
 from . import test_zona_en_cotizacion
 from . import test_address_cp
+from . import test_fecha_historica
