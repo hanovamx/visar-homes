@@ -62,6 +62,8 @@ class VisarAgendarServicio(models.TransientModel):
         domain="[('id', 'in', tareas_posibles_ids)]")
     tareas_posibles_ids = fields.Many2many(
         'project.task', string="Servicios de la orden sin cita")
+    # Para la vista: el cliente web no evalúa `len()` en `readonly`.
+    varias_tareas = fields.Boolean(compute='_compute_varias_tareas')
     zona_id = fields.Many2one(
         'visar.zone', string="Zona",
         help="Sale del código postal del domicilio del servicio. Se puede cambiar "
@@ -97,6 +99,11 @@ class VisarAgendarServicio(models.TransientModel):
         wizard._visar_por_defecto()
         wizard._visar_buscar()
         return wizard._visar_accion()
+
+    @api.depends('tareas_posibles_ids')
+    def _compute_varias_tareas(self):
+        for wizard in self:
+            wizard.varias_tareas = len(wizard.tareas_posibles_ids) > 1
 
     def _visar_accion(self):
         self.ensure_one()
