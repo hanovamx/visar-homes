@@ -444,6 +444,67 @@ class TestPolizaPreagenda(TransactionCase):
         self.assertIn(self.cliente, cita._visar_appointment_partners())
 
     # ------------------------------------------------------------------
+    # Póliza capturada a mano: el domicilio está en la dirección de entrega
+    # ------------------------------------------------------------------
+
+    def _poliza_con_entrega(self):
+        """Como S00002: el cliente sin CP, la dirección de entrega con él."""
+        cp = self.env['visar.zone.cp'].sudo().search(
+            [('zone_id', '=', self.zona.id)], limit=1)
+        cliente = self.env['res.partner'].create({'name': 'Cliente sin CP (prueba)'})
+        entrega = self.env['res.partner'].create({
+            'name': 'Domicilio (prueba)', 'type': 'delivery',
+            'parent_id': cliente.id, 'zip': cp.name})
+        orden = self._poliza(cliente=cliente)
+        orden.partner_shipping_id = entrega
+        return orden, entrega
+
+    def test_la_visita_nace_con_la_direccion_de_entrega(self):
+        orden, entrega = self._poliza_con_entrega()
+        valores = orden._visar_visit_vals(orden.order_line, self.proyecto, False)
+        self.assertEqual(valores['partner_id'], entrega.id)
+
+    def test_la_zona_sale_de_la_entrega_si_el_contacto_no_tiene_cp(self):
+        orden, entrega = self._poliza_con_entrega()
+        visita = self._visita(
+            orden, (fields.Datetime.now() + relativedelta(days=5)).date())
+        self.assertEqual(visita.partner_id, orden.partner_id,
+                         "esta prueba es de una visita vieja, con el cliente")
+        cita = visita._visar_preagendar()
+        self.assertTrue(cita, "no encontró la zona en la dirección de entrega")
+        self.assertEqual(cita.partner_ids, entrega)
+
+    def test_el_contacto_corregido_a_mano_manda_sobre_la_entrega(self):
+        orden, _entrega = self._poliza_con_entrega()
+        otro = self._cliente_en_zona_desierta()
+        visita = self._visita(
+            orden, (fields.Datetime.now() + relativedelta(days=5)).date())
+        visita.partner_id = otro
+        self.assertEqual(visita._visar_preagenda_domicilio(), otro)
+
+    def test_una_visita_vencida_no_se_agenda(self):
+        """Nadie sabe si ya se hizo; lo decide oficina (30-oct-2026)."""
+        orden = self._poliza()
+        visita = self._visita(
+            orden, (fields.Datetime.now() - relativedelta(days=5)).date())
+        self.assertFalse(visita._visar_preagendar())
+        self.assertFalse(visita.planned_date_begin)
+        self.assertFalse(visita.visar_visit_event_id)
+        self.assertEqual(visita.activity_ids.mapped('summary'),
+                         ["Visita de póliza vencida sin fecha"])
+        visita._visar_preagendar()
+        self.assertEqual(len(visita.activity_ids), 1, "se repite cada noche")
+
+    def test_agendar_cierra_el_aviso_de_sin_hueco(self):
+        orden = self._poliza()
+        visita = self._visita(
+            orden, (fields.Datetime.now() + relativedelta(days=5)).date())
+        visita._visar_preagenda_sin_hueco(self.zona, 10)
+        self.assertTrue(visita.activity_ids)
+        self.assertTrue(visita._visar_preagendar())
+        self.assertFalse(visita.activity_ids)
+
+    # ------------------------------------------------------------------
     # La misma hora, el mismo técnico
     # ------------------------------------------------------------------
 

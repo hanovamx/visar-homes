@@ -707,7 +707,9 @@ class SaleOrder(models.Model):
         return {
             'name': name,
             'project_id': project.id,
-            'partner_id': self.partner_id.id,
+            # El domicilio, no quien paga: el nativo solo lo hace en las tareas con
+            # `sale_order_id`, y una visita de póliza no lo lleva.
+            'partner_id': (self.partner_shipping_id or self.partner_id).id,
             'company_id': self.company_id.id,
             'visar_subscription_order_id': self.id,
             'visar_source_invoice_id': False if adicional else (invoice.id if invoice else False),

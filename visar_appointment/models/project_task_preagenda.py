@@ -65,6 +65,7 @@ PARAM_RESPONSABLE = 'visar.poliza.preagenda_responsable_id'
 AVISO_SIN_HUECO = "Visita de póliza sin hueco para pre-agendar"
 AVISO_SIN_TECNICO = "Visita de póliza pre-agendada sin técnico"
 AVISO_CHOQUE = "Visita de póliza con el hueco ya ocupado"
+AVISO_VENCIDA = "Visita de póliza vencida sin fecha"
 
 # El contexto que calla a `calendar.event`. Cada clave está aquí por una razón
 # concreta y ninguna es decorativa:
@@ -179,11 +180,25 @@ class ProjectTask(models.Model):
         cita = anterior._visar_calendar_event() if anterior else None
         if cita and cita.visar_zone_id:
             return cita.visar_zone_id
-        orden = self.visar_subscription_order_id.sudo() or self.visar_sale_order_id.sudo()
-        domicilio = (orden.visar_service_partner_id if orden else None) or self.partner_id
+        domicilio = self._visar_preagenda_domicilio()
         registro = self.env['visar.zone.cp'].sudo()._get_cp_record(
             domicilio.zip if domicilio else None)
         return registro.zone_id if registro else self.env['visar.zone'].sudo().browse()
+
+    def _visar_preagenda_domicilio(self):
+        """El domicilio del servicio: el primero con CP de los tres posibles.
+
+        La dirección de servicio del flujo web; el contacto de la tarea, que oficina
+        puede haber corregido a mano; y la dirección de entrega de la orden. Una
+        póliza capturada a mano no lleva la primera, y sus visitas viejas traen de
+        contacto al cliente, muchas veces sin CP (S00002, 30-oct-2026).
+        """
+        self.ensure_one()
+        orden = self.visar_subscription_order_id.sudo() or self.visar_sale_order_id.sudo()
+        candidatos = [orden.visar_service_partner_id, self.partner_id,
+                      orden.partner_shipping_id] if orden else [self.partner_id]
+        return next((c for c in candidatos if c and c.zip),
+                    next((c for c in candidatos if c), self.env['res.partner']))
 
     # ------------------------------------------------------------------
     # Elegir el hueco
@@ -329,6 +344,12 @@ class ProjectTask(models.Model):
         if self.planned_date_begin or self.visar_visit_event_id:
             return self.env['calendar.event'].browse()
         if not self.visar_visit_due_date:
+            return self.env['calendar.event'].browse()
+        if self.visar_visit_due_date < fields.Date.context_today(self):
+            # Nadie sabe si ya se hizo: en una póliza histórica lo normal es que sí,
+            # y agendarla le ocuparía la agenda al técnico con un servicio que quizá
+            # ya se prestó (decisión del usuario, 30-oct-2026). Lo resuelve oficina.
+            self._visar_preagenda_vencida()
             return self.env['calendar.event'].browse()
 
         maestro = AptType._visar_get_master_appointment_type()
@@ -511,15 +532,14 @@ class ProjectTask(models.Model):
                   cuando=self._visar_preagenda_cuando(cita),
                   recurso=', '.join(recursos.mapped('display_name'))))
 
+        self._visar_preagenda_cerrar_avisos()
         self._visar_preagenda_nota(cita, recursos)
         return cita
 
     def _visar_preagenda_cliente(self):
         """El domicilio de servicio de la póliza; si no, el contacto de la tarea."""
         self.ensure_one()
-        orden = self.visar_subscription_order_id.sudo()
-        domicilio = orden.visar_service_partner_id if orden else None
-        return domicilio or self.partner_id
+        return self._visar_preagenda_domicilio() or self.partner_id
 
     def _visar_preagenda_cuando(self, cita):
         """La fecha de la cita en palabras y en la zona horaria del cliente."""
@@ -562,6 +582,37 @@ class ProjectTask(models.Model):
             note=Markup("<p>%s</p>") % nota,
             user_id=responsable.id,
             date_deadline=fields.Date.context_today(self) if prioridad else None)
+
+    def _visar_preagenda_vencida(self):
+        """Su fecha ya pasó: no se agenda, y oficina decide si ya se hizo."""
+        self.ensure_one()
+        self._visar_preagenda_cerrar_avisos((AVISO_SIN_HUECO,))
+        texto = _(
+            "A esta visita le tocaba el %(propuesta)s y sigue sin fecha. No se agendó "
+            "porque no se sabe si ya se realizó.",
+            propuesta=fields.Date.to_string(self.visar_visit_due_date))
+        nueva = self._visar_preagenda_actividad(
+            AVISO_VENCIDA,
+            texto + _("\n\nSi ya se hizo, márcala como hecha. Si no, agéndala con el "
+                      "botón Agendar."),
+            prioridad=True)
+        poliza = self.visar_subscription_order_id.sudo()
+        if nueva and poliza:
+            poliza.message_post(
+                body=Markup("<p><b>%s</b></p><p>%s</p>") % (
+                    _("Visita vencida sin fecha: %s", self.name or ''), texto),
+                subtype_xmlid='mail.mt_note')
+
+    def _visar_preagenda_cerrar_avisos(self, resumenes=(AVISO_SIN_HUECO, AVISO_VENCIDA)):
+        """Cierra los avisos de «sin fecha» de esta visita, si los había.
+
+        Dicen que no se pudo agendar, y deja de ser cierto cuando se agenda o cuando
+        el motivo pasa a ser otro: un aviso que miente enseña a no leerlos.
+        """
+        self.ensure_one()
+        self.sudo().activity_ids.filtered(
+            lambda a: a.summary in resumenes
+        ).action_feedback(feedback=_("Ya no aplica."))
 
     def _visar_preagenda_sin_hueco(self, zona, dias, motivo=None):
         """No se pudo: la visita se queda SIN fecha, y alguien se entera. Ver `_visar_preagendar`.

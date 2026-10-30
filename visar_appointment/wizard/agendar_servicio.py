@@ -302,6 +302,8 @@ class VisarAgendarServicio(models.TransientModel):
         # dice, y si la tarea traía uno viejo de una fecha escrita a mano, se borra.
         cita.with_context(**CTX_SILENCIO)._visar_sync_fsm_tasks()
 
+        tarea._visar_preagenda_cerrar_avisos()
+
         cuando = format_datetime(self.env, cita.start, tz=maestro.appointment_tz,
                                  dt_format="EEEE d 'de' MMMM, HH:mm", lang_code='es_MX')
         tarea.message_post(body=Markup("<p>%s</p>") % _(
