@@ -11,9 +11,12 @@
                         invisible="not is_subscription">
                     <field name="visar_visit_count" widget="statinfo" string="Visitas"/>
                 </button>
+                <!-- Garantía oculta a pedido de Visar (2-nov-2026): por ahora no se
+                     usa. La acción y el tipo siguen en el código; para volver a
+                     ofrecerla basta regresar el invisible a "not is_subscription". -->
                 <button name="action_visar_add_warranty_visit" type="object"
                         class="oe_stat_button" icon="fa-shield"
-                        invisible="not is_subscription"
+                        invisible="1"
                         string="Visita de garantía"/>
                 <!-- Refuerzo: visita correctiva incluida, que NO consume la serie ni
                      cuenta como siniestralidad. -->
