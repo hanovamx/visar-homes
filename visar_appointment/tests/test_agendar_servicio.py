@@ -9,6 +9,8 @@ Lo que se fija aquí:
   ofrecerse) y la tarea toma fecha y técnico de ella. Es la razón de ser: una
   fecha escrita a mano en la tarea no ocupaba nada.
 * **Callada**: sin recordatorio ni invitación al cliente.
+* **Con cita, mueve la misma** (2-nov-2026): sin avisar, sin gastar los cambios
+  del cliente; el botón se va solo cuando el servicio se cierra.
 """
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -85,9 +87,8 @@ class TestAgendarServicio(TransactionCase):
         self.assertFalse(cita.alarm_ids, "sin recordatorio al cliente")
         self.assertEqual(tarea.planned_date_begin, inicio)
         self.assertEqual(tarea.visar_technician_ids, self.empleado)
-        self.assertFalse(tarea.visar_agendable, "ya no se ofrece el botón")
-        with self.assertRaises(UserError):
-            tarea.action_visar_agendar()
+        self.assertTrue(tarea.visar_agendable,
+                        "con cita el botón sigue, para mover (2-nov-2026)")
 
         # El mismo hueco ya no se le ofrece a otro servicio.
         otra = self._guia(self._tarea('Otro servicio manual'))
@@ -133,3 +134,51 @@ class TestAgendarServicio(TransactionCase):
         orden = self.env['sale.order'].create({
             'partner_id': self.cliente.id, 'plan_id': plan.id})
         self.assertEqual(orden.visar_agendables_count, 0)
+
+    def test_con_cita_mueve_la_misma_callada(self):
+        tarea = self._tarea()
+        guia = self._guia(tarea)
+        guia.hueco_ids[0].action_elegir()
+        cita = tarea.visar_visit_event_id
+        antes = cita.start
+
+        otra = self._guia(tarea)
+        self.assertEqual(otra.cita_id, cita)
+        self.assertIn("Cita actual", otra.aviso_cita)
+        nuevo = otra.hueco_ids.filtered(
+            lambda h: h.recurso_id == self.recurso and h.inicio != antes)[0]
+        correos = self.env['mail.mail'].sudo().search_count([])
+        nuevo.action_elegir()
+
+        self.assertEqual(tarea.visar_visit_event_id, cita, "la misma cita, no otra")
+        self.assertEqual(cita.start, nuevo.inicio)
+        self.assertEqual(tarea.planned_date_begin, nuevo.inicio)
+        self.assertEqual(cita.booking_line_ids.mapped('event_start'), [nuevo.inicio],
+                         "la agenda del técnico se mueve con la cita")
+        self.assertEqual(cita.visar_reschedule_count, 0,
+                         "no gasta los cambios del cliente")
+        self.assertEqual(self.env['mail.mail'].sudo().search_count([]), correos,
+                         "al cliente no le sale nada")
+        self.assertFalse(cita.alarm_ids)
+        self.assertIn("Reagendado por oficina", tarea.message_ids[:1].body)
+
+        # El horario viejo vuelve a ofrecerse a otro servicio.
+        tercera = self._guia(self._tarea('Otro'))
+        self.assertIn(antes, tercera.hueco_ids.filtered(
+            lambda h: h.recurso_id == self.recurso).mapped('inicio'))
+
+    def test_servicio_cerrado_no_lleva_boton(self):
+        tarea = self._tarea()
+        tarea.state = '1_done'
+        self.assertFalse(tarea.visar_agendable)
+        with self.assertRaises(UserError):
+            tarea.action_visar_agendar()
+
+    def test_cita_movida_por_otro_no_se_pisa(self):
+        tarea = self._tarea()
+        self._guia(tarea).hueco_ids[0].action_elegir()
+        vieja = self._guia(tarea)
+        # Mientras tanto se le quita la cita (p. ej. se canceló y se volverá a hacer).
+        tarea.visar_visit_event_id = False
+        with self.assertRaises(UserError):
+            vieja.hueco_ids[0].action_elegir()

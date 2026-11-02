@@ -32,8 +32,26 @@ aviso de ruta de siempre. Esto guía; no le quita nada a oficina.
 
 * **No le avisa al cliente.** Ni correo ni WhatsApp: oficina está hablando con él
   cuando agenda a mano. Es lo mismo que pasaba al escribir la fecha.
-* **No mueve citas existentes.** Si el servicio ya tiene cita, se reagenda por el
-  camino de siempre; aquí no se ofrece el botón.
+* **No es la reagenda del cliente.** «Solicitar reagenda al cliente» y el cambio
+  por WhatsApp siguen siendo su camino, con sus reglas (antelación, tope de
+  cambios). Esto es oficina moviendo su propia agenda.
+
+## Mover una cita que ya existe (2-nov-2026)
+
+Hasta el 2-nov el botón se ocultaba en cuanto el servicio tenía cita, y para
+cambiar el horario solo quedaba «Solicitar reagenda al cliente». Pero una visita de
+póliza se agenda con meses de adelanto, y el cliente no tiene por qué enterarse de
+que oficina reacomoda la ruta. Ahora el botón sigue hasta que el servicio se cierra
+(hecho o cancelado), y si ya hay cita, elegir otro horario **mueve esa misma cita**:
+
+* callada, como al crearla: sin correo ni WhatsApp;
+* sin gastar los cambios del cliente (`visar_reschedule_count` es su tope, no el
+  de oficina) ni pasar por sus reglas de antelación;
+* la tarea —y cualquier otra de la misma cita, como en un combo— toma la fecha y
+  el técnico nuevos.
+
+Si el cliente ya conoce la fecha (la reservó él o confirmó la pre-agenda), la guía
+lo dice: avisarle es cosa de oficina.
 """
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -61,7 +79,11 @@ class VisarAgendarServicio(models.TransientModel):
         'project.task', string="Servicio", required=True, ondelete='cascade',
         domain="[('id', 'in', tareas_posibles_ids)]")
     tareas_posibles_ids = fields.Many2many(
-        'project.task', string="Servicios de la orden sin cita")
+        'project.task', string="Servicios abiertos de la orden")
+    # La cita que había al abrir. Se guarda para notar si otro la movió mientras
+    # la guía estaba abierta.
+    cita_id = fields.Many2one('calendar.event', string="Cita actual")
+    aviso_cita = fields.Text(compute='_compute_aviso_cita')
     # Para la vista: el cliente web no evalúa `len()` en `readonly`.
     varias_tareas = fields.Boolean(compute='_compute_varias_tareas')
     zona_id = fields.Many2one(
@@ -86,12 +108,14 @@ class VisarAgendarServicio(models.TransientModel):
 
     @api.model
     def _visar_abrir(self, tareas):
-        """Crea la guía para la primera tarea sin cita de `tareas` y la abre."""
+        """Crea la guía para la primera tarea abierta de `tareas` (sin cita
+        primero) y la abre."""
         tareas = tareas.filtered(lambda t: t._visar_agendable())
         if not tareas:
-            raise UserError(_("Este servicio ya tiene cita, o no es un servicio "
-                              "de campo abierto."))
-        tarea = tareas[:1]
+            raise UserError(_("Este servicio ya se cerró, o no es un servicio de "
+                              "campo."))
+        tarea = (tareas.filtered(lambda t: not t._visar_calendar_event())
+                 or tareas)[:1]
         wizard = self.create({
             'task_id': tarea.id,
             'tareas_posibles_ids': [(6, 0, tareas.ids)],
@@ -104,6 +128,25 @@ class VisarAgendarServicio(models.TransientModel):
     def _compute_varias_tareas(self):
         for wizard in self:
             wizard.varias_tareas = len(wizard.tareas_posibles_ids) > 1
+
+    @api.depends('cita_id', 'task_id')
+    def _compute_aviso_cita(self):
+        for wizard in self:
+            cita = wizard.cita_id
+            if not cita or not cita.start:
+                wizard.aviso_cita = False
+                continue
+            tarea = wizard.task_id
+            texto = _("Cita actual: %(cuando)s con %(tecnico)s. Al elegir otro "
+                      "horario se mueve esta misma cita; al cliente no se le avisa.",
+                      cuando=cita._visar_fecha_local(cita.start),
+                      tecnico=", ".join(cita.appointment_resource_ids.mapped('name'))
+                      or _("sin técnico"))
+            if not (tarea.visar_visit_preagendada
+                    and not tarea.visar_visit_preagenda_confirmada):
+                texto += " " + _("El cliente ya conoce esta fecha: si la cambias, "
+                                 "avísale tú.")
+            wizard.aviso_cita = texto
 
     def _visar_accion(self):
         self.ensure_one()
@@ -123,13 +166,18 @@ class VisarAgendarServicio(models.TransientModel):
         return maestro
 
     def _visar_por_defecto(self):
-        """Zona por el CP del domicilio, duración la del bloque del web."""
+        """Zona por el CP del domicilio, duración la del bloque del web (o la de
+        la cita, si ya hay una)."""
         self.ensure_one()
+        cita = self.task_id._visar_calendar_event()
+        self.cita_id = cita
         domicilio = self.task_id._visar_agendar_domicilio()
         registro = self.env['visar.zone.cp'].sudo()._get_cp_record(
             domicilio.zip if domicilio else None)
         self.zona_id = registro.zone_id if registro else False
-        self.duracion = self._visar_maestro().appointment_duration or 1.0
+        self.duracion = ((cita.stop - cita.start).total_seconds() / 3600.0
+                         if cita and cita.start and cita.stop
+                         else self._visar_maestro().appointment_duration or 1.0)
 
     @api.onchange('task_id')
     def _onchange_task_id(self):
@@ -255,11 +303,15 @@ class VisarAgendarServicio(models.TransientModel):
     # ------------------------------------------------------------------
 
     def _visar_agendar(self, hueco):
-        """Crea la cita callada en ese hueco y la engancha a la tarea."""
+        """Crea la cita callada en ese hueco y la engancha a la tarea, o mueve la
+        que ya tiene."""
         self.ensure_one()
         tarea = self.task_id
         if not tarea._visar_agendable():
-            raise UserError(_("Este servicio ya tiene cita. Recarga la página."))
+            raise UserError(_("Este servicio ya se cerró. Recarga la página."))
+        if tarea._visar_calendar_event() != self.cita_id:
+            raise UserError(_("La cita de este servicio cambió mientras la guía "
+                              "estaba abierta. Cierra y vuelve a abrir «Agendar»."))
         maestro = self._visar_maestro()
         AptType = self.env['appointment.type'].sudo()
         recurso = hueco.recurso_id
@@ -271,6 +323,9 @@ class VisarAgendarServicio(models.TransientModel):
             # Sin refrescar la lista aquí: el error deshace la transacción.
             raise UserError(_("Ese horario se acaba de ocupar. Pulsa «Buscar "
                               "horarios» y elige otro."))
+
+        if self.cita_id:
+            return self._visar_mover(hueco, maestro)
 
         orden = tarea.sale_order_id.sudo()
         domicilio = tarea._visar_agendar_domicilio()
@@ -313,6 +368,43 @@ class VisarAgendarServicio(models.TransientModel):
         return {'type': 'ir.actions.act_window_close'}
 
 
+    def _visar_mover(self, hueco, maestro):
+        """Mueve la cita existente al hueco. Callada y sin gastar los cambios del
+        cliente: no pasa por `_visar_reschedule`, que es su camino y sus reglas."""
+        cita = self.cita_id.sudo()
+        tarea = self.task_id
+        anterior = cita.start
+        tecnico_antes = ", ".join(cita.appointment_resource_ids.mapped('name'))
+        recurso = hueco.recurso_id
+        silencio = cita.with_context(**CTX_SILENCIO)
+        silencio.write({
+            'start': hueco.inicio,
+            'stop': hueco.fin,
+            'duration': (hueco.fin - hueco.inicio).total_seconds() / 3600.0,
+        })
+        # Las fechas de las líneas de reserva viajan con el write (related
+        # almacenados); el técnico no. Igual que en `_visar_reschedule`.
+        lineas = self.env['appointment.booking.line'].sudo().search([
+            ('calendar_event_id', '=', cita.id)])
+        if lineas and recurso not in lineas.mapped('appointment_resource_id'):
+            lineas[:1].write({'appointment_resource_id': recurso.id})
+            silencio.write({'appointment_resource_ids': [
+                (6, 0, lineas.mapped('appointment_resource_id').ids)]})
+        silencio._visar_sync_fsm_tasks()
+
+        tarea._visar_preagenda_cerrar_avisos()
+
+        cuerpo = Markup("<p>%s</p>") % _(
+            "Reagendado por oficina desde la guía de horarios. Antes: %(antes)s con "
+            "%(tecnico_antes)s. Ahora: %(ahora)s con %(tecnico)s. No se le avisó al "
+            "cliente.",
+            antes=cita._visar_fecha_local(anterior), tecnico_antes=tecnico_antes,
+            ahora=cita._visar_fecha_local(cita.start), tecnico=recurso.name)
+        for registro in (cita, *cita._visar_reschedule_tasks()):
+            registro.message_post(body=cuerpo, subtype_xmlid='mail.mt_note')
+        return {'type': 'ir.actions.act_window_close'}
+
+
 class VisarAgendarServicioHueco(models.TransientModel):
     _name = 'visar.agendar.servicio.hueco'
     _description = "Horario libre de la guía de agenda"
@@ -340,11 +432,11 @@ class ProjectTask(models.Model):
     visar_agendable = fields.Boolean(compute='_compute_visar_agendable')
 
     def _visar_agendable(self):
-        """¿Le cabe la guía? Servicio de campo, abierto y sin cita propia."""
+        """¿Le cabe la guía? Servicio de campo abierto, tenga cita o no: con cita,
+        la guía la mueve (2-nov-2026)."""
         self.ensure_one()
         return bool(self.project_id.is_fsm
-                    and self.state not in CLOSED_STATES
-                    and not self._visar_calendar_event())
+                    and self.state not in CLOSED_STATES)
 
     def _compute_visar_agendable(self):
         for task in self:
