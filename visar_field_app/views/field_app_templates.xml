@@ -990,7 +990,8 @@
                              t-att-data-dim="dim['id']">
                             <div class="d-flex justify-content-between mb-2">
                                 <b t-esc="dim['label']"/>
-                                <span class="small text-muted">pagó <t t-esc="dim['pagado']"/></span>
+                                <span t-if="dim['pagado_id']" class="small text-muted">pagó <t t-esc="dim['pagado']"/></span>
+                                <span t-else="" class="small text-muted">No contratado</span>
                             </div>
                             <div class="d-flex flex-wrap gap-2 mb-2">
                                 <t t-foreach="dim['tramos']" t-as="tramo">
