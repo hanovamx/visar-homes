@@ -161,8 +161,7 @@ class ProjectTask(models.Model):
             if not tramos:
                 continue
             pagado = self.env['visar.service.tier']
-            eje = plantilla._visar_axis_attribute(dimension.measure_type) \
-                if dimension.measure_type in ('interior', 'exterior') else False
+            eje = self._visar_ajuste_eje(plantilla, dimension, tramos)
             linea = pagadas.filtered(lambda l: l.product_id.product_tmpl_id == plantilla)[:1]
             if eje and linea:
                 valor = linea.product_id.product_template_attribute_value_ids.filtered(
@@ -173,17 +172,32 @@ class ProjectTask(models.Model):
                     if valor and ref == valor:
                         pagado = tramo
                         break
-            elif linea and len(tramos) and not eje:
-                # Producto de un solo eje (corte de pasto): el tramo es la variante.
-                valores = set(linea.product_id.product_template_attribute_value_ids.mapped('name'))
-                for tramo in tramos:
-                    ref = set(tramo.product_id.product_template_attribute_value_ids.mapped('name'))
-                    if ref and (ref - valores) <= set(
-                            self.env['visar.zone'].sudo().search([]).mapped('code')):
-                        pagado = tramo
-                        break
             resultado.append((dimension, tramos, pagado))
         return resultado
+
+    @staticmethod
+    def _visar_ajuste_eje(plantilla, dimension, tramos):
+        """Atributo de tamaño de esta dimensión en el producto.
+
+        Con interior y exterior en el mismo producto (fumigación) lo dice el alcance
+        de los tramos (`_visar_axis_attribute`). Un producto de un solo eje (corte de
+        pasto, 4-nov-2026) tiene sus tramos con alcance «Todas», y ahí el eje es el
+        único atributo que cambia entre las variantes de sus tramos; la zona no
+        cambia, porque todos los tramos apuntan a la misma zona de referencia.
+        """
+        if dimension.measure_type in ('interior', 'exterior'):
+            eje = plantilla._visar_axis_attribute(dimension.measure_type)
+            if eje:
+                return eje
+        variantes = tramos.filtered(
+            lambda t: not t.is_valuation and t.product_id.product_tmpl_id == plantilla
+        ).mapped('product_id')
+        por_atributo = {}
+        for variante in variantes:
+            for valor in variante.product_template_attribute_value_ids:
+                por_atributo.setdefault(valor.attribute_id, set()).add(valor.id)
+        cambian = [a for a, valores in por_atributo.items() if len(valores) > 1]
+        return cambian[0] if len(cambian) == 1 else False
 
     def _visar_ajuste_pagado(self):
         """Lo que el cliente ya pagó por esas líneas, en la base de `price_unit`."""

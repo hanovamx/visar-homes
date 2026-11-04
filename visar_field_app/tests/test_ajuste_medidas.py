@@ -233,3 +233,37 @@ class TestAjusteMedidas(TransactionCase):
         self.assertNotIn(self.interior.id, tarea._visar_upsell_dimensiones_previas())
         linea = self._corte_vendido(tarea, corte, m2)
         self.assertFalse(linea.discount)
+
+    # ------------------------------------------------------------------
+    # Corte de pasto: producto de un solo eje (4-nov-2026)
+    # ------------------------------------------------------------------
+    def test_corte_de_pasto_cobra_la_diferencia(self):
+        _regla, corte, _m2 = self._combo_y_corte()
+        plantilla = self.env['product.template']._visar_get_service_template_for_dimension(corte)
+        tramos = plantilla._visar_tiers_for_dimension(corte).filtered(
+            lambda t: not t.is_valuation).sorted('m2_min')
+        if len(tramos) < 2:
+            self.skipTest("el corte de pasto no tiene dos tramos")
+        Motor = self.env['appointment.type'].sudo()
+        item = corte._visar_quote_item(max(tramos[0].m2_min, 1))[0]
+        lineas = Motor._visar_build_sale_lines([item], self.zona)
+        pedido = self.env['sale.order'].create({
+            'partner_id': self.cliente.id, 'pricelist_id': self.zona.pricelist_id.id,
+            'order_line': [(0, 0, {
+                'product_id': v['product_id'],
+                'price_unit': Motor._visar_list_unit_price(
+                    self.env['product.product'].browse(v['product_id']), self.zona),
+                'discount': v.get('discount') or 0.0}) for v in lineas]})
+        pedido.action_confirm()
+        tarea = pedido.tasks_ids[:1]
+        if not tarea:
+            self.skipTest("el corte de pasto no genera servicio en esta base")
+        tarea.visar_technician_ids = self.tecnico
+        pagados = {d.id: p for d, _t, p in tarea._visar_ajuste_dimensiones()}
+        self.assertEqual(pagados.get(corte.id), tramos[0], "lee el tramo pagado del corte")
+        estado, error = tarea._visar_ajuste_aplicar(
+            self.tecnico, {corte.id: tramos[1].id}, "El jardín es más grande", FOTO)
+        self.assertFalse(error)
+        self.assertEqual(estado, 'mayor')
+        self.assertAlmostEqual(sum(tarea._visar_ajuste_lineas().mapped('price_total')),
+                               tarea.visar_ajuste_diferencia, 2)
