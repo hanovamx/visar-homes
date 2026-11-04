@@ -17,6 +17,7 @@ from odoo.http import request
 from odoo.tools import html2plaintext, plaintext2html
 
 from ..hooks import AREAS_FIJAS, FUM_LINE, FUM_LINE_COMBO
+from ..models.ajuste_medidas import ERRORES_AJUSTE
 
 _logger = logging.getLogger(__name__)
 
@@ -1754,6 +1755,14 @@ class VisarFieldApp(http.Controller):
                                   if task.visar_waiting_start else ''),
             'close_error': kw.get('close_error'),
             'upsell_msg': kw.get('upsell'),
+            # Ajuste de medidas: el botón solo con el servicio en ejecución; el
+            # resultado se sigue enseñando después.
+            'ajuste_disponible': (flow_state == 'en_ejecucion'
+                                  and task.sudo()._visar_ajuste_disponible()),
+            'ajuste_estado': task.sudo().visar_ajuste_estado,
+            'ajuste_pagada': (task.sudo()._visar_ajuste_pagada()
+                              if task.sudo().visar_ajuste_estado == 'mayor' else False),
+            'ajuste_error': ERRORES_AJUSTE.get(kw.get('aerr') or ''),
             # Material consumido: se captura aquí y no en la hoja (un modelo, no uno
             # por plantilla) y NO sale en el PDF firmado.
             'consumo_lines': task.sudo().visar_consumo_ids,
@@ -2170,6 +2179,9 @@ class VisarFieldApp(http.Controller):
             'worksheet_signature': signature,       # campos NATIVOS (reporte)
             'worksheet_signed_by': signed_by,
         })
+        # La diferencia por medidas no bloquea el cierre (decisión de Visar,
+        # 3-nov-2026): si sigue sin pagar, oficina se entera.
+        task.sudo()._visar_ajuste_al_cerrar()
         # Inventario: lo aplicado sale de la camioneta del técnico y lo vendido se
         # entrega desde ahí. Va DESPUÉS del cierre y entre `try` a propósito — la
         # firma ya está capturada y el cliente está delante: un inventario mal
@@ -2394,6 +2406,110 @@ class VisarFieldApp(http.Controller):
         if not task:
             return request.make_json_response({'error': 'no_session'}, status=403)
         return request.make_json_response({'state': task._visar_upsell_state()})
+
+    # ==================================================================
+    # Ajuste de medidas (ajuste_medidas.py)
+    # ==================================================================
+    def _ajuste_task(self, task_id, employee):
+        task = self._upsell_task(task_id, employee)
+        if not task or not task._visar_ajuste_disponible():
+            return None
+        return task
+
+    @staticmethod
+    def _ajuste_tramos(post):
+        """`tramo~<dimension_id>` = tier_id (0 = no contratado); `m2~<id>` = metros."""
+        tramos, metros = {}, {}
+        for key, value in post.items():
+            prefijo, _sep, raw_id = key.partition('~')
+            if not raw_id.isdigit():
+                continue
+            if prefijo == 'tramo' and str(value or '0').isdigit():
+                tramos[int(raw_id)] = int(value or 0)
+            elif prefijo == 'm2':
+                try:
+                    m2 = float(value or 0)
+                except (TypeError, ValueError):
+                    continue
+                if m2 > 0:
+                    metros[int(raw_id)] = m2
+        return tramos, metros
+
+    @http.route('/visar/field/task/<int:task_id>/medidas', type='http', auth='public',
+                website=True, sitemap=False)
+    def field_ajuste_medidas(self, task_id, **kw):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._ajuste_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        return request.render('visar_field_app.field_ajuste_medidas', {
+            'employee': employee,
+            'task': task,
+            'opciones': task._visar_ajuste_opciones(),
+            'pagado': task._visar_ajuste_pagado(),
+            'currency': task._visar_upsell_currency(),
+            'error': ERRORES_AJUSTE.get(kw.get('aerr') or ''),
+            'camera_fallback': self._camera_fallback_allowed(),
+        })
+
+    @http.route('/visar/field/task/<int:task_id>/medidas/cotizar', type='http',
+                auth='public', website=True, sitemap=False)
+    def field_ajuste_cotizar(self, task_id, **kw):
+        """La diferencia en vivo mientras el técnico toca los tramos."""
+        employee = self._current_employee()
+        task = self._ajuste_task(task_id, employee) if employee else None
+        if not task:
+            return request.make_json_response({'error': 'no_disponible'}, status=403)
+        tramos, _metros = self._ajuste_tramos(kw)
+        cotizacion = task._visar_ajuste_cotizar(tramos)
+        error = cotizacion.get('error')
+        return request.make_json_response({
+            'error': error,
+            'mensaje': ERRORES_AJUSTE.get(error or '', ''),
+            'valoracion': cotizacion.get('valoracion', False),
+            'nuevo': cotizacion.get('nuevo'),
+            'pagado': cotizacion.get('pagado'),
+            'diferencia': cotizacion.get('diferencia'),
+        })
+
+    @http.route('/visar/field/task/<int:task_id>/medidas/aplicar', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_ajuste_aplicar(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._ajuste_task(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/task/%s' % task_id)
+        tramos, metros = self._ajuste_tramos(post)
+        fotos = [(f.filename, f.read(), f.mimetype)
+                 for f in request.httprequest.files.getlist('fotos')]
+        estado, error = task._visar_ajuste_aplicar(
+            employee, tramos, post.get('motivo'), fotos, m2_por_dimension=metros)
+        if error:
+            return request.redirect(
+                '/visar/field/task/%s/medidas?aerr=%s' % (task.id, error))
+        if estado == 'mayor':
+            # Se cobra ya: misma ronda que los adicionales (liga o efectivo).
+            task._visar_upsell_confirm(employee)
+            return request.redirect('/visar/field/task/%s/upsell/pay' % task.id)
+        return request.redirect('/visar/field/task/%s#ajuste' % task.id)
+
+    @http.route('/visar/field/task/<int:task_id>/medidas/rechazar', type='http',
+                auth='public', website=True, methods=['POST'], csrf=True)
+    def field_ajuste_rechazar(self, task_id, **post):
+        employee = self._current_employee()
+        if not employee:
+            return request.redirect('/visar/field')
+        task = self._task_for_employee(task_id, employee)
+        if not task:
+            return request.redirect('/visar/field/tasks')
+        _ok, error = task._visar_ajuste_rechazar(employee)
+        if error:
+            return request.redirect('/visar/field/task/%s?aerr=%s#ajuste' % (task.id, error))
+        return request.redirect('/visar/field/task/%s#ajuste' % task.id)
 
     @http.route('/visar/field/task/<int:task_id>/upsell/qr', type='http',
                 auth='public', website=True, sitemap=False)

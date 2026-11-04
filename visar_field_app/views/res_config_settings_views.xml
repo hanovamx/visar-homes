@@ -16,6 +16,10 @@
                              help="Ofrece en la app el proveedor de pago en modo prueba (Demo). Un pago de prueba marca la factura como pagada SIN que entre dinero; la app lo marca como PRUEBA. Apagar antes de salir en vivo.">
                         <field name="visar_upsell_allow_test_payment"/>
                     </setting>
+                    <setting string="Comisión por ajuste de medidas"
+                             help="Cuando el técnico corrige las medidas en sitio y el cliente paga la diferencia, esa diferencia cuenta como venta suya en campo para la comisión.">
+                        <field name="visar_ajuste_medidas_comisiona"/>
+                    </setting>
                     <setting string="Responsable de cotizar"
                              help="Recibe la actividad &quot;Cotizar&quot; cuando una hoja de trabajo marca un tratamiento que se cotiza a mano (termitas, chinches). Vacío = el vendedor del pedido de la visita.">
                         <field name="visar_quote_user_id"/>

@@ -1689,7 +1689,10 @@ class ProjectTask(models.Model):
         # importa es lo que pagó. El total es el de las LÍNEAS del adicional: el del
         # pedido incluiría el servicio contratado.
         rows = [[
-            {'kind': 'scalar', 'text': line.product_id.display_name or line.name},
+            # Las del ajuste de medidas se nombran por su descripción: «Descuento» a
+            # secas no le dice al cliente que es lo que ya había pagado.
+            {'kind': 'scalar', 'text': (line.name if line.visar_ajuste_medidas
+                                        else line.product_id.display_name or line.name)},
             {'kind': 'scalar', 'text': formatLang(self.env, line.product_uom_qty)},
             {'kind': 'scalar', 'text': money(line.price_total / (line.product_uom_qty or 1.0))},
             {'kind': 'scalar', 'text': money(line.price_total)},

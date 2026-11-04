@@ -260,8 +260,11 @@ class ProjectTask(models.Model):
         # existiera (S00138) o el de una cotización de la misma valoración
         # (`cotizacion_manual.py`): una vez por pedido.
         abiertas = self._visar_upsell_open_lines()
+        # El ajuste de medidas no es un servicio nuevo: es el mismo que ya se pagó,
+        # con otro tamaño, y la valoración ya no se descuenta otra vez de él.
         servicios = abiertas.filtered(
-            lambda l: l.product_id._visar_counts_as_service() and not l.visar_valuation_credit)
+            lambda l: l.product_id._visar_counts_as_service() and not l.visar_valuation_credit
+            and not l.visar_ajuste_medidas)
         return self._visar_valuation_credit_for(servicios, propios=abiertas)
 
     def _visar_upsell_sync_valuation_credit(self):
@@ -326,6 +329,7 @@ class ProjectTask(models.Model):
         self.ensure_one()
         lineas = self._visar_upsell_lines().filtered(
             lambda l: l.task_id == self and not l.visar_valuation_credit
+            and not l.visar_ajuste_medidas  # se queda en esta visita (ajuste_medidas.py)
             and l.product_id._visar_counts_as_service()
             and l.product_id.service_tracking != 'no').sudo()
         if not lineas:

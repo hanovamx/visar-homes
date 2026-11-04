@@ -123,6 +123,16 @@ class VisarCommissionRule(models.Model):
             dominio.append(('product_id', '=', self.product_id.id))
         if self.product_categ_id:
             dominio.append(('product_id.categ_id', 'child_of', self.product_categ_id.id))
+        # Ajuste de medidas en campo (visar_field_app/models/ajuste_medidas.py): son
+        # DOS líneas, el servicio con el tamaño real y la negativa «ya pagado», y lo
+        # que el técnico vendió es su suma. Cuentan solo con el ajuste encendido en
+        # Ajustes → Visar, y nunca en una regla por producto o categoría: ahí solo
+        # entraría la positiva y se le pagaría el servicio entero.
+        comisiona = self.env['ir.config_parameter'].sudo().get_param(
+            'visar_field.ajuste_medidas_comisiona')
+        if (not comisiona or comisiona == 'False'
+                or self.product_id or self.product_categ_id):
+            dominio.append(('visar_ajuste_medidas', '=', False))
         return dominio + self._visar_dominio_atribucion(employee)
 
     def _visar_importe(self, registro):

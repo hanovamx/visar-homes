@@ -308,7 +308,7 @@
                             <li t-foreach="task.visar_sale_order_id.order_line.filtered(lambda l: not l.display_type and l.product_uom_qty > 0)"
                                 t-as="line" class="list-group-item py-1">
                                 <t t-esc="int(line.product_uom_qty)"/>×
-                                <t t-esc="line.name if line.visar_valuation_credit else line.product_id.name"/>
+                                <t t-esc="line.name if (line.visar_valuation_credit or line.visar_ajuste_medidas) else line.product_id.name"/>
                             </li>
                         </ul>
                     </div>
@@ -317,6 +317,13 @@
                          Solo con el servicio EN EJECUCIÓN (el controlador también lo
                          rechaza). Vive entre el pedido y la hoja de trabajo: el técnico
                          ofrece mientras trabaja, no al final con el cliente esperando. -->
+                    <!-- ================= Ajuste de medidas =================
+                         Cuando la casa no mide lo que se pagó. Va antes de los
+                         adicionales: es lo primero que el técnico nota al llegar. -->
+                    <t t-if="ajuste_disponible or ajuste_estado">
+                        <t t-call="visar_field_app.ajuste_medidas_card"/>
+                    </t>
+
                     <t t-if="upsell_available or upsell_state != 'vacio'">
                         <t t-call="visar_field_app.upsell_card"/>
                     </t>
@@ -791,7 +798,10 @@
                     <div class="card p-2 mb-2">
                         <!-- "Eliminar" solo en borrador: una vez generado el cobro la
                              línea ya está facturada y quitarla aquí mentiría. -->
-                        <form t-if="editable and not line.visar_valuation_credit"
+                        <!-- Las líneas del ajuste de medidas van en pareja (servicio
+                             nuevo + «ya pagado»): quitar una sola descuadraría el cobro.
+                             Se deshacen con «El cliente no acepta». -->
+                        <form t-if="editable and not line.visar_valuation_credit and not line.visar_ajuste_medidas"
                               t-att-action="'/visar/field/task/%s/upsell/remove' % task.id"
                               method="post" class="m-0 d-flex justify-content-end">
                             <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
@@ -809,8 +819,8 @@
                                      descripción ("Descuento por visita de valoración
                                      (S00300)"): el producto a secas solo diría
                                      "Descuento". -->
-                                <strong t-esc="line.name if line.visar_valuation_credit else line.product_id.display_name"/>
-                                <div t-if="not line.visar_valuation_credit" class="small text-muted">
+                                <strong t-esc="line.name if (line.visar_valuation_credit or line.visar_ajuste_medidas) else line.product_id.display_name"/>
+                                <div t-if="not line.visar_valuation_credit and line.price_unit &gt; 0" class="small text-muted">
                                     <span t-out="line.price_unit"
                                           t-options="{'widget': 'monetary', 'display_currency': upsell_currency}"/>
                                     c/u
@@ -903,6 +913,153 @@
     <!-- ============================================================ -->
     <!-- Catálogo de venta en campo                                    -->
     <!-- ============================================================ -->
+    <!-- Tarjeta del ajuste de medidas en el servicio (ajuste_medidas.py). -->
+    <template id="ajuste_medidas_card" name="Visar Campo - Ajuste de medidas">
+        <div id="ajuste" class="card p-3 mb-4 o_visar_ajuste_card">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <h6 class="mb-0">Medidas</h6>
+                <t t-if="ajuste_estado == 'mayor'">
+                    <span t-if="ajuste_pagada" class="badge text-bg-success">Diferencia pagada</span>
+                    <span t-else="" class="badge text-bg-warning">Diferencia por cobrar</span>
+                </t>
+                <span t-elif="ajuste_estado == 'rechazado'" class="badge text-bg-danger">Incompleto</span>
+                <span t-elif="ajuste_estado" class="badge text-bg-secondary">Ajustadas</span>
+            </div>
+            <div t-if="ajuste_error" class="alert alert-warning py-2 small" t-esc="ajuste_error"/>
+            <t t-if="not ajuste_estado">
+                <p class="small text-muted mb-3">
+                    ¿La casa no mide lo que el cliente pagó? Elija las medidas reales y
+                    se le cobra solo la diferencia.
+                </p>
+                <a t-att-href="'/visar/field/task/%s/medidas' % task.id"
+                   class="btn btn-outline-warning w-100">Las medidas no coinciden</a>
+            </t>
+            <t t-else="">
+                <div class="small mb-2" t-esc="task.visar_ajuste_resumen"/>
+                <div t-if="ajuste_estado == 'mayor'" class="small mb-2">
+                    Diferencia:
+                    <b t-out="task.visar_ajuste_diferencia"
+                       t-options="{'widget': 'monetary', 'display_currency': upsell_currency}"/>.
+                    <t t-if="not ajuste_pagada">Se cobra en «Productos adicionales».</t>
+                </div>
+                <div t-if="ajuste_estado == 'menor'" class="alert alert-info py-2 small mb-0">
+                    La casa es más chica que lo pagado. No se devuelve nada; oficina ya
+                    está avisada.
+                </div>
+                <div t-if="ajuste_estado == 'igual'" class="alert alert-info py-2 small mb-0">
+                    Las medidas caen en el mismo tramo: no hay nada que cobrar.
+                </div>
+                <div t-if="ajuste_estado == 'valoracion'" class="alert alert-info py-2 small mb-0">
+                    La medida real necesita valoración técnica. Oficina cotiza la
+                    diferencia; haga solo lo que se pagó.
+                </div>
+                <div t-if="ajuste_estado == 'rechazado'" class="alert alert-danger py-2 small mb-0">
+                    El cliente no aceptó pagar la diferencia. Haga <b>solo lo que se
+                    pagó</b>; oficina ya está avisada.
+                </div>
+                <form t-if="ajuste_estado == 'mayor' and not ajuste_pagada"
+                      t-att-action="'/visar/field/task/%s/medidas/rechazar' % task.id"
+                      method="post" class="m-0 mt-2">
+                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                    <button type="submit" class="btn btn-outline-secondary w-100">
+                        El cliente no acepta: hago solo lo pagado
+                    </button>
+                </form>
+            </t>
+        </div>
+    </template>
+
+    <!-- Pantalla para elegir las medidas reales. -->
+    <template id="field_ajuste_medidas" name="Visar Campo - Medidas reales">
+        <t t-call="website.layout">
+            <div id="wrap" class="oe_structure">
+                <div class="container o_visar_field py-3" style="max-width: 640px;">
+                    <a t-att-href="'/visar/field/task/%s' % task.id"
+                       class="btn btn-link px-0 mb-2">&#8592; Volver al servicio</a>
+                    <h4 class="mb-0">Medidas reales</h4>
+                    <div class="small text-muted mb-3" t-esc="task.partner_id.name"/>
+                    <div t-if="error" class="alert alert-warning py-2" t-esc="error"/>
+
+                    <form t-att-action="'/visar/field/task/%s/medidas/aplicar' % task.id"
+                          method="post" enctype="multipart/form-data"
+                          id="visar-ajuste-form" class="o_visar_ajuste"
+                          t-att-data-cotizar="'/visar/field/task/%s/medidas/cotizar' % task.id">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+
+                        <div t-foreach="opciones" t-as="dim" class="card p-3 mb-3 o_visar_ajuste_dim"
+                             t-att-data-dim="dim['id']">
+                            <div class="d-flex justify-content-between mb-2">
+                                <b t-esc="dim['label']"/>
+                                <span class="small text-muted">pagó <t t-esc="dim['pagado']"/></span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <t t-foreach="dim['tramos']" t-as="tramo">
+                                    <input type="radio" class="btn-check"
+                                           t-att-name="'tramo~%s' % dim['id']"
+                                           t-att-id="'tramo-%s-%s' % (dim['id'], tramo['id'])"
+                                           t-att-value="tramo['id']"
+                                           t-att-data-min="tramo.get('m2_min', '')"
+                                           t-att-data-max="tramo.get('m2_max', '')"
+                                           t-att-checked="tramo['id'] == dim['pagado_id'] and 'checked' or None"/>
+                                    <label t-attf-class="btn btn-sm #{'btn-outline-secondary' if tramo['id'] == dim['pagado_id'] else 'btn-outline-primary'}"
+                                           t-att-for="'tramo-%s-%s' % (dim['id'], tramo['id'])"
+                                           t-esc="tramo['name']"/>
+                                </t>
+                            </div>
+                            <div class="input-group input-group-sm">
+                                <input type="number" min="0" step="1" inputmode="numeric"
+                                       class="form-control o_visar_ajuste_m2" placeholder="Si los midió, escriba los m²"
+                                       t-att-name="'m2~%s' % dim['id']"
+                                       t-att-id="'m2-%s' % dim['id']"/>
+                                <span class="input-group-text">m²</span>
+                            </div>
+                        </div>
+
+                        <div class="card p-3 mb-3">
+                            <label class="form-label" for="ajuste-motivo">
+                                ¿Por qué no coinciden? <span class="text-danger">*</span>
+                            </label>
+                            <textarea id="ajuste-motivo" name="motivo" rows="3" required="required"
+                                      class="form-control"
+                                      placeholder="Ej. tiene un tercer piso que no mencionó"/>
+                            <label class="form-label mt-3 mb-1">
+                                Fotos de evidencia (mínimo 1) <span class="text-danger">*</span>
+                            </label>
+                            <t t-call="visar_field_app.photo_capture">
+                                <t t-set="input_name" t-value="'fotos'"/>
+                                <t t-set="input_class" t-value="'o_visar_ajuste_fotos'"/>
+                            </t>
+                        </div>
+
+                        <div class="card p-3 mb-3 o_visar_ajuste_resumen">
+                            <div class="d-flex justify-content-between">
+                                <span>Precio con las medidas reales</span>
+                                <span class="o_visar_ajuste_nuevo text-nowrap">—</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>Ya pagado</span>
+                                <span class="text-nowrap">−<t t-out="pagado"
+                                      t-options="{'widget': 'monetary', 'display_currency': currency}"/></span>
+                            </div>
+                            <hr class="my-2"/>
+                            <div class="d-flex justify-content-between align-items-baseline">
+                                <b>Diferencia</b>
+                                <span class="fs-4 o_visar_ajuste_dif text-nowrap">—</span>
+                            </div>
+                            <div class="small text-muted mt-1 o_visar_ajuste_msg">
+                                Elija la medida real de lo que no coincide.
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 o_visar_ajuste_submit" disabled="disabled">
+                            Aplicar ajuste
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </t>
+    </template>
+
     <template id="field_upsell_catalog" name="Visar Campo - Agregar producto">
         <t t-call="website.layout">
             <div id="wrap" class="oe_structure">

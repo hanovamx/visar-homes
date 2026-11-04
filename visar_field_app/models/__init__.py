@@ -16,3 +16,4 @@ from . import seguimiento
 from . import inventario_ruta
 from . import consumo_material
 from . import datos_domicilio
+from . import ajuste_medidas

@@ -10,3 +10,4 @@ from . import test_cotizacion_manual
 from . import test_tratamientos_hojas
 from . import test_inventario_ruta
 from . import test_configurar_servicio
+from . import test_ajuste_medidas

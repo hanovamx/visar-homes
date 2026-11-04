@@ -120,6 +120,15 @@
                             <field name="visar_upsell_cash_by_id" readonly="1"
                                    invisible="not visar_upsell_cash_at"/>
                         </group>
+                        <!-- Ajuste de medidas en campo: fotos en el chatter. -->
+                        <group string="Ajuste de medidas" invisible="not visar_ajuste_estado">
+                            <field name="visar_ajuste_estado"/>
+                            <field name="visar_ajuste_resumen"/>
+                            <field name="visar_ajuste_diferencia"/>
+                            <field name="visar_ajuste_motivo"/>
+                            <field name="visar_ajuste_by_id"/>
+                            <field name="visar_ajuste_at"/>
+                        </group>
                     </group>
                     <!-- Inventario por ruta (23-sep-2026): qué se gastó, de dónde
                          salió y cuánto se recorrió para llegar. -->
