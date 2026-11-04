@@ -997,7 +997,7 @@
                                     <input type="radio" class="btn-check"
                                            t-att-name="'tramo~%s' % dim['id']"
                                            t-att-id="'tramo-%s-%s' % (dim['id'], tramo['id'])"
-                                           t-att-value="tramo['id']"
+                                           t-att-value="str(tramo['id'])"
                                            t-att-data-min="tramo.get('m2_min', '')"
                                            t-att-data-max="tramo.get('m2_max', '')"
                                            t-att-checked="tramo['id'] == dim['pagado_id'] and 'checked' or None"/>

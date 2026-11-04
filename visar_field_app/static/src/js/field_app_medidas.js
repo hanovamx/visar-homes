@@ -29,13 +29,22 @@
         var valido = false;
         var pedido = 0;
 
+        // Solo se escribe si cambia: el observador de abajo mira el DOM, y un
+        // texto reescrito igual lo volvía a disparar sin fin (se congelaba la
+        // pantalla al primer tramo válido, 4-nov-2026).
+        function setText(el, text) {
+            if (el.textContent !== text) {
+                el.textContent = text;
+            }
+        }
+
         function refreshSubmit() {
             var hayFotos = !!(fotos && fotos.files && fotos.files.length);
             var hayMotivo = !!(motivo && motivo.value.trim());
             submit.disabled = !(valido && hayFotos && hayMotivo);
             if (valido && (!hayFotos || !hayMotivo)) {
-                msg.textContent = "Falta " + [!hayMotivo && "el motivo", !hayFotos && "al menos una foto"]
-                    .filter(Boolean).join(" y ") + ".";
+                setText(msg, "Falta " + [!hayMotivo && "el motivo", !hayFotos && "al menos una foto"]
+                    .filter(Boolean).join(" y ") + ".");
             }
         }
 
@@ -54,31 +63,31 @@
                         return;  // llegó tarde: ya hay otra consulta en curso
                     }
                     if (data.error) {
-                        nuevo.textContent = "—";
-                        dif.textContent = "—";
-                        msg.textContent = data.mensaje || "No se pudo calcular.";
+                        setText(nuevo, "—");
+                        setText(dif, "—");
+                        setText(msg, data.mensaje || "No se pudo calcular.");
                         return;
                     }
                     valido = true;
                     if (data.valoracion) {
-                        nuevo.textContent = "Valoración técnica";
-                        dif.textContent = "Oficina cotiza";
-                        msg.textContent = "Esa medida no tiene precio de lista: oficina cotiza la diferencia. Haga solo lo pagado.";
+                        setText(nuevo, "Valoración técnica");
+                        setText(dif, "Oficina cotiza");
+                        setText(msg, "Esa medida no tiene precio de lista: oficina cotiza la diferencia. Haga solo lo pagado.");
                     } else {
-                        nuevo.textContent = money(data.nuevo);
-                        dif.textContent = money(Math.max(data.diferencia, 0));
+                        setText(nuevo, money(data.nuevo));
+                        setText(dif, money(Math.max(data.diferencia, 0)));
                         if (data.diferencia > 0) {
-                            msg.textContent = "Al aplicar se genera el cobro de la diferencia.";
+                            setText(msg, "Al aplicar se genera el cobro de la diferencia.");
                         } else if (data.diferencia < 0) {
-                            msg.textContent = "La casa es más chica: no se devuelve nada y oficina queda avisada.";
+                            setText(msg, "La casa es más chica: no se devuelve nada y oficina queda avisada.");
                         } else {
-                            msg.textContent = "Mismo precio: no hay nada que cobrar.";
+                            setText(msg, "Mismo precio: no hay nada que cobrar.");
                         }
                     }
                     refreshSubmit();
                 })
                 .catch(function () {
-                    msg.textContent = "Sin conexión. Intente de nuevo.";
+                    setText(msg, "Sin conexión. Intente de nuevo.");
                 });
         }
 
@@ -115,7 +124,11 @@
             motivo.addEventListener("input", refreshSubmit);
         }
         // La cámara entrega las fotos al input oculto sin disparar siempre `change`.
-        new MutationObserver(refreshSubmit).observe(form, {childList: true, subtree: true});
+        // Se mira solo el bloque de la cámara (sus miniaturas), no todo el formulario.
+        var camara = form.querySelector(".o_visar_capture");
+        if (camara) {
+            new MutationObserver(refreshSubmit).observe(camara, {childList: true, subtree: true});
+        }
         cotizar();
     }
 
