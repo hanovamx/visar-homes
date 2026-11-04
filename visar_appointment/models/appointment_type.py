@@ -1092,7 +1092,16 @@ class AppointmentType(models.Model):
 
     # Construye las líneas de venta con variante por zona, descuento combo e incluidos al 100%.
     @api.model
-    def _visar_build_sale_lines(self, items, zone, plagas=None, extra_addons=None):
+    def _visar_build_sale_lines(self, items, zone, plagas=None, extra_addons=None,
+                                dimensiones_previas=None):
+        """Líneas de venta de la canasta `items` en `zone`.
+
+        `dimensiones_previas`: dimensiones que el cliente YA compró en el mismo
+        pedido y que no se vuelven a cobrar. Solo cuentan para el combo: es el caso
+        del técnico que agrega el corte de pasto en una visita de fumigación ya
+        pagada (4-nov-2026), donde la canasta nueva trae solo el corte y la regla
+        nunca veía la fumigación.
+        """
         if any(item.get('is_valuation') for item in items):
             valuation_tmpl = self.env['product.template']._visar_get_valuation_template()
             variant = valuation_tmpl.product_variant_id if valuation_tmpl else False
@@ -1103,6 +1112,7 @@ class AppointmentType(models.Model):
         ComboRule = self.env['visar.combo.rule'].sudo()
         combo_rules = ComboRule.search([('active', '=', True)], order='sequence')
         dimension_ids = [item['dimension_id'] for item in items if item.get('dimension_id')]
+        dimension_ids += [d for d in (dimensiones_previas or []) if d not in dimension_ids]
 
         lines = []
         # Fusiona interior + exterior del mismo producto en UNA línea (variante combinada

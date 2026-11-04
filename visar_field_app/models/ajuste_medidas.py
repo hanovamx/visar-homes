@@ -137,7 +137,7 @@ class ProjectTask(models.Model):
             return False
         return bool(self._visar_ajuste_dimensiones())
 
-    def _visar_ajuste_dimensiones(self):
+    def _visar_ajuste_dimensiones(self, lineas=None):
         """[(dimensión, tramos ofrecibles, tramo pagado o vacío)] del servicio pagado.
 
         El tramo pagado se lee de la VARIANTE de la línea: cada eje de tamaño es un
@@ -146,7 +146,7 @@ class ProjectTask(models.Model):
         dimensión sale con el tramo vacío y la app la ofrece como «No contratado».
         """
         self.ensure_one()
-        pagadas = self._visar_ajuste_lineas_pagadas()
+        pagadas = (lineas if lineas is not None else self._visar_ajuste_lineas_pagadas())
         plantillas = pagadas.mapped('product_id.product_tmpl_id')
         if not plantillas:
             return []

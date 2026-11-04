@@ -60,11 +60,12 @@ class TestAjusteMedidas(TransactionCase):
             self.skipTest("la base no tiene el tabulador de fumigación interior + exterior")
 
     # ------------------------------------------------------------------
-    def _visita(self, tramo_interior=None):
+    def _visita(self, tramo_interior=None, con_interior=True):
         """Pedido pagado con fumigación del tramo dado; devuelve su servicio."""
         tramo_interior = tramo_interior or self.tramos_int[0]
-        items = [self.interior._visar_quote_item(max(tramo_interior.m2_min, 1))[0],
-                 self.exterior._visar_quote_item(max(self.tramo_ext.m2_min, 1))[0]]
+        items = [self.exterior._visar_quote_item(max(self.tramo_ext.m2_min, 1))[0]]
+        if con_interior:
+            items.insert(0, self.interior._visar_quote_item(max(tramo_interior.m2_min, 1))[0])
         Motor = self.env['appointment.type'].sudo()
         lineas = Motor._visar_build_sale_lines(items, self.zona)
         pedido = self.env['sale.order'].create({
@@ -77,6 +78,20 @@ class TestAjusteMedidas(TransactionCase):
                     self.env['product.product'].browse(v['product_id']), self.zona),
                 'discount': v.get('discount') or 0.0,
             }) for v in lineas if not Motor._visar_skip_cart_line(v, self.zona)]})
+        if not con_interior:
+            # Como en producción: la fumigación solo exterior es la variante con
+            # interior «0». El catálogo de prueba viejo la cotiza con «1-250».
+            eje = self.plantilla._visar_axis_attribute('interior')
+            linea = pedido.order_line[:1]
+            otros = linea.product_id.product_template_attribute_value_ids.filtered(
+                lambda v: v.attribute_id != eje)
+            cero = self.plantilla.product_variant_ids.filtered(
+                lambda v: otros <= v.product_template_attribute_value_ids
+                and v.product_template_attribute_value_ids.filtered(
+                    lambda x: x.attribute_id == eje).name == '0')[:1]
+            if not cero:
+                self.skipTest("el catálogo no tiene la variante «interior 0»")
+            linea.product_id = cero
         pedido.action_confirm()
         tarea = pedido.tasks_ids[:1]
         if not tarea:
@@ -177,3 +192,44 @@ class TestAjusteMedidas(TransactionCase):
         Param.set_param(PARAM_AJUSTE_COMISION, True)
         lineas = self.env['sale.order.line'].search(regla._visar_dominio_lineas(self.tecnico))
         self.assertEqual(len(lineas.filtered('visar_ajuste_medidas')), 2)
+
+    # ------------------------------------------------------------------
+    # Combo: el corte agregado en sitio a una fumigación ya pagada (4-nov-2026)
+    # ------------------------------------------------------------------
+    def _combo_y_corte(self):
+        Regla = self.env['visar.combo.rule']
+        regla = Regla.search([('active', '=', True)]).filtered(
+            lambda r: {self.interior.id, self.exterior.id} <= set(r.required_dimension_ids.ids)
+            and r.discount_dimension_ids - self.interior - self.exterior)[:1]
+        if not regla:
+            self.skipTest("sin regla de combo fumigación + otra dimensión")
+        corte = (regla.discount_dimension_ids - self.interior - self.exterior)[:1]
+        plantilla = self.env['product.template']._visar_get_service_template_for_dimension(corte)
+        plantilla.write({'visar_upsell_ok': True, 'sale_ok': True})
+        tramo = plantilla._visar_tiers_for_dimension(corte).filtered(
+            lambda t: not t.is_valuation and not t.is_free).sorted('m2_min')[:1]
+        return regla, corte, max(tramo.m2_min, 1)
+
+    def _corte_vendido(self, tarea, corte, m2):
+        ok, error = tarea._visar_upsell_add_service(self.tecnico, {corte.id: m2})
+        self.assertTrue(ok, error)
+        return tarea._visar_upsell_lines().filtered(
+            lambda l: not l.visar_valuation_credit)
+
+    def test_combo_cuenta_la_fumigacion_ya_pagada(self):
+        regla, corte, m2 = self._combo_y_corte()
+        tarea = self._visita()
+        self.assertEqual(set(tarea._visar_upsell_dimensiones_previas()),
+                         {self.interior.id, self.exterior.id})
+        linea = self._corte_vendido(tarea, corte, m2)
+        self.assertEqual(len(linea), 1, "la fumigación no se vuelve a cobrar")
+        self.assertAlmostEqual(linea.discount, regla._visar_discount_percent(), 2,
+                               msg="el corte lleva el descuento del combo")
+
+    def test_combo_solo_exterior_no_aplica(self):
+        """La regla exige interior + exterior, igual que en el web."""
+        _regla, corte, m2 = self._combo_y_corte()
+        tarea = self._visita(con_interior=False)
+        self.assertNotIn(self.interior.id, tarea._visar_upsell_dimensiones_previas())
+        linea = self._corte_vendido(tarea, corte, m2)
+        self.assertFalse(linea.discount)

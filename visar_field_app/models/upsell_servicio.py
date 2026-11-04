@@ -175,7 +175,11 @@ class ProjectTask(models.Model):
             return False, 'sin_m2'
 
         Motor = self.env['appointment.type'].sudo()
-        sale_lines = Motor._visar_build_sale_lines(items, zone)
+        # Lo que el cliente ya compró en esta visita cuenta para el combo: sin esto
+        # el corte de pasto agregado a una fumigación pagada nunca llevaba su
+        # descuento (S00011, 4-nov-2026). La regla sigue igual que en el web.
+        sale_lines = Motor._visar_build_sale_lines(
+            items, zone, dimensiones_previas=self._visar_upsell_dimensiones_previas())
         sale_lines = [vals for vals in sale_lines or []
                       if not Motor._visar_skip_cart_line(vals, zone)]
         if not sale_lines:
@@ -210,6 +214,30 @@ class ProjectTask(models.Model):
             self._visar_upsell_log(order, employee, product.id, quantity)
         self._visar_upsell_sync_valuation_credit()
         return True, None
+
+    def _visar_upsell_dimensiones_previas(self):
+        """Dimensiones que el cliente ya tiene en esta visita: las del servicio que
+        compró y las de servicios vendidos aquí en rondas anteriores.
+
+        Se leen de la VARIANTE de cada línea (`_visar_ajuste_dimensiones`): una
+        fumigación «solo exterior» trae interior «0» y no cuenta como interior, igual
+        que en el web.
+        """
+        self.ensure_one()
+        lineas = (self.sudo().visar_sale_line_ids or self.sudo().sale_line_id) \
+            | self._visar_upsell_lines()
+        lineas = lineas.filtered(
+            lambda l: not l.display_type and l.product_uom_qty > 0
+            and not l.visar_valuation_credit
+            and l.product_id.product_tmpl_id.visar_is_service
+            and not l.product_id.product_tmpl_id.visar_is_valuation
+            and l.product_id.product_tmpl_id.visar_tier_ids)
+        dimensiones = set()
+        for linea in lineas:
+            for dimension, _tramos, pagado in self._visar_ajuste_dimensiones(linea):
+                if pagado:
+                    dimensiones.add(dimension.id)
+        return sorted(dimensiones)
 
     # ------------------------------------------------------------------
     # Descuento de la visita de valoración
