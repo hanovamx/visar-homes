@@ -1242,6 +1242,28 @@ class AppointmentType(models.Model):
         return zone, master, plans
 
     @api.model
+    def _visar_wizard_contado_label(self, booking):
+        """Lo que cuesta la reserva como servicio suelto, ya formateado, o ''.
+
+        La misma cotización de contado contra la que se mide el ahorro de cada
+        plan (`_visar_wizard_poliza_offers`), con los extras que el cliente
+        aceptó: es lo que pagaría hoy si elige «Un solo servicio».
+        """
+        booking = booking or {}
+        context = self._visar_wizard_poliza_context(booking)
+        if not context:
+            return ''
+        zone, master, _plans = context
+        quote = master._visar_quote_booking(
+            booking.get('items') or [], zone, plagas=self._visar_wizard_plagas(booking),
+            extra_addons=booking.get('extras_accepted'))
+        if not quote or not quote.get('total'):
+            return ''
+        currency = (self.env['res.currency'].browse(quote.get('currency_id')).exists()
+                    or self.env.company.currency_id)
+        return format_amount(self.env, quote['total'], currency)
+
+    @api.model
     def _visar_wizard_poliza_offers(self, booking):
         """Ofertas de póliza (una por plan ofrecible). Cotiza de verdad."""
         context = self._visar_wizard_poliza_context(booking)
@@ -2696,10 +2718,15 @@ class AppointmentType(models.Model):
                 # -el mismo bucle que obligo a crear la fila-. Con la bandera,
                 # el copy se edita aqui sin tocar el runtime.
                 'label': _('Un solo servicio'),
-                # La segunda frase es la misma de la cita web (6-oct-2026).
-                'description': _('Pago único, no incluye visitas de refuerzo '
-                                 'ni garantía. En caso de que se requieran '
-                                 'visitas extras, se cobrarán por separado.'),
+                # La segunda frase es la misma de la cita web (6-oct-2026). Desde
+                # el 5-nov-2026 empieza por el PRECIO: las suscripciones decían
+                # cuánto ahorran frente a algo que el cliente nunca veía si no
+                # hubo productos adicionales que ofrecer antes.
+                'description': ' · '.join(p for p in (
+                    self._visar_wizard_contado_label(booking),
+                    _('Pago único, no incluye visitas de refuerzo '
+                      'ni garantía. En caso de que se requieran '
+                      'visitas extras, se cobrarán por separado.')) if p),
                 'salida': True,
                 # Vacío en el código, y esa es la gracia: `extras` necesitó un
                 # despliegue para aprender "nel" y esta fila puede aprenderlo

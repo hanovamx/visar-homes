@@ -71,6 +71,36 @@ class TestAhorroDePoliza(TransactionCase):
                           return_value=[]):
             return {o['name']: o for o in self.Flow._visar_wizard_poliza_offers(booking)}
 
+    def test_un_solo_servicio_dice_su_precio(self):
+        """5-nov-2026: «Ahorras $30 al mes» se medía contra un precio que el
+        cliente no veía. La fila del servicio suelto empieza por él."""
+        from odoo.tools import format_amount
+        planes = self.mensual + self.semestral + self.anual
+        zone = self.env['visar.zone'].search([], limit=1)
+        master = self.Flow._visar_get_master_appointment_type() or self.Flow.browse()
+        moneda = self.env.company.currency_id
+
+        def fake_quote(self_apt, items, zona, plan=None, **kw):
+            total = 570.0 * plan._visar_visits_per_period() if plan else 600.0
+            return {'lines': [], 'total': total, 'currency_id': moneda.id,
+                    'zone_name': 'Z', 'plan': plan or False, 'periods': 1,
+                    'recurring_total': total, 'addons_total': 0.0,
+                    'upfront_service_total': total, 'upfront_total': total}
+
+        booking = {'mode': 'wizard', 'zone_id': zone.id, 'items': [{'x': 1}],
+                   'master_appointment_type_id': master.id, 'selections': {}}
+        with patch.object(type(self.Flow), '_visar_wizard_poliza_context',
+                          return_value=(zone, master, planes)), \
+             patch.object(type(self.Flow), '_visar_quote_booking', fake_quote), \
+             patch.object(type(self.Flow), '_visar_wizard_plagas', return_value=[]):
+            paso = self.Flow.with_context(lang='es_MX')._visar_wizard_step_options(
+                booking, 'poliza')
+        suelto = paso['options'][-1]
+        self.assertEqual(suelto['label'], "Un solo servicio")
+        self.assertTrue(suelto['description'].startswith(
+            format_amount(self.env, 600.0, moneda) + ' · '), suelto['description'])
+        self.assertIn('no incluye visitas de refuerzo', suelto['description'])
+
     def test_todos_los_planes_muestran_su_ahorro(self):
         """690 de contado contra 655.50 por visita: 5% en las tres, y en pesos
         proporcional a las visitas que cubre el periodo."""
