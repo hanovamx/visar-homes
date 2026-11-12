@@ -882,21 +882,16 @@ class VisarAgentTools(models.AbstractModel):
           mostrarle a un cliente los servicios de OTRA persona. Ante duda, no
           revelar (se canaliza a un asesor). Se registra en el log para el staff.
         """
-        key = self.env['res.partner']._visar_phone_nat10_value(phone)
-        if not key:
-            return self.env['res.partner'].browse()
-
-        partners = self.env['res.partner'].sudo().search(
-            [('visar_phone_nat10', '=', key)])
-        if len(partners) != 1:
-            if len(partners) > 1:
-                _logger.info(
-                    "agent_customer_services: el telefono terminado en %s coincide "
-                    "con %d partners; se omite por ambiguedad (posible dato "
-                    "duplicado). Ante duda no se revelan servicios.",
-                    key[-4:], len(partners))
-            return self.env['res.partner'].browse()
-        return partners
+        # El cliente y sus direcciones cuentan como uno (12-nov-2026); dos
+        # clientes distintos siguen siendo ambiguos (`_visar_cliente_por_telefono`).
+        partner, ambiguo = self.env['res.partner']._visar_cliente_por_telefono(phone)
+        if ambiguo:
+            _logger.info(
+                "agent_customer_services: el telefono terminado en %s es de varios "
+                "clientes; se omite por ambiguedad. Ante duda no se revelan "
+                "servicios.", (self.env['res.partner']._visar_phone_nat10_value(phone)
+                               or '')[-4:])
+        return partner
 
     @api.model
     def _agent_service_date(self, line):
@@ -1152,6 +1147,14 @@ class VisarAgentTools(models.AbstractModel):
         return nombre or "Visita"
 
     @api.model
+    def _agent_partner_orders(self, partner):
+        """Ventas confirmadas del cliente y de sus direcciones (12-nov-2026): una
+        venta hecha a nombre de la dirección de entrega también es suya."""
+        return self.env['sale.order'].with_context(lang=SERVICES_LANG).sudo().search([
+            ('partner_id', 'child_of', partner.commercial_partner_id.id),
+            ('state', 'in', CONFIRMED_ORDER_STATES),
+        ])
+
     def _agent_partner_services(self, partner, scope=DEFAULT_SERVICE_SCOPE):
         """Servicios del cliente segun `scope`, ordenados por fecha.
 
@@ -1169,10 +1172,7 @@ class VisarAgentTools(models.AbstractModel):
         # El usuario RPC puede estar en en_US; se leen las ordenes (y todo lo que
         # cuelga: nombre del servicio, etapa FSM) en es_MX para que el cliente no
         # reciba mensajes mezclados. La fecha ya fija su idioma aparte.
-        orders = self.env['sale.order'].with_context(lang=SERVICES_LANG).sudo().search([
-            ('partner_id', '=', partner.id),
-            ('state', 'in', CONFIRMED_ORDER_STATES),
-        ])
+        orders = self._agent_partner_orders(partner)
 
         entries = []
         for line in orders.mapped('order_line'):
@@ -2656,11 +2656,11 @@ class VisarAgentTools(models.AbstractModel):
         key = Partner._visar_phone_nat10_value(phone)
         if not key:
             return Partner.browse(), 'phone_invalid'
-        matches = Partner.search([('visar_phone_nat10', '=', key)])
-        if len(matches) > 1:
+        matches, ambiguo = Partner._visar_cliente_por_telefono(phone)
+        if ambiguo:
             _logger.info(
-                "agent_prepare_booking: el telefono terminado en %s coincide con "
-                "%d partners; no se reserva por ambiguedad.", key[-4:], len(matches))
+                "agent_prepare_booking: el telefono terminado en %s es de varios "
+                "clientes; no se reserva por ambiguedad.", key[-4:])
             return Partner.browse(), 'phone_ambiguous'
         if matches:
             return matches, None
@@ -2733,8 +2733,8 @@ class VisarAgentTools(models.AbstractModel):
         key = Partner._visar_phone_nat10_value(payload.get('phone'))
         if not key:
             return no('phone_invalid')
-        matches = Partner.search([('visar_phone_nat10', '=', key)])
-        if len(matches) > 1:
+        matches, ambiguo = Partner._visar_cliente_por_telefono(payload.get('phone'))
+        if ambiguo:
             return no('phone_ambiguous')
         partner_created = False
         partner = matches

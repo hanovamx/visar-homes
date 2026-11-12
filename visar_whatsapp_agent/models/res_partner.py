@@ -80,3 +80,34 @@ class ResPartner(models.Model):
                 "Chat sin reserva: %d fichas archivadas (ids %s)",
                 len(archivadas), archivadas.ids)
         return len(archivadas)
+
+    # ------------------------------------------------------------------
+    # Un número, un cliente (12-nov-2026)
+    # ------------------------------------------------------------------
+    @api.model
+    def _visar_cliente_por_telefono(self, phone):
+        """(cliente, ambiguo) para un teléfono. Regla ÚNICA del agente.
+
+        Oficina suele crear la dirección de entrega con el mismo teléfono que el
+        cliente, y la regla de «varios contactos con ese número = no se revela
+        nada» dejaba al agente ciego para ese cliente: «No encontré servicios
+        asociados a este número» (Luis Ángel, 12-nov-2026). El cliente y sus
+        direcciones son UNA persona: si todas las coincidencias cuelgan del mismo
+        cliente (`commercial_partner_id`), se devuelve el cliente. La ambigüedad
+        sigue siendo real —y no se revela nada— cuando el número está en dos
+        clientes distintos.
+        """
+        Partner = self.sudo()
+        vacio = Partner.browse()
+        clave = Partner._visar_phone_nat10_value(phone)
+        if not clave:
+            return vacio, False
+        encontrados = Partner.search([('visar_phone_nat10', '=', clave)])
+        if not encontrados:
+            return vacio, False
+        if len(encontrados) == 1:
+            return encontrados, False
+        clientes = encontrados.mapped('commercial_partner_id')
+        if len(clientes) == 1 and clientes.active:
+            return clientes, False
+        return vacio, True

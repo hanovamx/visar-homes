@@ -46,6 +46,46 @@ class TestAgentFindPartner(TransactionCase):
         found = self.Tools._agent_find_partner(self.WA)
         self.assertFalse(found)
 
+    def test_cliente_y_su_direccion_son_uno(self):
+        # 12-nov-2026: oficina crea la dirección de entrega con el mismo teléfono.
+        # El cliente y su dirección son una persona: se devuelve el cliente.
+        cliente = self.env['res.partner'].create({
+            'name': 'Luis prueba', 'phone': self.RAW})
+        self.env['res.partner'].create({
+            'name': 'Casa', 'type': 'delivery', 'parent_id': cliente.id,
+            'phone': self.E164})
+        self.assertEqual(self.Tools._agent_find_partner(self.WA), cliente)
+        self.assertEqual(self.Tools._agent_booking_partner(self.WA)[0], cliente)
+        self.assertEqual(
+            self.env['visar.agent.contacto']._visar_resolver_partner(
+                self.WA[-10:]), (cliente, False))
+
+    def test_solo_la_direccion_tiene_el_numero(self):
+        cliente = self.env['res.partner'].create({'name': 'Sin telefono'})
+        self.env['res.partner'].create({
+            'name': 'Casa', 'type': 'delivery', 'parent_id': cliente.id,
+            'phone': self.RAW})
+        # Con un solo contacto se devuelve ese contacto, como siempre; lo que
+        # cambia es que sus servicios se buscan en todo el cliente.
+        encontrado = self.Tools._agent_find_partner(self.WA)
+        self.assertEqual(encontrado.commercial_partner_id, cliente)
+
+    def test_venta_a_nombre_de_la_direccion_sale_en_sus_servicios(self):
+        cliente = self.env['res.partner'].create({
+            'name': 'Luis prueba', 'phone': self.RAW})
+        casa = self.env['res.partner'].create({
+            'name': 'Casa', 'type': 'delivery', 'parent_id': cliente.id})
+        producto = self.env['product.product'].create({
+            'name': 'Servicio prueba', 'type': 'service', 'list_price': 100.0})
+        pedido = self.env['sale.order'].create({
+            'partner_id': casa.id,
+            'pricelist_id': self.env['product.pricelist'].create(
+                {'name': 'Lista prueba agente'}).id,
+            'order_line': [(0, 0, {'product_id': producto.id})]})
+        pedido.action_confirm()
+        self.assertIn(pedido, self.Tools._agent_partner_orders(cliente),
+                      "la venta de la dirección es del cliente")
+
     def test_unknown_number_empty(self):
         # Número desconocido (no se crea ningún partner con él) -> vacío.
         found = self.Tools._agent_find_partner('5219990007777')

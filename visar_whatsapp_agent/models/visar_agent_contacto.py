@@ -192,12 +192,7 @@ class VisarAgentContacto(models.Model):
         Partner = self.env['res.partner'].sudo()
         if not nat:
             return Partner.browse(), False
-        encontrados = Partner.search([('visar_phone_nat10', '=', nat)])
-        if len(encontrados) == 1:
-            return encontrados, False
-        if len(encontrados) > 1:
-            return Partner.browse(), True
-        return Partner.browse(), False
+        return Partner._visar_cliente_por_telefono(nat)
 
     # ------------------------------------------------------------------
     # Enlace tardio
