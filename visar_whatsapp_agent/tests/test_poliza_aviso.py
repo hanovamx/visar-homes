@@ -329,6 +329,25 @@ class TestPolizaAviso(TransactionCase):
         cita._visar_poliza_movida_por_cliente()
         self.assertEqual(visita.visar_visit_recordatorio_hito, 0)
 
+    def test_si_oficina_la_mueve_el_recordatorio_sale_otra_vez(self):
+        """«Agendar» mueve la cita callado: el recordatorio ya enviado era del
+        horario viejo, así que vuelve a salir con el nuevo."""
+        visita, cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_preagenda_confirmada = True
+        self._recordar('10')
+        self.Task._visar_cron_poliza_avisos()
+        self.assertEqual(len(self._mensajes(visita)), 1)
+        self.Task._visar_cron_poliza_avisos()
+        self.assertEqual(len(self._mensajes(visita)), 1, "mismo horario: no repite")
+        cita.sudo().with_context(visar_sin_aviso_ruta=True).write({
+            'start': cita.start + relativedelta(hours=2),
+            'stop': cita.stop + relativedelta(hours=2)})
+        visita.visar_visit_aviso_ultimo_at = False
+        self.Task._visar_cron_poliza_avisos()
+        mensajes = self._mensajes(visita).sorted('id')
+        self.assertEqual(len(mensajes), 2)
+        self.assertNotEqual(mensajes[0].fallback_text, mensajes[1].fallback_text)
+
     def test_la_lista_de_servicios_marca_la_escalera(self):
         visita, cita = self._visita_preagendada()
         res = self.env['visar.agent.tools'].agent_customer_services(

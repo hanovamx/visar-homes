@@ -239,6 +239,11 @@ class ProjectTask(models.Model):
         string="Último recordatorio (días antes)", readonly=True, copy=False,
         help="Se borra cuando el cliente mueve la visita: el recordatorio vuelve "
              "a salir para la fecha nueva.")
+    visar_visit_recordatorio_para = fields.Datetime(
+        string="Recordatorio enviado para", readonly=True, copy=False,
+        help="Inicio de la cita para el que salió el último recordatorio. Si la "
+             "cita se mueve —la mueva quien la mueva, también oficina con "
+             "«Agendar»—, el recordatorio vuelve a salir para el horario nuevo.")
 
     # ------------------------------------------------------------------
     # El cron
@@ -428,13 +433,17 @@ class ProjectTask(models.Model):
         hito = self._visar_poliza_hito((inicio_local.date() - hoy).days, dias)
         if hito is None:
             return False
-        if self.visar_visit_recordatorio_hito and hito >= self.visar_visit_recordatorio_hito:
+        previo = self.visar_visit_recordatorio_hito
+        if self.visar_visit_recordatorio_para != cita.start:
+            previo = 0  # la cita se movió: lo enviado era de otro horario
+        if previo and hito >= previo:
             return False  # ese hito (o uno anterior) ya salió
         cliente = self.visar_subscription_order_id.partner_id
         telefono = self._visar_poliza_telefono(cliente)
         # Sin teléfono no hay a quién recordarle; no se abre actividad: la visita
         # ya está confirmada y oficina no tiene nada que decidir.
-        self.write({'visar_visit_recordatorio_hito': hito})
+        self.write({'visar_visit_recordatorio_hito': hito,
+                    'visar_visit_recordatorio_para': cita.start})
         if not telefono:
             return False
         nombre = (cliente.name or '').split()[0] if cliente.name else ''
