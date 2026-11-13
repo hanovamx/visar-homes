@@ -2094,8 +2094,8 @@ class VisarAgentTools(models.AbstractModel):
     def agent_reschedule_days(self, payload):
         """Dias con hueco para mover una cita. `payload` = {phone, event_id, ventana?}.
 
-        `ventana` (dias): solo los dias a esa distancia de la fecha ACTUAL de la
-        cita, a cada lado. Es la escalera de las visitas de suscripcion (±3 y
+        `ventana` (dias HABILES): solo los dias a esa distancia de la fecha ACTUAL
+        de la cita, a cada lado; el domingo no cuenta. Es la escalera de las visitas de suscripcion (±3 y
         luego ±7, decision del 1-oct-2026): el calendario de visitas no deriva
         porque el que no puede la mueve lo minimo.
         """
@@ -2121,9 +2121,10 @@ class VisarAgentTools(models.AbstractModel):
             # Se filtra el ARBOL antes de ordenar y recortar: recortar primero
             # dejaria fuera dias de la ventana que no entraron en los 10.
             ancla = pytz.utc.localize(event.start).astimezone(tz_info).date()
+            habiles = self._agent_dias_habiles(apt_type)
             months = self._agent_months_window(
-                months, ancla - relativedelta(days=ventana),
-                ancla + relativedelta(days=ventana))
+                months, self._agent_correr_habiles(ancla, -ventana, habiles),
+                self._agent_correr_habiles(ancla, ventana, habiles))
         days = self._agent_rank_days(months)
         return {
             'days': days,
@@ -2133,6 +2134,32 @@ class VisarAgentTools(models.AbstractModel):
             'message': ("%d dia(s) con disponibilidad." % len(days) if days
                         else "No hay horarios disponibles por ahora."),
         }
+
+    @api.model
+    def _agent_dias_habiles(self, apt_type):
+        """Los días de la semana en que Visar trabaja (1 = lunes ... 7 = domingo).
+
+        Salen de los horarios del tipo de cita, que es donde oficina ya los
+        configura: hoy lunes a sábado. Sin horarios, lunes a sábado.
+        """
+        dias = {int(d) for d in apt_type.sudo().slot_ids.mapped('weekday') if d}
+        return dias or {1, 2, 3, 4, 5, 6}
+
+    @api.model
+    def _agent_correr_habiles(self, fecha, n, habiles):
+        """`fecha` movida `n` días HÁBILES (negativo = hacia atrás).
+
+        La escalera de las visitas de suscripción (±3, ±7) cuenta días que Visar
+        trabaja: «3 días» desde un sábado son hasta el miércoles, no el martes,
+        porque el domingo no cuenta (pedido de Visar, 13-nov-2026).
+        """
+        paso = 1 if n >= 0 else -1
+        faltan = abs(n)
+        while faltan:
+            fecha += relativedelta(days=paso)
+            if fecha.isoweekday() in habiles:
+                faltan -= 1
+        return fecha
 
     @api.model
     def _agent_months_window(self, months, desde, hasta):
@@ -2226,6 +2253,7 @@ class VisarAgentTools(models.AbstractModel):
         if not ok:
             return {'ok': False, 'reason': motivo,
                     'message': "No se pudo mover la cita."}
+        event._visar_poliza_movida_por_cliente()
 
         tz_name = self.env['ir.config_parameter'].sudo().get_param(
             TZ_PARAM, DEFAULT_TZ)

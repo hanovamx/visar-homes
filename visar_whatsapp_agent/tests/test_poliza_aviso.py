@@ -233,9 +233,101 @@ class TestPolizaAviso(TransactionCase):
             {'phone': self.WA, 'event_id': cita.id, 'ventana': 3})
         self.assertFalse(res.get('blocked'), res)
         ancla = pytz.utc.localize(cita.start).astimezone(self.tz).date()
+        Tools = self.env['visar.agent.tools']
+        habiles = Tools._agent_dias_habiles(self.maestro)
+        desde = Tools._agent_correr_habiles(ancla, -3, habiles)
+        hasta = Tools._agent_correr_habiles(ancla, 3, habiles)
         for dia in res['days']:
-            distancia = abs((fields.Date.to_date(dia['date']) - ancla).days)
-            self.assertLessEqual(distancia, 3, dia)
+            self.assertTrue(desde <= fields.Date.to_date(dia['date']) <= hasta, dia)
+
+    def test_la_escalera_cuenta_dias_habiles(self):
+        """El domingo no cuenta (13-nov-2026): 3 días desde un sábado = miércoles."""
+        from datetime import date
+        correr = self.env['visar.agent.tools']._agent_correr_habiles
+        lun_a_sab = {1, 2, 3, 4, 5, 6}
+        sabado = date(2026, 11, 14)
+        self.assertEqual(correr(sabado, 3, lun_a_sab), date(2026, 11, 18))
+        self.assertEqual(correr(sabado, -3, lun_a_sab), date(2026, 11, 11))
+        lunes = date(2026, 11, 16)
+        self.assertEqual(correr(lunes, -3, lun_a_sab), date(2026, 11, 12))
+        self.assertEqual(correr(lunes, 7, lun_a_sab), date(2026, 11, 24))
+        self.assertEqual(correr(lunes, 0, lun_a_sab), lunes)
+
+    def test_los_dias_habiles_salen_de_los_horarios(self):
+        dias = self.env['visar.agent.tools']._agent_dias_habiles(self.maestro)
+        esperados = {int(d) for d in self.maestro.slot_ids.mapped('weekday')}
+        self.assertEqual(dias, esperados or {1, 2, 3, 4, 5, 6})
+
+    # --- Movida por el cliente = confirmada ------------------------------------
+
+    def test_movida_por_whatsapp_cuenta_como_confirmada(self):
+        visita, cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_aviso_at = fields.Datetime.now()
+        with patch.object(type(cita), '_visar_reschedule',
+                          return_value=(True, None)):
+            res = self.env['visar.agent.tools'].agent_reschedule_confirm({
+                'phone': self.WA, 'event_id': cita.id,
+                'start': fields.Datetime.to_string(cita.start),
+                'stop': fields.Datetime.to_string(cita.stop)})
+        self.assertTrue(res['ok'], res)
+        self.assertTrue(visita.visar_visit_preagenda_confirmada)
+        self.assertEqual(visita.visar_visit_respuesta, 'movio')
+        # Ya no se le pregunta «¿te queda bien?» por la fecha que eligió.
+        self.Task._visar_cron_poliza_avisos()
+        self.assertFalse(self._mensajes(visita).filtered(
+            lambda m: m.template_key == 'poliza_confirmar'))
+
+    # --- El recordatorio de la visita -----------------------------------------
+
+    def _recordar(self, dias='10'):
+        params = self.env['ir.config_parameter'].sudo()
+        params.set_param('visar.poliza.recordatorio_enabled', 'True')
+        params.set_param('visar.poliza.recordatorio_dias', dias)
+
+    def test_recordatorio_a_quien_ya_sabe_su_fecha(self):
+        visita, cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_preagenda_confirmada = True
+        self._recordar('10')
+        for _ in range(3):
+            self.Task._visar_cron_poliza_avisos()
+        mensajes = self._mensajes(visita)
+        self.assertEqual(len(mensajes), 1)
+        self.assertEqual(mensajes.template_key, 'poliza_recordatorio')
+        self.assertEqual(mensajes.hito, 10)
+        self.assertEqual(mensajes._visar_wa_endpoint('poliza_recordatorio'),
+                         '/internal/send-notification')
+        self.assertIn('te recordamos', mensajes.fallback_text)
+
+    def test_recordatorio_funciona_con_el_aviso_apagado(self):
+        visita, _cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_preagenda_confirmada = True
+        self.env['ir.config_parameter'].sudo().set_param(
+            'visar.poliza.aviso_enabled', 'False')
+        self._recordar('10')
+        self.Task._visar_cron_poliza_avisos()
+        self.assertEqual(self._mensajes(visita).template_key, 'poliza_recordatorio')
+
+    def test_sin_confirmar_no_recibe_recordatorio_sino_la_pregunta(self):
+        visita, _cita = self._visita_preagendada(dias=5)
+        self._recordar('10')
+        self.Task._visar_cron_poliza_avisos()
+        self.assertEqual(self._mensajes(visita).mapped('template_key'),
+                         ['poliza_confirmar'])
+
+    def test_recordatorio_apagado_no_manda(self):
+        visita, _cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_preagenda_confirmada = True
+        self.Task._visar_cron_poliza_avisos()
+        self.assertFalse(self._mensajes(visita))
+
+    def test_al_moverla_el_recordatorio_vuelve_a_salir(self):
+        visita, cita = self._visita_preagendada(dias=5)
+        visita.visar_visit_preagenda_confirmada = True
+        self._recordar('10')
+        self.Task._visar_cron_poliza_avisos()
+        self.assertEqual(visita.visar_visit_recordatorio_hito, 10)
+        cita._visar_poliza_movida_por_cliente()
+        self.assertEqual(visita.visar_visit_recordatorio_hito, 0)
 
     def test_la_lista_de_servicios_marca_la_escalera(self):
         visita, cita = self._visita_preagendada()

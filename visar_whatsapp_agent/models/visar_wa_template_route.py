@@ -110,6 +110,13 @@ ESPECIFICACION = {
                 "y «Quiero cambiarla» (el runtime manda sus payloads). Sale antes "
                 "de cada visita de suscripción pre-agendada (Ajustes → Visar).",
     },
+    'poliza_recordatorio': {
+        'label': "Visita de suscripción — recordatorio",
+        'variables': 2, 'header': 'none', 'quick_reply': 0,
+        'nota': "{{1}} nombre del cliente · {{2}} día y horario de la visita · "
+                "sin botones: no pregunta nada. Sale los días antes que diga "
+                "Ajustes → Visar a quien ya sabe la fecha de su visita.",
+    },
     'recordatorio_servicio': {
         'label': "Recordatorio de servicio (clientes sin suscripción)",
         'variables': 2, 'header': 'none', 'quick_reply': 1,

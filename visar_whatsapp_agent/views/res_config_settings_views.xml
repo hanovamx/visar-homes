@@ -12,17 +12,17 @@
             <xpath expr="//block[@name='visar_address_cp']" position="after">
                 <block title="Visitas de suscripción por WhatsApp" name="visar_poliza_aviso">
                     <setting string="Avisar por WhatsApp las visitas de suscripción"
-                             help="Antes de cada visita que el sistema pre-agendó, el cliente recibe la fecha con dos botones: «Sí, confirmo» y «Quiero cambiarla». Si quiere cambiarla, el agente le ofrece otros horarios ese mismo día, luego hasta 3 días antes o después, y luego hasta 7. Si no contesta, la visita se queda como está.">
+                             help="Antes de cada visita que el sistema pre-agendó, el cliente recibe la fecha con dos botones: «Sí, confirmo» y «Quiero cambiarla». Si quiere cambiarla, el agente le ofrece otros horarios ese mismo día, luego hasta 3 días hábiles antes o después, y luego hasta 7 (el domingo no cuenta). Si la mueve, cuenta como confirmada. Si no contesta, la visita se queda como está.">
                         <field name="visar_poliza_aviso_enabled"/>
                     </setting>
                     <setting string="Días antes de la visita"
-                             help="El primero es el aviso; los demás, recordatorios si no contestó. Separados por coma."
+                             help="El primero es el aviso; los demás lo repiten solo si no contestó. Si confirma o la mueve, ya no se le pregunta. Separados por coma."
                              invisible="not visar_poliza_aviso_enabled">
                         <field name="visar_poliza_aviso_dias" placeholder="14,7,2"/>
                     </setting>
                     <setting string="Horario de envío"
                              help="Hora local. Fuera de este horario no se manda nada; lo pendiente sale en cuanto vuelve a abrir."
-                             invisible="not visar_poliza_aviso_enabled">
+                             invisible="not visar_poliza_aviso_enabled and not visar_poliza_recordatorio_enabled">
                         <div class="d-flex gap-2 align-items-center">
                             <span>de las</span>
                             <field name="visar_poliza_aviso_hora_desde" class="oe_inline"/>
@@ -37,6 +37,15 @@
                         cambiarla»). Sin plantilla, el aviso solo llega a quien
                         escribió en las últimas 24 horas.
                     </div>
+                    <setting string="Recordar la visita"
+                             help="Para quien ya sabe su fecha: la confirmó, la movió, se la confirmó oficina o la agendó una persona. «Te recordamos tu visita del…», sin preguntar nada. Plantilla: «Visita de suscripción — recordatorio».">
+                        <field name="visar_poliza_recordatorio_enabled"/>
+                    </setting>
+                    <setting string="Días antes para recordarla"
+                             help="Separados por coma. Ej.: 1, o 3,1 para recordarla dos veces."
+                             invisible="not visar_poliza_recordatorio_enabled">
+                        <field name="visar_poliza_recordatorio_dias" placeholder="1"/>
+                    </setting>
                 </block>
                 <block title="Recordatorio de servicio" name="visar_recordatorio">
                     <setting string="Recordar a clientes sin suscripción"

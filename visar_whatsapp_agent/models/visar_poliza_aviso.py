@@ -12,8 +12,14 @@ día −7    el mismo aviso, si no contestó
 día −2    el mismo aviso, si no contestó; después no se insiste
 silencio  = la visita se queda como está (lo dice la plantilla)
 "Sí"      → la visita queda confirmada
-"Cambiar" → otros horarios ESE día → ±3 días → ±7 días → asesor
+"Cambiar" → otros horarios ESE día → ±3 días → ±7 días hábiles → asesor
+movida    = también confirmada: la fecha nueva la eligió el cliente
 ```
+
+**El recordatorio de la visita** (13-nov-2026) es otra cosa: no pregunta nada.
+Le llega a quien YA sabe su fecha —la confirmó, la movió, se la confirmó oficina o
+la agendó una persona— los días antes que diga Ajustes (1 por defecto): «te
+recordamos tu visita del…». Tiene su propio interruptor y su propia plantilla.
 
 Los días (14, 7, 2), la ventana de horas en que se manda y el interruptor viven en
 Ajustes → Visar. Nace **apagado**: encenderlo es mandar mensajes a clientes.
@@ -43,6 +49,12 @@ AVISO_HORA_DESDE_PARAM = 'visar.poliza.aviso_hora_desde'
 AVISO_HORA_DESDE_DEFAULT = 9
 AVISO_HORA_HASTA_PARAM = 'visar.poliza.aviso_hora_hasta'
 AVISO_HORA_HASTA_DEFAULT = 19
+RECORDATORIO_ENABLED_PARAM = 'visar.poliza.recordatorio_enabled'
+RECORDATORIO_DIAS_PARAM = 'visar.poliza.recordatorio_dias'
+RECORDATORIO_DIAS_DEFAULT = '1'
+
+CLAVE_AVISO = 'poliza_confirmar'
+CLAVE_RECORDATORIO = 'poliza_recordatorio'
 
 # Dos avisos de la misma visita nunca en menos de esto: una pre-agenda creada a
 # tres días de la visita entraría en el hito de 7 y al día siguiente en el de 2.
@@ -81,8 +93,8 @@ class ResConfigSettings(models.TransientModel):
         string="Días antes de la visita",
         config_parameter=AVISO_DIAS_PARAM,
         default=AVISO_DIAS_DEFAULT,
-        help="Separados por coma. El primero es el aviso; los demás, "
-             "recordatorios si el cliente no contestó. Ej.: 14,7,2")
+        help="Separados por coma. El primero es el aviso; los demás lo repiten "
+             "solo si el cliente no contestó. Ej.: 14,7,2")
     visar_poliza_aviso_hora_desde = fields.Integer(
         string="Mandar desde las",
         config_parameter=AVISO_HORA_DESDE_PARAM,
@@ -92,10 +104,32 @@ class ResConfigSettings(models.TransientModel):
         config_parameter=AVISO_HORA_HASTA_PARAM,
         default=AVISO_HORA_HASTA_DEFAULT)
 
+    visar_poliza_recordatorio_enabled = fields.Boolean(
+        string="Recordar la visita de suscripción",
+        config_parameter=RECORDATORIO_ENABLED_PARAM,
+        help="A quien ya sabe su fecha (la confirmó, la movió, se la confirmó "
+             "oficina o la agendó una persona) se le recuerda la visita unos días "
+             "antes. No pregunta nada.")
+    visar_poliza_recordatorio_dias = fields.Char(
+        string="Días antes para recordarla",
+        config_parameter=RECORDATORIO_DIAS_PARAM,
+        default=RECORDATORIO_DIAS_DEFAULT,
+        help="Separados por coma. Ej.: 1, o 3,1 para recordarla dos veces.")
+
     @api.constrains('visar_poliza_aviso_dias', 'visar_poliza_aviso_hora_desde',
-                    'visar_poliza_aviso_hora_hasta')
+                    'visar_poliza_aviso_hora_hasta', 'visar_poliza_recordatorio_dias')
     def _check_visar_poliza_aviso(self):
         for record in self:
+            try:
+                recordar = dias_de_aviso(record.visar_poliza_recordatorio_dias
+                                         or RECORDATORIO_DIAS_DEFAULT)
+            except ValueError:
+                raise ValidationError(_(
+                    "«Días antes para recordarla» son números enteros separados "
+                    "por coma, por ejemplo 1 o 3,1."))
+            if not recordar:
+                raise ValidationError(_(
+                    "«Días antes para recordarla» necesita al menos un día."))
             try:
                 dias = dias_de_aviso(record.visar_poliza_aviso_dias
                                      or AVISO_DIAS_DEFAULT)
@@ -132,7 +166,8 @@ class VisarWaPolizaMessage(models.Model):
 
     @api.model
     def _visar_wa_keys(self):
-        return [('poliza_confirmar', "Visita de suscripción: confirmar o cambiar")]
+        return [(CLAVE_AVISO, "Visita de suscripción: confirmar o cambiar"),
+                (CLAVE_RECORDATORIO, "Visita de suscripción: recordatorio")]
 
     @api.model
     def _visar_wa_ttl_minutes(self, template_key):
@@ -149,7 +184,9 @@ class VisarWaPolizaMessage(models.Model):
     def _visar_wa_endpoints(self):
         # No es solo un texto: el tap de un botón tiene que saber de qué cita
         # se habla (`event_id`) y aterrizar en el flujo que la confirma o mueve.
-        return {'poliza_confirmar': '/internal/booking-event'}
+        # El recordatorio no pregunta nada: es solo un texto
+        # (`/send-notification`, el de por defecto).
+        return {CLAVE_AVISO: '/internal/booking-event'}
 
     def _visar_wa_context(self):
         self.ensure_one()
@@ -163,7 +200,12 @@ class VisarWaPolizaMessage(models.Model):
     def _visar_attempt_send(self):
         """Al ENTREGARSE, la visita queda avisada: desde ahí el cliente la mueve."""
         enviado = super()._visar_attempt_send()
-        if enviado and self.task_id:
+        if enviado and self.task_id and self.template_key == CLAVE_RECORDATORIO:
+            self.task_id.sudo().message_post(
+                body=_("Se le mandó al cliente por WhatsApp el recordatorio de "
+                       "esta visita (%(hito)s días antes).", hito=self.hito),
+                subtype_xmlid='mail.mt_note')
+        elif enviado and self.task_id:
             tarea = self.task_id.sudo()
             if not tarea.visar_visit_aviso_at:
                 tarea.visar_visit_aviso_at = fields.Datetime.now()
@@ -189,9 +231,14 @@ class ProjectTask(models.Model):
     visar_visit_respuesta = fields.Selection([
         ('confirmo', "Confirmó por WhatsApp"),
         ('cambio', "Pidió cambiarla"),
+        ('movio', "La movió por WhatsApp"),
     ], string="Respuesta del cliente", readonly=True, copy=False)
     visar_visit_respuesta_at = fields.Datetime(
         string="Respondió el", readonly=True, copy=False)
+    visar_visit_recordatorio_hito = fields.Integer(
+        string="Último recordatorio (días antes)", readonly=True, copy=False,
+        help="Se borra cuando el cliente mueve la visita: el recordatorio vuelve "
+             "a salir para la fecha nueva.")
 
     # ------------------------------------------------------------------
     # El cron
@@ -212,8 +259,17 @@ class ProjectTask(models.Model):
             except (TypeError, ValueError):
                 return defecto
 
+        try:
+            recordar = dias_de_aviso(params.get_param(RECORDATORIO_DIAS_PARAM)
+                                     or RECORDATORIO_DIAS_DEFAULT)
+        except ValueError:
+            recordar = dias_de_aviso(RECORDATORIO_DIAS_DEFAULT)
+
         return {
             'enabled': params.get_param(AVISO_ENABLED_PARAM) in ('True', 'true', '1'),
+            'recordatorio': params.get_param(RECORDATORIO_ENABLED_PARAM)
+            in ('True', 'true', '1'),
+            'dias_recordatorio': recordar or dias_de_aviso(RECORDATORIO_DIAS_DEFAULT),
             'dias': dias or dias_de_aviso(AVISO_DIAS_DEFAULT),
             'desde': entero(AVISO_HORA_DESDE_PARAM, AVISO_HORA_DESDE_DEFAULT),
             'hasta': entero(AVISO_HORA_HASTA_PARAM, AVISO_HORA_HASTA_DEFAULT),
@@ -247,12 +303,18 @@ class ProjectTask(models.Model):
         marca en la misma pasada en que se encola.
         """
         config = self._visar_poliza_aviso_config()
-        if not config['enabled']:
+        if not (config['enabled'] or config['recordatorio']):
             return 0
         ahora_local, tz_info = self._visar_poliza_aviso_ahora_local()
         if not (config['desde'] <= ahora_local.hour < config['hasta']):
             return 0
         hoy = ahora_local.date()
+        encolados = 0
+        if config['recordatorio']:
+            encolados += self._visar_cron_poliza_recordatorios(
+                hoy, tz_info, config['dias_recordatorio'])
+        if not config['enabled']:
+            return encolados
         tope = max(config['dias'])
         ahora = fields.Datetime.now()
         hasta_utc = ahora + timedelta(days=tope + 1)
@@ -269,7 +331,6 @@ class ProjectTask(models.Model):
             ('visar_subscription_order_id.subscription_state', '=', '3_progress'),
         ], limit=LOTE, order='id')
 
-        encolados = 0
         for visita in visitas:
             try:
                 with self.env.cr.savepoint():
@@ -331,6 +392,67 @@ class ProjectTask(models.Model):
         return True
 
     @api.model
+    def _visar_cron_poliza_recordatorios(self, hoy, tz_info, dias):
+        """Encola el recordatorio de las visitas cuya fecha el cliente ya sabe.
+
+        «Ya la sabe» = no es una pre-agenda sin confirmar: esas reciben el aviso
+        que pregunta, no este. Idempotente igual que el aviso, por hito.
+        """
+        ahora = fields.Datetime.now()
+        visitas = self.sudo().search([
+            ('visar_subscription_order_id', '!=', False),
+            ('visar_visit_event_id', '!=', False),
+            '|', ('visar_visit_preagendada', '=', False),
+            ('visar_visit_preagenda_confirmada', '=', True),
+            ('visar_visit_event_id.start', '>', ahora),
+            ('visar_visit_event_id.start', '<=', ahora + timedelta(days=max(dias) + 1)),
+            ('state', 'not in', ('1_canceled', '1_done')),
+            ('visar_subscription_order_id.subscription_state', '=', '3_progress'),
+        ], limit=LOTE, order='id')
+        encolados = 0
+        for visita in visitas:
+            try:
+                with self.env.cr.savepoint():
+                    if visita._visar_poliza_recordar(hoy, tz_info, dias):
+                        encolados += 1
+            except Exception:  # noqa: BLE001 - una visita no tumba el cron
+                _logger.exception("Recordatorio de póliza: falló la visita %s",
+                                  visita.id)
+        return encolados
+
+    def _visar_poliza_recordar(self, hoy, tz_info, dias):
+        """Encola el recordatorio de ESTA visita si le toca. True si se encoló."""
+        self.ensure_one()
+        cita = self.visar_visit_event_id
+        inicio_local = pytz.utc.localize(cita.start).astimezone(tz_info)
+        hito = self._visar_poliza_hito((inicio_local.date() - hoy).days, dias)
+        if hito is None:
+            return False
+        if self.visar_visit_recordatorio_hito and hito >= self.visar_visit_recordatorio_hito:
+            return False  # ese hito (o uno anterior) ya salió
+        cliente = self.visar_subscription_order_id.partner_id
+        telefono = self._visar_poliza_telefono(cliente)
+        # Sin teléfono no hay a quién recordarle; no se abre actividad: la visita
+        # ya está confirmada y oficina no tiene nada que decidir.
+        self.write({'visar_visit_recordatorio_hito': hito})
+        if not telefono:
+            return False
+        nombre = (cliente.name or '').split()[0] if cliente.name else ''
+        cuando = self.env['visar.agent.tools']._agent_window_label(
+            cita.start, cita.stop)
+        texto = _(
+            "Hola%(nombre)s, te recordamos tu visita de suscripción de Visar Go: "
+            "*%(cuando)s*. Nuestro técnico llegará dentro de ese horario. Si "
+            "necesitas cambiarla, responde a este mensaje.",
+            nombre=(' ' + nombre) if nombre else '', cuando=cuando)
+        self.env['visar.wa.poliza.message'].sudo()._visar_wa_enqueue(
+            CLAVE_RECORDATORIO, telefono, texto,
+            params=[nombre or cliente.name or '', cuando],
+            values={'task_id': self.id, 'event_id': cita.id,
+                    'partner_id': cliente.id, 'hito': hito})
+        return True
+
+    @api.model
     def _visar_poliza_telefono(self, cliente):
         """El número con lada de país, solo dígitos, o ''. El nacional no sirve."""
         if not cliente:
@@ -362,6 +484,25 @@ class CalendarEvent(models.Model):
         if pendientes and all(t.visar_visit_aviso_at for t in pendientes):
             return None
         return motivo
+
+    def _visar_poliza_movida_por_cliente(self):
+        """El cliente movió por WhatsApp esta cita: la fecha nueva la eligió él.
+
+        Cuenta como confirmada (pedido de Visar, 13-nov-2026): si no, los avisos
+        de −7 y −2 le preguntaban «¿te queda bien?» por el horario que acababa de
+        escoger. Desde aquí le toca el recordatorio de la visita, el de la fecha
+        NUEVA: se borra el que ya hubiera salido para la anterior.
+        """
+        self.ensure_one()
+        visitas = self.sudo()._visar_reschedule_tasks().filtered(
+            'visar_subscription_order_id')
+        if not visitas:
+            return
+        ahora = fields.Datetime.now()
+        visitas.write({'visar_visit_preagenda_confirmada': True,
+                       'visar_visit_respuesta': 'movio',
+                       'visar_visit_respuesta_at': ahora,
+                       'visar_visit_recordatorio_hito': 0})
 
 
 class VisarAgentPoliza(models.AbstractModel):
