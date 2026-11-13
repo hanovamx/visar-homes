@@ -22,3 +22,4 @@ from . import test_checkout_facturacion
 from . import test_addons_por_plaga
 from . import test_rfc_primera_captura
 from . import test_agendar_servicio
+from . import test_dia_sin_servicio

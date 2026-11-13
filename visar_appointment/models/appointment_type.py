@@ -606,6 +606,10 @@ class AppointmentType(models.Model):
             snapshot = self.env['visar.slot.hold']._visar_snapshot(
                 self.resource_ids | (filter_resources or self.env['appointment.resource']))
             records = self.with_context(visar_hold_cache=snapshot)
+        if 'visar_dias_sin_servicio' not in records.env.context:
+            # Misma idea: una sola lectura de los días sin servicio por generación.
+            records = records.with_context(
+                visar_dias_sin_servicio=self.env['visar.dia.sin.servicio']._visar_intervalos())
         return super(AppointmentType, records)._get_appointment_slots(
             timezone, filter_users=filter_users, filter_resources=filter_resources,
             asked_capacity=asked_capacity, reference_date=reference_date)
@@ -647,6 +651,16 @@ class AppointmentType(models.Model):
             resource_to_bookings=resource_to_bookings,
             with_linked_resources=with_linked_resources,
             filter_resources=filter_resources)
+
+        # Día sin servicio (festivo o «mañana no abrimos»): nadie tiene cupo. Va
+        # aquí por la misma razón que los apartados: todos los caminos pasan por
+        # este punto. Ver `visar_dia_sin_servicio.py`.
+        if self.env['visar.dia.sin.servicio']._visar_choca(
+                slot_start_utc, slot_stop_utc,
+                self.env.context.get('visar_dias_sin_servicio')):
+            for key in capacity:
+                capacity[key] = 0
+            return capacity
 
         # Sin recursos el nativo devuelve {'total_remaining_capacity': 0}: no hay
         # nada que descontar y la clave de recurso ni siquiera existe.

@@ -38,6 +38,9 @@ class TestReagendaCapacidad(TransactionCase):
             'schedule_based_on': 'resources',
             'resource_ids': [(6, 0, cls.resource.ids)],
         })
+        # Estas pruebas no son de festivos: «hoy + 3» puede caer en uno (lo hizo
+        # el 16-nov-2026, Día de la Revolución) y dejaría la capacidad en cero.
+        cls.env['visar.dia.sin.servicio'].sudo().search([]).write({'active': False})
         cls.start = fields.Datetime.add(fields.Datetime.now(), days=3)
         cls.stop = fields.Datetime.add(cls.start, hours=1)
 

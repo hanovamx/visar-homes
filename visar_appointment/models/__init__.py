@@ -14,3 +14,4 @@ from . import payment_transaction
 from . import sale_order
 from . import project_task_travel
 from . import project_task_preagenda
+from . import visar_dia_sin_servicio
