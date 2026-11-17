@@ -19,3 +19,4 @@ from . import sale_order_line
 from . import res_config_settings
 from . import visar_partner_fact
 from . import fecha_historica
+from . import res_users
