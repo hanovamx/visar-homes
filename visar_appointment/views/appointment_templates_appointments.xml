@@ -1,6 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- Citas (/appointment): sin precio en las tarjetas (18-nov-2026).
+
+         El nativo pinta en verde el precio del producto de la cita. No es el
+         precio final (depende de m², zona, extras y del plan), así que confundía
+         al cliente: el precio real se dice al cotizar, en el wizard. Se quita en
+         los tres lugares donde el nativo lo pinta: las tarjetas de /appointment y
+         los dos bloques dinámicos de citas (imagen y lista) que se pueden poner
+         en cualquier página del sitio. -->
+    <template id="visar_appointments_cards_sin_precio" inherit_id="website_appointment_account_payment.appointments_cards">
+        <xpath expr="//div[hasclass('flex-shrink-0')][hasclass('text-primary')][strong]" position="replace"/>
+    </template>
+    <template id="visar_appointments_picture_sin_precio" inherit_id="website_appointment_account_payment.appointments_template_picture">
+        <xpath expr="//div[hasclass('badge')][hasclass('text-bg-primary')][strong]" position="replace"/>
+    </template>
+    <template id="visar_appointments_list_sin_precio" inherit_id="website_appointment_account_payment.appointments_template_list">
+        <xpath expr="//div[hasclass('text-primary')][hasclass('small')][strong]" position="replace"/>
+    </template>
+
     <!-- "Elegir fecha y hora": su propio texto, no el de introducción (25-sep-2026).
 
          Odoo nativo pinta `message_intro` aquí bajo el encabezado "Descripción",
