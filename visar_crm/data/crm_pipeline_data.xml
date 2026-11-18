@@ -44,6 +44,16 @@
             <field name="team_ids" eval="[(4, ref('crm_team_whatsapp'))]"/>
         </record>
 
+        <!-- Descartadas (19-nov-2026): la oportunidad que no se concretó en N
+             días. Plegada y después de Cerrado; oficina la puede arrastrar de
+             vuelta. Ver models/crm_descartadas.py. -->
+        <record id="crm_stage_descartadas" model="crm.stage">
+            <field name="name">Descartadas</field>
+            <field name="sequence">8</field>
+            <field name="fold" eval="True"/>
+            <field name="team_ids" eval="[(4, ref('crm_team_whatsapp')), (4, ref('sales_team.salesteam_website_sales'))]"/>
+        </record>
+
         <!-- Razon de perdida para el cron de caducidad (Fase D). -->
         <record id="crm_lost_reason_wa_inactivo" model="crm.lost.reason">
             <field name="name">WhatsApp - Sin respuesta</field>

@@ -20,14 +20,6 @@ WA_PIPELINE_STAGE_XMLIDS = (
     'visar_crm.crm_stage_wa_cerrado',
 )
 
-# Etapa -> parametro del sistema con la ventana de caducidad en dias (cron).
-# Ausente o <= 0 = esa etapa NO caduca. Editables sin deploy.
-WA_LOST_DAYS_PARAMS = {
-    'visar_crm.crm_stage_wa_nuevo': 'visar.crm.lost_days_nuevo',
-    'visar_crm.crm_stage_wa_valoracion': 'visar.crm.lost_days_valoracion',
-    'visar_crm.crm_stage_wa_cotizacion': 'visar.crm.lost_days_cotizacion',
-    'visar_crm.crm_stage_wa_programado': 'visar.crm.lost_days_programado',
-}
 WA_LOST_REASON_XMLID = 'visar_crm.crm_lost_reason_wa_inactivo'
 
 # Canal -> equipo donde vive su ficha. **Dos fichas por cliente, una por canal**
@@ -194,6 +186,10 @@ class CrmLead(models.Model):
         ]
         if cerrado:
             domain.append(('stage_id', '!=', cerrado.id))
+        # Una descartada no se reusa: si el cliente vuelve, es otra oportunidad.
+        descartadas = self._visar_descartadas_stage()
+        if descartadas:
+            domain.append(('stage_id', '!=', descartadas.id))
         return self.sudo().search(domain, order='id desc', limit=1)
 
     @api.model
@@ -388,6 +384,8 @@ class CrmLead(models.Model):
                     'phone': order.partner_id.phone or nat,
                     'partner_id': order.partner_id.id,
                 })
+                lead._visar_anotar_previa(
+                    self._visar_descartada_previa(nat, group, team))
             abiertas |= lead
         return abiertas
 
@@ -640,31 +638,9 @@ class CrmLead(models.Model):
 
     @api.model
     def _visar_crm_expire_stale_leads(self):
-        """Marca lost los leads abiertos inactivos, por etapa, segun ventanas en
-        ir.config_parameter (0/ausente = esa etapa no caduca). Inactividad =
-        write_date. Lo llama el ir.cron diario. Ver diseno 31 seccion 10.
-        """
-        Param = self.env['ir.config_parameter'].sudo()
-        reason = self.env.ref(WA_LOST_REASON_XMLID, raise_if_not_found=False)
-        now = fields.Datetime.now()
-        for stage_xmlid, param in WA_LOST_DAYS_PARAMS.items():
-            try:
-                days = int(Param.get_param(param, 0) or 0)
-            except (TypeError, ValueError):
-                days = 0
-            if days <= 0:
-                continue
-            stage = self.env.ref(stage_xmlid, raise_if_not_found=False)
-            if not stage:
-                continue
-            cutoff = fields.Datetime.subtract(now, days=days)
-            stale = self.sudo().search([
-                ('stage_id', '=', stage.id),
-                ('write_date', '<', cutoff),
-            ])
-            if stale:
-                stale.action_set_lost(
-                    **({'lost_reason_id': reason.id} if reason else {}))
+        """Nombre viejo del cron (Fase D). Desde el 19-nov-2026 ya no marca
+        perdidas: pasa a «Descartadas» (ver `crm_descartadas.py`)."""
+        return self._visar_crm_descartar_inactivas()
 
     # ------------------------------------------------------------------
     # Botón «Próxima reunión»: abrir la cita donde de verdad está

@@ -34,3 +34,4 @@ from . import test_prompt_versiones
 from . import test_bandeja
 from . import test_whatsapp_numero
 from . import test_recordatorio
+from . import test_descartadas_agente

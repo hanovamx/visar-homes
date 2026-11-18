@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Descartadas (19-nov-2026): los días se cambian en Ajustes → Visar. -->
+    <record id="res_config_settings_view_form_visar_descartadas" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.visar.descartadas</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="visar_base.res_config_settings_view_form_visar"/>
+        <field name="arch" type="xml">
+            <xpath expr="//block[@name='visar_address_cp']" position="before">
+                <block title="CRM: oportunidades descartadas" name="visar_crm_descartadas">
+                    <setting string="Días para descartar una oportunidad"
+                             help="WhatsApp: en Nuevo, Contactado o Cotización enviada, si el cliente no escribe en estos días pasa al carril «Descartadas». Sitio web: solo las que siguen en Nuevo (carrito sin pagar). Si el cliente vuelve a escribir se abre una oportunidad nueva. 0 = no se descarta nada.">
+                        <field name="visar_crm_descartar_dias" class="oe_inline"/>
+                        <span class="ms-1">días</span>
+                    </setting>
+                </block>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1394,6 +1394,10 @@ class VisarAgentTools(models.AbstractModel):
         ]
         if cerrado:  # lead "abierto" = aun no Cerrado (won/lost ya archivado)
             domain.append(('stage_id', '!=', cerrado.id))
+        # Descartada = el cliente vuelve y es OTRA oportunidad (19-nov-2026).
+        descartadas = Lead._visar_descartadas_stage()
+        if descartadas:
+            domain.append(('stage_id', '!=', descartadas.id))
         lead = Lead.search(domain, order='id desc', limit=1)
         if lead:
             if partner and not lead.partner_id:
@@ -1412,6 +1416,7 @@ class VisarAgentTools(models.AbstractModel):
             'phone': phone or nat,
             'partner_id': partner.id if partner else False,
         })
+        lead._visar_anotar_previa(Lead._visar_descartada_previa(nat, group, team))
         return lead, True, None
 
     @api.model

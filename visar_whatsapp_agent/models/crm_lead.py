@@ -68,6 +68,7 @@ MOTIVOS = {
     'cliente_existente': "Ya es cliente de Visar",
     'apagado': "El recontacto está apagado",
     'caducado': "Se pasó la ventana de 24 h de WhatsApp",
+    'descartada': "La oportunidad pasó a Descartadas",
 }
 
 # Los descartes que NO se rearman aunque el cliente vuelva a escribir. Terminar
@@ -75,7 +76,7 @@ MOTIVOS = {
 # la conversacion era lo UNICO que marcaba 'declino' en todo el agente, asi que
 # quien tocaba "Sí, terminar" quedaba excluido de por vida sin haber rechazado
 # nada. Rechazar una oferta y colgar no son lo mismo.
-DESCARTES_DEFINITIVOS = ('declino', 'queja')
+DESCARTES_DEFINITIVOS = ('declino', 'queja', 'descartada')
 
 
 class CrmLead(models.Model):
@@ -403,3 +404,27 @@ class CrmLead(models.Model):
         return ("Hola, te escribo de %s. Nos quedamos a medias el otro "
                 "día. ¿Sigues interesado? Con gusto retomamos donde lo dejamos."
                 % visar_brand_name(self.env))
+
+    # ------------------------------------------------------------------
+    # Descartadas (19-nov-2026, visar_crm/models/crm_descartadas.py)
+    # ------------------------------------------------------------------
+
+    def _visar_descartar_ultima_actividad(self):
+        """En WhatsApp, lo último es el último mensaje DEL CLIENTE.
+
+        `write_date` no sirve: lo mueven automatismos y crons sin que el cliente
+        haya dicho nada. Una ficha sin conversación registrada cae al respaldo.
+        """
+        self.ensure_one()
+        team = self.env.ref('visar_crm.crm_team_whatsapp', raise_if_not_found=False)
+        if team and self.team_id == team and self.visar_wa_phone_norm:
+            contacto = self.env['visar.agent.contacto'].sudo().search(
+                [('name', '=', self.visar_wa_phone_norm)], limit=1)
+            if contacto.ultimo_mensaje:
+                return max(contacto.ultimo_mensaje, self.create_date)
+        return super()._visar_descartar_ultima_actividad()
+
+    def _visar_descartar_extra(self):
+        """Descartada: su recontacto pendiente ya no sale."""
+        self._visar_wa_drop_followup('descartada')
+        return super()._visar_descartar_extra()

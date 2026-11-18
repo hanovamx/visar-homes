@@ -30,7 +30,7 @@ Ver .context/31-whatsapp-crm-lead-mapping.md (diseno) y
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Sales/CRM',
-    'version': '19.0.1.4.3',
+    'version': '19.0.1.5.0',
     'license': 'LGPL-3',
     # crm: pipeline y crm.lead. visar_appointment: la normalizacion canonica de
     # telefono (res.partner._visar_phone_nat10_value), producto->dimension->grupo
@@ -53,6 +53,7 @@ Ver .context/31-whatsapp-crm-lead-mapping.md (diseno) y
         'data/crm_pipeline_data.xml',
         'data/crm_cron.xml',
         'views/crm_lead_views.xml',
+        'views/res_config_settings_views.xml',
     ],
     'installable': True,
     'application': False,

@@ -125,34 +125,74 @@ class TestCrmAdvance(TransactionCase):
         self.Lead._visar_crm_win_order_leads(order)
         self.assertEqual(lead.stage_id, self.s_cerr)
 
-    # --- cron de caducidad ------------------------------------------------
+    # --- Descartadas (19-nov-2026; reemplaza al cron de caducidad) ----------
 
-    def test_cron_caduca_lead_viejo_respeta_fresco(self):
-        self.env['ir.config_parameter'].sudo().set_param(
-            'visar.crm.lost_days_nuevo', '1')
-        viejo = self._lead(self.group_fum, nat='9990001111')
-        fresco = self._lead(self.group_mav, nat='9990002222')
-        # Backdate del viejo (write_date lo maneja el ORM; se fuerza por SQL).
+    def _envejecer(self, lead, dias):
+        """create/write_date `dias` atrás (los maneja el ORM; se fuerza por SQL)."""
+        antes = fields.Datetime.subtract(fields.Datetime.now(), days=dias)
         self.env.cr.execute(
-            "UPDATE crm_lead SET write_date = %s WHERE id = %s",
-            (fields.Datetime.subtract(fields.Datetime.now(), days=3), viejo.id))
-        viejo.invalidate_recordset(['write_date'])
+            "UPDATE crm_lead SET create_date = %s, write_date = %s WHERE id = %s",
+            (antes, antes, lead.id))
+        lead.invalidate_recordset(['create_date', 'write_date'])
 
-        self.Lead._visar_crm_expire_stale_leads()
+    def test_descarta_la_vieja_y_respeta_la_fresca(self):
+        self.env['ir.config_parameter'].sudo().set_param('visar.crm.descartar_dias', '15')
+        vieja = self._lead(self.group_fum, nat='9990001111')
+        fresca = self._lead(self.group_mav, nat='9990002222')
+        self._envejecer(vieja, 20)
+        self.Lead._visar_crm_expire_stale_leads()  # el cron llama este nombre
+        descartadas = self.env.ref('visar_crm.crm_stage_descartadas')
+        self.assertEqual(vieja.stage_id, descartadas)
+        self.assertTrue(vieja.active, "descartar no archiva: se ve en su carril")
+        self.assertEqual(fresca.stage_id, self.s_nuevo)
 
-        self.assertFalse(viejo.active)  # action_set_lost archiva
-        self.assertEqual(viejo.lost_reason_id,
-                         self.env.ref('visar_crm.crm_lost_reason_wa_inactivo'))
-        self.assertTrue(fresco.active)  # el fresco no se toca
+    def test_con_cita_no_se_descarta(self):
+        self.env['ir.config_parameter'].sudo().set_param('visar.crm.descartar_dias', '15')
+        valoracion = self._lead(self.group_fum, stage=self.s_valor, nat='9990004444')
+        programado = self._lead(self.group_mav, stage=self.s_prog, nat='9990005555')
+        for lead in valoracion | programado:
+            self._envejecer(lead, 40)
+        self.Lead._visar_crm_descartar_inactivas()
+        self.assertEqual(valoracion.stage_id, self.s_valor)
+        self.assertEqual(programado.stage_id, self.s_prog)
 
-    def test_cron_desactivado_por_defecto(self):
-        # Sin parametro (0) la etapa no caduca.
-        self.env['ir.config_parameter'].sudo().set_param(
-            'visar.crm.lost_days_nuevo', '0')
+    def test_cero_dias_no_descarta(self):
+        self.env['ir.config_parameter'].sudo().set_param('visar.crm.descartar_dias', '0')
         lead = self._lead(self.group_fum, nat='9990003333')
-        self.env.cr.execute(
-            "UPDATE crm_lead SET write_date = %s WHERE id = %s",
-            (fields.Datetime.subtract(fields.Datetime.now(), days=99), lead.id))
-        lead.invalidate_recordset(['write_date'])
-        self.Lead._visar_crm_expire_stale_leads()
-        self.assertTrue(lead.active)
+        self._envejecer(lead, 99)
+        self.Lead._visar_crm_descartar_inactivas()
+        self.assertEqual(lead.stage_id, self.s_nuevo)
+
+    def test_web_solo_se_descarta_en_nuevo(self):
+        self.env['ir.config_parameter'].sudo().set_param('visar.crm.descartar_dias', '15')
+        web = self.env.ref('sales_team.salesteam_website_sales')
+        # Equipo y etapa en la creación, como los crea la web.
+        def web_lead(group, stage, nat):
+            return self.Lead.create({
+                'name': 'Web lead', 'type': 'opportunity', 'team_id': web.id,
+                'stage_id': stage.id, 'visar_service_group_id': group.id,
+                'visar_wa_phone_norm': nat})
+        carrito = web_lead(self.group_fum, self.s_nuevo, '9990006666')
+        cotizada = web_lead(self.group_mav, self.s_cotiz, '9990007777')
+        self.assertEqual(cotizada.stage_id, self.s_cotiz)
+        for lead in carrito | cotizada:
+            self._envejecer(lead, 20)
+        self.Lead._visar_crm_descartar_inactivas()
+        self.assertEqual(carrito.stage_id, self.env.ref('visar_crm.crm_stage_descartadas'))
+        self.assertEqual(cotizada.stage_id, self.s_cotiz, "en web, solo el carrito")
+
+    def test_una_descartada_no_se_reusa(self):
+        descartadas = self.env.ref('visar_crm.crm_stage_descartadas')
+        vieja = self._lead(self.group_fum, stage=descartadas, nat='9990008888')
+        self.assertFalse(self.Lead._visar_open_lead(
+            '9990008888', self.group_fum, self.team, self.s_cerr))
+        self.assertEqual(self.Lead._visar_descartada_previa(
+            '9990008888', self.group_fum, self.team), vieja)
+        nueva = self._lead(self.group_fum, nat='9990008888')
+        nueva._visar_anotar_previa(vieja)
+        self.assertEqual(nueva.visar_descartada_previa_id, vieja)
+        # Oficina la arrastra de vuelta: vuelve a ser la abierta.
+        nueva.stage_id = self.s_cerr
+        vieja.stage_id = self.s_nuevo
+        self.assertEqual(self.Lead._visar_open_lead(
+            '9990008888', self.group_fum, self.team, self.s_cerr), vieja)
