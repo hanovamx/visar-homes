@@ -21,7 +21,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
     'author': "Hanova",
     'website': "https://hanova.mx",
     'category': 'Services/Appointment',
-    'version': '19.0.2.45.1',
+    'version': '19.0.2.46.0',
     'license': 'LGPL-3',
     'depends': [
         'visar_base',
@@ -32,6 +32,8 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
         'website_appointment',
         'website_appointment_sale',
         'website_sale',
+        # Código de descuento / tarjeta de regalo en la liga de pago (REQ-7600).
+        'sale_loyalty',
         'hr',
         'worksheet',
     ],
@@ -64,6 +66,7 @@ add-ons opcionales (optional_product_ids + Obligatorio / Cantidad), proyectos FS
         'views/appointment_templates_appointments.xml',
         'views/valoracion_templates.xml',
         'views/dia_sin_servicio_views.xml',
+        'views/sale_portal_cupon_templates.xml',
     ],
     'installable': True,
     'application': False,

@@ -12,6 +12,7 @@ from . import calendar_booking
 from . import calendar_event
 from . import payment_transaction
 from . import sale_order
+from . import sale_order_cupon
 from . import project_task_travel
 from . import project_task_preagenda
 from . import visar_dia_sin_servicio

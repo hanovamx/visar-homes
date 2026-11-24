@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- REQ-7600: el campo de código en la liga de pago del portal.
+
+         Va en DOS lugares, y los dos hacen falta:
+           * en el modal de pago: la liga del agente trae `payment_amount`, y con
+             eso el portal abre el modal solo al cargar (`portal_prepayment.js`).
+             Es lo primero —y a veces lo único— que el cliente ve.
+           * en la barra lateral, arriba del botón de pago: si cierra el modal, o
+             si el código dejó el total en cero (no hay modal que abrir y ahí
+             vive el botón "Confirmar cita"). -->
+    <template id="cupon_bloque" name="Visar: bloque del código de descuento">
+        <div class="o_visar_cupon d-print-none d-flex flex-column gap-2">
+            <div t-if="visar_cupon_aviso"
+                 t-attf-class="alert #{'alert-success' if visar_cupon_aviso[0] == 'ok' else 'alert-danger'} py-2 px-3 small mb-0"
+                 role="alert">
+                <t t-out="visar_cupon_aviso[1]"/>
+            </div>
+
+            <t t-if="sale_order._visar_cupon_aplica()">
+                <!-- Descuentos puestos con código: se pueden quitar. -->
+                <form t-foreach="sale_order._visar_cupon_lineas()" t-as="linea"
+                      method="POST"
+                      t-attf-action="/my/orders/#{sale_order.id}/visar/cupon/quitar"
+                      class="d-flex justify-content-between align-items-center gap-2 small">
+                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                    <input type="hidden" name="access_token" t-att-value="sale_order.access_token"/>
+                    <input type="hidden" name="line_id" t-att-value="linea.id"/>
+                    <input t-if="payment_amount" type="hidden" name="monto_liga" t-att-value="payment_amount"/>
+                    <span class="text-success">
+                        <i class="fa fa-tag me-1"/><t t-out="linea.name"/>
+                    </span>
+                    <button type="submit" class="btn btn-link btn-sm p-0 text-nowrap">Quitar</button>
+                </form>
+
+                <form t-if="not sale_order.currency_id.is_zero(sale_order.amount_total)"
+                      method="POST"
+                      class="o_visar_cupon_aplicar"
+                      t-attf-action="/my/orders/#{sale_order.id}/visar/cupon">
+                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                    <input type="hidden" name="access_token" t-att-value="sale_order.access_token"/>
+                    <input t-if="payment_amount" type="hidden" name="monto_liga" t-att-value="payment_amount"/>
+                    <div class="input-group">
+                        <input type="text" name="code" class="form-control"
+                               placeholder="Tarjeta de regalo o código de descuento"
+                               aria-label="Tarjeta de regalo o código de descuento"
+                               autocomplete="off" autocapitalize="off"
+                               autocorrect="off" spellcheck="false"
+                               maxlength="64" required="required"/>
+                        <button type="submit" class="btn btn-secondary">Aplicar</button>
+                    </div>
+                </form>
+
+                <!-- El código cubrió todo: no hay cobro, se confirma directo. -->
+                <form t-if="con_confirmar and sale_order._visar_cupon_puede_confirmar_sin_pago()"
+                      method="POST"
+                      class="o_visar_cupon_confirmar"
+                      t-attf-action="/my/orders/#{sale_order.id}/visar/confirmar">
+                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                    <input type="hidden" name="access_token" t-att-value="sale_order.access_token"/>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fa fa-check me-1"/>Confirmar cita
+                    </button>
+                    <p class="small text-muted mt-1 mb-0">Tu código cubre el total: no hay nada que pagar.</p>
+                </form>
+            </t>
+        </div>
+    </template>
+
+    <template id="sale_order_portal_cupon" name="Visar: código de descuento en la barra"
+              inherit_id="sale.sale_order_portal_template">
+        <xpath expr="//div[@id='sale_order_sidebar_button']" position="before">
+            <t t-call="visar_appointment.cupon_bloque">
+                <t t-set="con_confirmar" t-value="True"/>
+            </t>
+        </xpath>
+        <!-- En cero por un código, el único botón es "Confirmar cita". Sin esto
+             también salía "Aceptar y firmar" (la liga del agente se salta la
+             firma cuando hay pago; sin pago, igual). -->
+        <xpath expr="//div[@id='sale_order_sidebar_button']/a[1]" position="attributes">
+            <attribute name="t-if">sale_order._has_to_be_signed() and not payment_amount and not sale_order._visar_cupon_puede_confirmar_sin_pago()</attribute>
+        </xpath>
+        <xpath expr="//div[@name='sale_order_actions']" position="attributes">
+            <attribute name="t-if">(sale_order._has_to_be_signed() or sale_order._has_to_be_paid()) and not sale_order._visar_cupon_puede_confirmar_sin_pago()</attribute>
+        </xpath>
+    </template>
+
+    <template id="sale_order_portal_pay_modal_cupon" name="Visar: código de descuento en el modal de pago"
+              inherit_id="sale.sale_order_portal_pay_modal">
+        <!-- Antes de la cadena t-if/t-elif/t-else del formulario, no dentro. -->
+        <xpath expr="//div[@t-if='company_mismatch']" position="before">
+            <div class="mb-3">
+                <t t-call="visar_appointment.cupon_bloque">
+                    <t t-set="con_confirmar" t-value="False"/>
+                </t>
+            </div>
+        </xpath>
+    </template>
+</odoo>
