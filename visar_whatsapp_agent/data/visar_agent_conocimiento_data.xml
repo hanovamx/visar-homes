@@ -61,7 +61,8 @@
 - Una cita pagada no se cancela ni se reembolsa; se reprograma sin costo con mínimo 24 horas. ⚠️ Por decidir: otra regla dice que mover o cancelar una cita va con un asesor.
 - El técnico espera máximo 10 minutos.
 - El pago va antes del servicio, por la liga que manda el agendado.
-- Precios con IVA. Sin cupones, promociones, meses sin intereses ni transferencia.</field>
+- Precios con IVA. Sin meses sin intereses ni transferencia.
+- Código de descuento o tarjeta de regalo: el cliente lo captura en la liga de pago, en el campo «Tarjeta de regalo o código de descuento», antes de pagar. No aplica a pólizas. El agente no lo valida ni lo aplica.</field>
     </record>
 
     <record id="conocimiento_preparacion" model="visar.agent.conocimiento">
